@@ -19,20 +19,15 @@ replace-with = 'aliyun'
 [source.aliyun]
 registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
 ```
-<<<<<<< HEAD
 请注意，目前阿里云镜像仅支持稀疏索引配置，需要您的 cargo 版本 >=1.68。
-=======
->>>>>>> ad13ceaa89ebe978b8107512f73a19e45a62a69f
+
+
 
 另外，本项目默认开启了  [dynamic_linking](https://bevy.org/learn/quick-start/getting-started/setup/#dynamic_linking) 特性，并同时启用了 [performance optimizations](https://bevy.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations)，以加速编译。
 
 这使得编译生成的exe可执行文件无法独立运行，如果需要release正式的独立可执行文件，请注意移除该特性，
 
-<<<<<<< HEAD
 详情请自行阅读[bevy官方文档](https://bevy.org/learn/quick-start/getting-started/) 。
-=======
-详情请自行阅读[bevy官方文档]([Getting Started](https://bevy.org/learn/quick-start/getting-started/)/) 。
->>>>>>> ad13ceaa89ebe978b8107512f73a19e45a62a69f
 
 
 
