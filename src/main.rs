@@ -8,5 +8,9 @@ fn main() {
 
 fn hello_world_system()
 {
+<<<<<<< HEAD
+    println!("hello world!!");
+=======
     println!("hello world!");
+>>>>>>> f0d0442bf45ed462849fa2fe7eabbf5e5404bf8f
 }
