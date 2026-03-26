@@ -2,6 +2,32 @@
 
 ## 基于Rust语言与Bevy游戏引擎的开发实践
 
+## 写在项目前
+
+本项目需要使用 bevy ，编译前 cargo 会自动下载
+如果cargo的下载速度较慢，可以使用以下镜像源加速下载：
+在linux： `~/.cargo/config.toml `文件或
+
+Windows下：`C:\Users\你的用户名\.cargo\config.toml`中，(没有请自行创建该文件)
+添加以下内容：
+
+```toml
+[source.crates-io]
+registry = "https://github.com/rust-lang/crates.io-index"
+replace-with = 'aliyun'
+[source.aliyun]
+registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
+```
+请注意，目前阿里云镜像仅支持稀疏索引配置，需要您的 cargo 版本 >=1.68。
+
+另外，本项目默认开启了  [dynamic_linking](https://bevy.org/learn/quick-start/getting-started/setup/#dynamic_linking) 特性，并同时启用了 [performance optimizations](https://bevy.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations)，以加速编译。
+
+这使得编译生成的exe可执行文件无法独立运行，如果需要release正式的独立可执行文件，请注意移除该特性，
+
+详情请自行阅读[bevy官方文档](https://bevy.org/learn/quick-start/getting-started/) 。
+
+
+
 # 一、 项目核心开发内容 (MVP 阶段)
 
 核心开发围绕“数据-逻辑-表现”三个维度展开，确保游戏闭环的完整性。
