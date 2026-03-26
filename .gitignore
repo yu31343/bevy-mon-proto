@@ -1,1 +1,38 @@
-/target
+# --- Rust 标准过滤 ---
+# 包含所有编译产物 (可执行文件、中间件、库)
+/target/
+
+# --- 编译锁与临时文件 ---
+# 防止多个进程同时操作产生的临时锁定文件
+**/*.rs.bk
+cargo-home/
+
+# --- Bevy & 图形开发特有 ---
+# 如果你使用了着色器编译工具（如 naga-cli）生成的中间文件
+*.spv
+*.plugin
+
+# --- 操作系统与 IDE ---
+# Windows 缩略图缓存
+Thumbs.db
+desktop.ini
+
+# VS Code 配置（建议保留扩展建议，隐藏本地个性化设置）
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# IntelliJ / RustRover
+.idea/
+*.iml
+
+# --- 资产与配置 ---
+# 个人环境配置文件（如果你在代码里读取 .env 来配置 API Key 或调试参数）
+.env
+.env.local
+
+# 巨大的原始资源文件（可选）
+# 如果你的 assets 文件夹里有巨大的 .psd, .blend 原件，建议忽略或使用 LFS
+# *.blend
+# *.psd
