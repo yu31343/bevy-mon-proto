@@ -1,0 +1,34 @@
+(
+    skills: [
+        (
+            id: Slash,
+            name: "斩击",
+            effect: Attack(power: 10),
+        ),
+        (
+            id: HeavyStrike,
+            name: "重击",
+            effect: Attack(power: 16),
+        ),
+        (
+            id: FirstAid,
+            name: "急救",
+            effect: Heal(amount: 12),
+        ),
+        (
+            id: Guard,
+            name: "防御",
+            effect: Shield(amount: 10),
+        ),
+    ],
+    player: (
+        name: "HeroMon",
+        stats: (hp: 100, atk: 18, def: 9, spd: 12),
+        skills: (Slash, HeavyStrike, FirstAid, Guard),
+    ),
+    enemy: (
+        name: "RivalMon",
+        stats: (hp: 100, atk: 16, def: 10, spd: 11),
+        skills: (Slash, HeavyStrike, FirstAid, Guard),
+    ),
+)

@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 bevy = {version = "0.18.1", features = ["dynamic_linking"]}
+ron = "0.11.0"
+serde = { version = "1.0", features = ["derive"] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

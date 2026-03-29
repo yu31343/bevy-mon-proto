@@ -1,12 +1,18 @@
-//! A minimal example that outputs "hello world"
+//! 程序入口：注册插件与状态机，启动 Bevy App。
+mod battle;
+mod data;
+mod game_state;
+mod ui;
 
 use bevy::prelude::*;
+use game_state::{BattlePhase, GameState};
 
 fn main() {
-    App::new().add_systems(Update, hello_world_system).run();
-}
-
-fn hello_world_system()
-{
-    println!("hello world!!!!");
+    // 只在入口组装应用，业务逻辑全部放在各自插件中。
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .init_state::<GameState>()
+        .init_state::<BattlePhase>()
+        .add_plugins((data::DataPlugin, battle::BattlePlugin, ui::UiPlugin))
+        .run();
 }
