@@ -17,6 +17,7 @@ impl Plugin for BattlePlugin {
         app.init_resource::<TurnContext>()
             .init_resource::<BattleLog>()
             .init_resource::<BattleResult>()
+            .init_resource::<TurnCount>()
             .add_message::<BattleEvent>()
             .add_systems(
                 Update,

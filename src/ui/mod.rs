@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    battle::{BattleLog, BattleResult, Combatant, InBattle, Side, SkillList, Stats, TurnContext},
+    battle::{BattleLog, BattleResult, Combatant, InBattle, Side, SkillList, Stats, TurnContext, PlayerTeam, EnemyTeam, Team},
     data::{SkillDb, SkillId},
     game_state::{BattlePhase, GameState},
 };
@@ -173,24 +173,23 @@ fn setup_ui_system(mut commands: Commands, ui_font: Option<Res<UiFontHandle>>) {
 fn button_select_skill_system(
     mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,
     mut turn_ctx: ResMut<TurnContext>,
-    query: Query<(&Combatant, &SkillList), With<InBattle>>,
+    player_team: Option<Res<PlayerTeam>>,
+    query: Query<&SkillList, With<InBattle>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
-    let mut player_skills = None;
-    for (combatant, skills) in &query {
-        if combatant.side == Side::Player {
-            player_skills = Some(skills.0);
-            break;
-        }
-    }
-    let Some(skills) = player_skills else {
-        return;
-    };
+    if let Some(player_team) = player_team {
+        if let Some(active_entity) = player_team.0.active_combatant() {
+            let Ok(skills) = query.get(active_entity) else {
+                return;
+            };
+            let skills = skills.0;
 
-    for (interaction, button) in &mut interaction_query {
-        if *interaction == Interaction::Pressed {
-            turn_ctx.player_skill = Some(skills[button.index]);
-            next_phase.set(BattlePhase::EnemyCommand);
+            for (interaction, button) in &mut interaction_query {
+                if *interaction == Interaction::Pressed {
+                    turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skills[button.index]));
+                    next_phase.set(BattlePhase::EnemyCommand);
+                }
+            }
         }
     }
 }
@@ -207,36 +206,57 @@ fn update_battle_ui_system(
             Option<&SkillButtonText>,
         ),
     >,
-    query: Query<(&Combatant, &Stats, &SkillList), With<InBattle>>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    query: Query<(&Combatant, &Stats, &SkillList, &Name), With<InBattle>>,
     skill_db: Res<SkillDb>,
     battle_log: Res<BattleLog>,
 ) {
+    if player_team.is_none() || enemy_team.is_none() {
+        return;
+    }
+    let player_team = player_team.unwrap();
+    let enemy_team = enemy_team.unwrap();
+
     let mut player_line = String::from("玩家：...");
     let mut enemy_line = String::from("敌方：...");
-    for (combatant, stats, _) in &query {
-        match combatant.side {
-            Side::Player => {
-                player_line = format!(
-                    "玩家 生命: {}/{}  攻击:{} 防御:{} 速度:{}",
-                    stats.hp, stats.max_hp, stats.atk, stats.def, stats.spd
-                );
-            }
-            Side::Enemy => {
-                enemy_line = format!(
-                    "敌方 生命: {}/{}  攻击:{} 防御:{} 速度:{}",
-                    stats.hp, stats.max_hp, stats.atk, stats.def, stats.spd
-                );
-            }
+    
+    let get_alive_count = |team: &Team| {
+        team.combatants.iter().filter(|&&e| {
+            if let Ok((_, stats, _, _)) = query.get(e) {
+                stats.hp > 0
+            } else { false }
+        }).count()
+    };
+    let p_alive = get_alive_count(&player_team.0);
+    let e_alive = get_alive_count(&enemy_team.0);
+
+    if let Some(p_entity) = player_team.0.active_combatant() {
+        if let Ok((combatant, stats, _, name)) = query.get(p_entity) {
+            player_line = format!(
+                "[{}] {} [{}] 生命: {}/{}  剩余成员: {}",
+                combatant.side, name, element_name(combatant.element),
+                stats.hp, stats.max_hp, p_alive
+            );
+        }
+    }
+
+    if let Some(e_entity) = enemy_team.0.active_combatant() {
+        if let Ok((combatant, stats, _, name)) = query.get(e_entity) {
+            enemy_line = format!(
+                "[{}] {} [{}] 生命: {}/{}  剩余成员: {}",
+                combatant.side, name, element_name(combatant.element),
+                stats.hp, stats.max_hp, e_alive
+            );
         }
     }
 
     let log_line = battle_log.0.iter().cloned().collect::<Vec<_>>().join("\n");
 
     let mut player_skills = None;
-    for (combatant, _, skills) in &query {
-        if combatant.side == Side::Player {
+    if let Some(p_entity) = player_team.0.active_combatant() {
+        if let Ok((_, _, skills, _)) = query.get(p_entity) {
             player_skills = Some(skills.0);
-            break;
         }
     }
 
@@ -281,6 +301,16 @@ fn skill_name(skill_id: SkillId, db: &SkillDb) -> String {
         .get(&skill_id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{skill_id:?}"))
+}
+
+/// 将元素类型转换为中文显示名称。
+fn element_name(element: crate::data::ElementType) -> &'static str {
+    use crate::data::ElementType;
+    match element {
+        ElementType::Water => "水",
+        ElementType::Fire => "火",
+        ElementType::Grass => "草",
+    }
 }
 
 fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextFont {

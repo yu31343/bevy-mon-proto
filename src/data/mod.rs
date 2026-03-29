@@ -6,6 +6,39 @@ use std::{
 use bevy::prelude::*;
 use serde::Deserialize;
 
+/// 元素类型（系别）：水、火、草。
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+pub enum ElementType {
+    Water,
+    Fire,
+    Grass,
+}
+
+/// 元素克制矩阵。
+/// 行表示攻击方，列表示防御方。
+/// 矩阵[i][j] 表示元素 i 攻击元素 j 的伤害倍数。
+/// 2.0 = 克制（超有效），1.0 = 正常，0.5 = 微弱。
+pub struct ElementMatrix;
+
+impl ElementMatrix {
+    /// 获取攻击方元素对防御方元素的伤害倍数。
+    /// 克制关系（2.0）、微弱关系（0.5），其他情况默认为正常伤害（1.0）。
+    pub fn get_effectiveness(attacker: ElementType, defender: ElementType) -> f32 {
+        match (attacker, defender) {
+            // 克制关系：水克火，火克草，草克水
+            (ElementType::Water, ElementType::Fire) => 2.0,
+            (ElementType::Fire, ElementType::Grass) => 2.0,
+            (ElementType::Grass, ElementType::Water) => 2.0,
+            // 微弱关系：水弱于草，火弱于水，草弱于火
+            (ElementType::Water, ElementType::Grass) => 0.5,
+            (ElementType::Fire, ElementType::Water) => 0.5,
+            (ElementType::Grass, ElementType::Fire) => 0.5,
+            // 其他所有情况（包括相同系别）都是正常伤害
+            _ => 1.0,
+        }
+    }
+}
+
 /// 技能唯一标识（逻辑层使用）。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
 pub enum SkillId {
@@ -21,6 +54,8 @@ pub struct SkillDef {
     pub id: SkillId,
     pub name: String,
     pub effect: SkillEffect,
+    #[serde(default)]
+    pub element: Option<ElementType>,
 }
 
 /// 技能效果定义。
@@ -44,6 +79,7 @@ pub struct StatsData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MonsterPrototype {
     pub name: String,
+    pub element: ElementType,
     pub stats: StatsData,
     pub skills: [SkillId; 4],
 }
@@ -51,8 +87,8 @@ pub struct MonsterPrototype {
 #[derive(Debug, Clone, Deserialize)]
 struct BattleConfig {
     pub skills: Vec<SkillDef>,
-    pub player: MonsterPrototype,
-    pub enemy: MonsterPrototype,
+    pub player: Vec<MonsterPrototype>,
+    pub enemy: Vec<MonsterPrototype>,
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -60,8 +96,8 @@ pub struct SkillDb(pub HashMap<SkillId, SkillDef>);
 
 #[derive(Resource, Debug, Clone)]
 pub struct TeamSetup {
-    pub player: MonsterPrototype,
-    pub enemy: MonsterPrototype,
+    pub player: Vec<MonsterPrototype>,
+    pub enemy: Vec<MonsterPrototype>,
 }
 
 /// 数据插件：启动时加载技能与双方初始数据。

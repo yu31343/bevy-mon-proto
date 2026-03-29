@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 
-use crate::data::SkillId;
+use crate::data::{ElementType, SkillId};
 
 /// 阵营标记：玩家或敌方。
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
@@ -11,10 +11,44 @@ pub enum Side {
     Enemy,
 }
 
-/// 战斗体组件：仅用于区分阵营。
+use std::fmt;
+
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side_str = match self {
+            Side::Player => "Player",
+            Side::Enemy => "Enemy",
+        };
+        write!(f, "{}", side_str)
+    }
+}
+
+/// 队伍信息
+#[derive(Debug, Clone)]
+pub struct Team {
+    pub combatants: Vec<Entity>,
+    pub active_index: usize,
+}
+
+impl Team {
+    pub fn active_combatant(&self) -> Option<Entity> {
+        self.combatants.get(self.active_index).copied()
+    }
+}
+
+/// 玩家队伍资源
+#[derive(Resource, Debug, Clone)]
+pub struct PlayerTeam(pub Team);
+
+/// 敌方队伍资源
+#[derive(Resource, Debug, Clone)]
+pub struct EnemyTeam(pub Team);
+
+/// 战斗体组件：包含阵营和元素类型。
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Combatant {
     pub side: Side,
+    pub element: ElementType,
 }
 
 /// 战斗属性组件。
@@ -39,11 +73,18 @@ pub struct Shield(pub i32);
 #[derive(Component, Debug, Clone, Copy)]
 pub struct InBattle;
 
-/// 当前回合双方已选技能。
+/// 表达一次行动（出招或换人）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnAction {
+    Skill(SkillId),
+    Switch,
+}
+
+/// 当前回合双方已选行动。
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnContext {
-    pub player_skill: Option<SkillId>,
-    pub enemy_skill: Option<SkillId>,
+    pub player_action: Option<TurnAction>,
+    pub enemy_action: Option<TurnAction>,
 }
 
 /// 战斗日志缓存（用于控制台与 UI 展示）。
@@ -55,3 +96,7 @@ pub struct BattleLog(pub VecDeque<String>);
 pub struct BattleResult {
     pub message: String,
 }
+
+/// 回合计数器。
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct TurnCount(pub u32);

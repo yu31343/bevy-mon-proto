@@ -2,33 +2,55 @@
     skills: [
         (
             id: Slash,
-            name: "斩击",
+            name: "水刃",
             effect: Attack(power: 10),
+            element: Some(Water),
         ),
         (
             id: HeavyStrike,
-            name: "重击",
+            name: "火焰冲击",
             effect: Attack(power: 16),
+            element: Some(Fire),
         ),
         (
             id: FirstAid,
             name: "急救",
             effect: Heal(amount: 12),
+            element: None,
         ),
         (
             id: Guard,
             name: "防御",
             effect: Shield(amount: 10),
+            element: None,
         ),
     ],
-    player: (
-        name: "HeroMon",
-        stats: (hp: 100, atk: 18, def: 9, spd: 12),
-        skills: (Slash, HeavyStrike, FirstAid, Guard),
-    ),
-    enemy: (
-        name: "RivalMon",
-        stats: (hp: 100, atk: 16, def: 10, spd: 11),
-        skills: (Slash, HeavyStrike, FirstAid, Guard),
-    ),
+    player: [
+        (
+            name: "水精灵",
+            element: Water,
+            stats: (hp: 100, atk: 16, def: 10, spd: 12),
+            skills: (Slash, HeavyStrike, FirstAid, Guard),
+        ),
+        (
+            name: "草精灵",
+            element: Grass,
+            stats: (hp: 80, atk: 14, def: 12, spd: 15),
+            skills: (FirstAid, Guard, Slash, HeavyStrike),
+        )
+    ],
+    enemy: [
+        (
+            name: "火精灵",
+            element: Fire,
+            stats: (hp: 100, atk: 18, def: 9, spd: 11),
+            skills: (HeavyStrike, Slash, FirstAid, Guard),
+        ),
+        (
+            name: "暗精灵",
+            element: Fire,
+            stats: (hp: 90, atk: 20, def: 8, spd: 14),
+            skills: (HeavyStrike, Slash, Guard, FirstAid),
+        )
+    ],
 )

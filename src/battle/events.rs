@@ -10,5 +10,6 @@ pub enum BattleEvent {
     DamageDealt { source: Side, target: Side, amount: i32 },
     Healed { side: Side, amount: i32 },
     ShieldGained { side: Side, amount: i32 },
-    CombatantFainted { side: Side },
+    CombatantFainted { side: Side, name: String },
+    Switched { side: Side, name: String },
 }
