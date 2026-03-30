@@ -39,3 +39,5 @@ desktop.ini
 
 # 忽略 cursor 文件夹
 .cursor/
+# 忽略日志
+*.log

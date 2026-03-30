@@ -1,8 +1,0 @@
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H1","location":"src/battle/mod.rs","message":"about_to_register_enemy_turn_ai_system","data":{},"timestamp":1774870104204}
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H2","location":"src/ui/mod.rs","message":"about_to_register_update_player_hand_text_system","data":{},"timestamp":1774870104205}
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H3","location":"src/ui/mod.rs","message":"about_to_register_update_battle_text_system","data":{},"timestamp":1774870104205}
-{"sessionId":"648aa6","runId":"post-fix","hypothesisId":"H5","location":"src/battle/systems.rs:init_battle_system","message":"init_battle_system_completed","data":{},"timestamp":1774870104361}
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H1","location":"src/battle/mod.rs","message":"about_to_register_enemy_turn_ai_system","data":{},"timestamp":1774870232534}
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H2","location":"src/ui/mod.rs","message":"about_to_register_update_player_hand_text_system","data":{},"timestamp":1774870232535}
-{"sessionId":"648aa6","runId":"instrumentation-pre","hypothesisId":"H3","location":"src/ui/mod.rs","message":"about_to_register_update_battle_text_system","data":{},"timestamp":1774870232535}
-{"sessionId":"648aa6","runId":"post-fix","hypothesisId":"H5","location":"src/battle/systems.rs:init_battle_system","message":"init_battle_system_completed","data":{},"timestamp":1774870232692}
