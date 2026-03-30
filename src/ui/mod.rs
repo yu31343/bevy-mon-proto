@@ -4,7 +4,10 @@ use std::{
 };
 
 use crate::{
-    battle::{BattleLog, BattleResult, Combatant, InBattle, Side, SkillList, Stats, TurnContext, PlayerTeam, EnemyTeam, Team},
+    battle::{
+        BattleLog, BattleResult, Combatant, InBattle, Shield, SkillList, Stats, TurnContext,
+        EnemyTeam, PlayerTeam, Team,
+    },
     data::{SkillDb, SkillId},
     game_state::{BattlePhase, GameState},
 };
@@ -194,6 +197,57 @@ fn button_select_skill_system(
     }
 }
 
+/// 将队伍编成多行面板文案：存活汇总、每位成员场上/替补、生命、护盾、倒下。
+fn format_team_roster(
+    header: &str,
+    team: &Team,
+    query: &Query<(&Combatant, &Stats, &SkillList, &Name, &Shield), With<InBattle>>,
+) -> String {
+    let total = team.combatants.len();
+    let alive = team
+        .combatants
+        .iter()
+        .filter(|&&e| {
+            query
+                .get(e)
+                .map(|(_, stats, _, _, _)| stats.hp > 0)
+                .unwrap_or(false)
+        })
+        .count();
+
+    let mut lines = vec![format!("{}（存活 {}/{}）", header, alive, total)];
+
+    for (i, &entity) in team.combatants.iter().enumerate() {
+        let Ok((combatant, stats, _, name, shield)) = query.get(entity) else {
+            continue;
+        };
+        let slot = if i == team.active_index {
+            "[场上]"
+        } else {
+            "[替补]"
+        };
+        let shield_str = if shield.0 > 0 {
+            format!(" 护盾: {}", shield.0)
+        } else {
+            String::new()
+        };
+        let faint = if stats.hp <= 0 { " 倒下" } else { "" };
+        lines.push(format!(
+            "{} [{}] {} [{}] 生命: {}/{}{}{}",
+            slot,
+            combatant.side,
+            name,
+            element_name(combatant.element),
+            stats.hp,
+            stats.max_hp,
+            shield_str,
+            faint,
+        ));
+    }
+
+    lines.join("\n")
+}
+
 /// 每帧刷新战斗页文本内容（属性、日志、技能名）。
 fn update_battle_ui_system(
     mut text_q: Query<
@@ -208,7 +262,7 @@ fn update_battle_ui_system(
     >,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    query: Query<(&Combatant, &Stats, &SkillList, &Name), With<InBattle>>,
+    query: Query<(&Combatant, &Stats, &SkillList, &Name, &Shield), With<InBattle>>,
     skill_db: Res<SkillDb>,
     battle_log: Res<BattleLog>,
 ) {
@@ -218,44 +272,14 @@ fn update_battle_ui_system(
     let player_team = player_team.unwrap();
     let enemy_team = enemy_team.unwrap();
 
-    let mut player_line = String::from("玩家：...");
-    let mut enemy_line = String::from("敌方：...");
-    
-    let get_alive_count = |team: &Team| {
-        team.combatants.iter().filter(|&&e| {
-            if let Ok((_, stats, _, _)) = query.get(e) {
-                stats.hp > 0
-            } else { false }
-        }).count()
-    };
-    let p_alive = get_alive_count(&player_team.0);
-    let e_alive = get_alive_count(&enemy_team.0);
-
-    if let Some(p_entity) = player_team.0.active_combatant() {
-        if let Ok((combatant, stats, _, name)) = query.get(p_entity) {
-            player_line = format!(
-                "[{}] {} [{}] 生命: {}/{}  剩余成员: {}",
-                combatant.side, name, element_name(combatant.element),
-                stats.hp, stats.max_hp, p_alive
-            );
-        }
-    }
-
-    if let Some(e_entity) = enemy_team.0.active_combatant() {
-        if let Ok((combatant, stats, _, name)) = query.get(e_entity) {
-            enemy_line = format!(
-                "[{}] {} [{}] 生命: {}/{}  剩余成员: {}",
-                combatant.side, name, element_name(combatant.element),
-                stats.hp, stats.max_hp, e_alive
-            );
-        }
-    }
+    let player_line = format_team_roster("玩家队伍", &player_team.0, &query);
+    let enemy_line = format_team_roster("敌方队伍", &enemy_team.0, &query);
 
     let log_line = battle_log.0.iter().cloned().collect::<Vec<_>>().join("\n");
 
     let mut player_skills = None;
     if let Some(p_entity) = player_team.0.active_combatant() {
-        if let Ok((_, _, skills, _)) = query.get(p_entity) {
+        if let Ok((_, _, skills, _, _)) = query.get(p_entity) {
             player_skills = Some(skills.0);
         }
     }

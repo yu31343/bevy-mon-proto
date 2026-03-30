@@ -37,6 +37,12 @@
             element: Grass,
             stats: (hp: 80, atk: 14, def: 12, spd: 15),
             skills: (FirstAid, Guard, Slash, HeavyStrike),
+        ),
+        (
+            name: "火精灵",
+            element: Fire,
+            stats: (hp: 100, atk: 18, def: 9, spd: 11),
+            skills: (HeavyStrike, Slash, FirstAid, Guard),
         )
     ],
     enemy: [
@@ -51,6 +57,12 @@
             element: Fire,
             stats: (hp: 90, atk: 20, def: 8, spd: 14),
             skills: (HeavyStrike, Slash, Guard, FirstAid),
+        ),
+        (
+            name: "草精灵",
+            element: Grass,
+            stats: (hp: 80, atk: 14, def: 12, spd: 15),
+            skills: (FirstAid, Guard, Slash, HeavyStrike),
         )
     ],
 )
