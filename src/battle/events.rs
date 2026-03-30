@@ -6,7 +6,12 @@ use super::Side;
 #[derive(Message, Debug, Clone)]
 pub enum BattleEvent {
     TurnStarted(u32),
-    SkillUsed { side: Side, skill_name: String },
+    SkillUsed {
+        side: Side,
+        skill_name: String,
+        /// 技能在 4 格栏中的索引（用于 UI 高亮）。
+        slot: usize,
+    },
     DamageDealt { source: Side, target: Side, amount: i32 },
     ShieldAbsorbed { side: Side, amount: i32 },
     Healed { side: Side, amount: i32 },

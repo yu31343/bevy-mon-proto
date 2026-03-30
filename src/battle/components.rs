@@ -91,6 +91,19 @@ pub struct TurnContext {
 #[derive(Resource, Debug, Default)]
 pub struct BattleLog(pub VecDeque<String>);
 
+/// 战斗日志最大条数（与 `push_battle_line` 一致）。
+pub const BATTLE_LOG_LIMIT: usize = 10;
+
+/// 写入一条战斗日志：打印到终端并加入 `BattleLog`。
+pub fn push_battle_line(log: &mut BattleLog, line: impl Into<String>) {
+    let line = line.into();
+    println!("{line}");
+    log.0.push_back(line);
+    while log.0.len() > BATTLE_LOG_LIMIT {
+        log.0.pop_front();
+    }
+}
+
 /// 结算页面显示文本。
 #[derive(Resource, Debug, Default)]
 pub struct BattleResult {

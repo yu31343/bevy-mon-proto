@@ -6,11 +6,9 @@ use crate::{
 };
 
 use super::{
-    BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Shield, Side, SkillList, Stats, TurnAction,
-    TurnContext, TurnCount,
+    push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Shield, Side, SkillList, Stats,
+    TurnAction, TurnContext, TurnCount,
 };
-
-const LOG_LIMIT: usize = 10;
 
 /// 初始化战斗：清理旧实体、生成双方单位并进入玩家指令阶段。
 pub fn init_battle_system(
@@ -151,9 +149,10 @@ pub fn init_battle_system(
     commands.insert_resource(crate::battle::PlayerTeam(player_team));
     commands.insert_resource(crate::battle::EnemyTeam(enemy_team));
 
-    battle_log
-        .0
-        .push_back("战斗已开始，按 1-4 选择技能，按 Q 切换精灵。".to_string());
+    push_battle_line(
+        &mut battle_log,
+        "战斗已开始，按 1-4 选择技能，按 Q 切换精灵。",
+    );
     next_phase.set(BattlePhase::PlayerCommand);
 }
 
@@ -465,6 +464,11 @@ pub fn resolve_turn_system(
             TurnAction::Switch => continue,
         };
 
+        let skill_slot = query
+            .get(active_side_entity)
+            .map(|(_, _, _, sl, _, _)| sl.0.iter().position(|&s| s == skill_id).unwrap_or(0))
+            .unwrap_or(0);
+
         let Ok([
             (_, a_combatant, mut a_stats, _, mut a_shield, _),
             (_, t_combatant, mut t_stats, _, mut t_shield, _),
@@ -507,6 +511,7 @@ pub fn resolve_turn_system(
         event_writer.write(BattleEvent::SkillUsed {
             side: attacker_side,
             skill_name: skill.name.clone(),
+            slot: skill_slot,
         });
 
         if actor_is_player_slot {
@@ -596,7 +601,7 @@ pub fn check_end_system(
             p_dead = false;
             let new_e = player_team.0.combatants[idx];
             if let Ok((_, _, new_n)) = query.get(new_e) {
-                battle_log.0.push_back(format!("玩家换上了 {}！", new_n));
+                push_battle_line(&mut battle_log, format!("玩家换上了 {}！", new_n));
             }
         }
     }
@@ -643,7 +648,7 @@ pub fn check_end_system(
             e_dead = false;
             let new_e = enemy_team.0.combatants[idx];
             if let Ok((_, _, new_n)) = query.get(new_e) {
-                battle_log.0.push_back(format!("敌方换上了 {}！", new_n));
+                push_battle_line(&mut battle_log, format!("敌方换上了 {}！", new_n));
             }
         }
     }
@@ -685,7 +690,7 @@ pub fn consume_battle_events_system(
     for event in events.read() {
         let line = match event {
             BattleEvent::TurnStarted(turn) => format!("--- 第 {turn} 回合 ---"),
-            BattleEvent::SkillUsed { side, skill_name } => {
+            BattleEvent::SkillUsed { side, skill_name, .. } => {
                 format!("{} 使用了 {}。", side_text(*side), skill_name)
             }
             BattleEvent::DamageDealt {
@@ -709,11 +714,7 @@ pub fn consume_battle_events_system(
             BattleEvent::Switched { side, name } => format!("{} 换上了 {}！", side_text(*side), name),
         };
 
-        println!("{line}");
-        log.0.push_back(line);
-        while log.0.len() > LOG_LIMIT {
-            log.0.pop_front();
-        }
+        push_battle_line(&mut log, line);
     }
 
     if *state.get() == GameState::Result && !result.message.is_empty() {
@@ -821,9 +822,6 @@ fn abort_battle(
 ) {
     let message = format!("战斗中断：{reason} 按 R 重新开始。");
     battle_result.message = message.clone();
-    battle_log.0.push_back(message);
-    while battle_log.0.len() > LOG_LIMIT {
-        battle_log.0.pop_front();
-    }
+    push_battle_line(battle_log, message);
     next_game_state.set(GameState::Result);
 }

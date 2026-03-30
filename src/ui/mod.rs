@@ -1,86 +1,195 @@
+//! 战斗 UI：上敌方 / 下玩家，血条与护盾条，技能格占位图与特效。
+mod fx;
+
 use bevy::prelude::*;
 use std::fs;
 
 use crate::{
     battle::{
-        BattleLog, BattleResult, Combatant, EnemyTeam, InBattle, PlayerTeam, Shield, SkillList, Stats, Team,
+        BattleResult, Combatant, EnemyTeam, InBattle, PlayerTeam, Shield, Side, SkillList, Stats, Team,
         TurnContext,
     },
     data::{ElementType, SkillDb, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
 };
 
-/// 玩家属性文本标记。
+use fx::{process_battle_fx_events, tick_fx_lifetimes, tick_screen_flashes, tick_skill_flash_timer, SkillFlashTimer};
+
+/// 根画布（飘字与闪屏的父节点）。
+#[derive(Component)]
+pub(crate) struct BattleUiRoot;
+
+/// 技能格所属阵营与槽位（玩家按钮与敌方卡共用）。
+#[derive(Component, Clone, Copy)]
+pub(crate) struct SkillSlotId {
+    pub side: Side,
+    pub index: usize,
+}
+
 #[derive(Component)]
 struct PlayerStatsText;
-/// 敌方属性文本标记。
 #[derive(Component)]
 struct EnemyStatsText;
-/// 日志文本标记。
-#[derive(Component)]
-struct LogText;
-/// 结算文本标记。
 #[derive(Component)]
 struct ResultText;
-/// 战斗阶段文本标记。
 #[derive(Component)]
 struct BattlePhaseText;
-/// 技能按钮标记（保存按钮槽位索引）。
+
 #[derive(Component)]
 struct SkillButton {
     index: usize,
 }
-/// 技能按钮内文本标记（保存按钮槽位索引）。
 #[derive(Component)]
 struct SkillButtonText {
     index: usize,
 }
-/// 技能按钮副信息文本标记（保存按钮槽位索引）。
 #[derive(Component)]
 struct SkillButtonMetaText {
     index: usize,
 }
-/// 技能按钮图标占位文本标记（保存按钮槽位索引）。
 #[derive(Component)]
 struct SkillButtonIconText {
     index: usize,
 }
-/// 玩家血条填充条。
+
+#[derive(Component)]
+struct EnemySkillText {
+    index: usize,
+}
+#[derive(Component)]
+struct EnemySkillMetaText {
+    index: usize,
+}
+#[derive(Component)]
+struct EnemySkillIconText {
+    index: usize,
+}
+
 #[derive(Component)]
 struct PlayerHpBarFill;
-/// 敌方血条填充条。
 #[derive(Component)]
 struct EnemyHpBarFill;
 
-/// UI 插件：负责渲染和更新战斗界面。
+#[derive(Component)]
+struct PlayerShieldBarTrack;
+#[derive(Component)]
+struct EnemyShieldBarTrack;
+
+#[derive(Component)]
+struct PlayerShieldBarFill;
+#[derive(Component)]
+struct EnemyShieldBarFill;
+
 pub struct UiPlugin;
 
 #[derive(Resource, Clone)]
-struct UiFontHandle(Handle<Font>);
+pub(crate) struct UiFontHandle(Handle<Font>);
 
 #[derive(Resource, Clone)]
 struct UiTheme {
-    bg_main: Color,
+    bg_top: Color,
+    bg_bottom: Color,
+    top_bar_start: Color,
+    top_bar_end: Color,
     panel: Color,
     button_idle: Color,
     button_hover: Color,
     button_pressed: Color,
+    enemy_card_bg: Color,
+    enemy_card_border: Color,
     hp_track: Color,
     hp_fill_player: Color,
     hp_fill_enemy: Color,
+    shield_track: Color,
+    shield_fill_player: Color,
+    shield_fill_enemy: Color,
+    border_panel: Color,
+    border_top_bar: Color,
+    button_border_idle: Color,
+    button_border_hover: Color,
+    button_border_pressed: Color,
+    radius_panel: Val,
+    radius_button: Val,
+    radius_hp: Val,
 }
 
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            bg_main: Color::srgb(0.07, 0.10, 0.14),
+            bg_top: Color::srgb(0.09, 0.12, 0.18),
+            bg_bottom: Color::srgb(0.05, 0.07, 0.11),
+            top_bar_start: Color::srgba(0.14, 0.26, 0.38, 0.92),
+            top_bar_end: Color::srgba(0.10, 0.18, 0.28, 0.88),
             panel: Color::srgb(0.12, 0.16, 0.22),
             button_idle: Color::srgb(0.18, 0.26, 0.34),
             button_hover: Color::srgb(0.23, 0.33, 0.43),
             button_pressed: Color::srgb(0.12, 0.22, 0.30),
-            hp_track: Color::srgb(0.22, 0.22, 0.24),
+            enemy_card_bg: Color::srgb(0.14, 0.20, 0.28),
+            enemy_card_border: Color::srgba(0.5, 0.4, 0.45, 0.55),
+            hp_track: Color::srgb(0.16, 0.16, 0.19),
             hp_fill_player: Color::srgb(0.17, 0.73, 0.45),
             hp_fill_enemy: Color::srgb(0.89, 0.31, 0.33),
+            shield_track: Color::srgb(0.14, 0.18, 0.22),
+            shield_fill_player: Color::srgb(0.35, 0.75, 0.95),
+            shield_fill_enemy: Color::srgb(0.55, 0.45, 0.95),
+            border_panel: Color::srgba(0.42, 0.58, 0.72, 0.45),
+            border_top_bar: Color::srgba(0.55, 0.72, 0.88, 0.42),
+            button_border_idle: Color::srgba(0.45, 0.58, 0.70, 0.55),
+            button_border_hover: Color::srgba(0.58, 0.72, 0.88, 0.65),
+            button_border_pressed: Color::srgba(0.32, 0.44, 0.55, 0.55),
+            radius_panel: Val::Px(10.0),
+            radius_button: Val::Px(8.0),
+            radius_hp: Val::Px(7.0),
+        }
+    }
+}
+
+impl UiTheme {
+    fn root_background(&self) -> BackgroundGradient {
+        BackgroundGradient::from(LinearGradient::to_bottom(vec![
+            ColorStop::percent(self.bg_top, 0.0),
+            ColorStop::percent(self.bg_bottom, 100.0),
+        ]))
+    }
+
+    fn top_bar_background(&self) -> BackgroundGradient {
+        BackgroundGradient::from(LinearGradient::to_right(vec![
+            ColorStop::percent(self.top_bar_start, 0.0),
+            ColorStop::percent(self.top_bar_end, 100.0),
+        ]))
+    }
+
+    fn panel_shadow(&self) -> BoxShadow {
+        BoxShadow::new(
+            Color::srgba(0.0, 0.0, 0.0, 0.48),
+            Val::Px(0.0),
+            Val::Px(5.0),
+            Val::Px(0.0),
+            Val::Px(14.0),
+        )
+    }
+
+    fn button_shadow(&self) -> BoxShadow {
+        BoxShadow::new(
+            Color::srgba(0.0, 0.0, 0.0, 0.38),
+            Val::Px(0.0),
+            Val::Px(3.0),
+            Val::Px(0.0),
+            Val::Px(10.0),
+        )
+    }
+
+    fn title_text_shadow(&self) -> TextShadow {
+        TextShadow {
+            offset: Vec2::new(1.5, 1.5),
+            color: Color::srgba(0.0, 0.0, 0.0, 0.72),
+        }
+    }
+
+    fn result_text_shadow(&self) -> TextShadow {
+        TextShadow {
+            offset: Vec2::new(2.0, 2.0),
+            color: Color::srgba(0.0, 0.0, 0.0, 0.78),
         }
     }
 }
@@ -95,8 +204,13 @@ impl Plugin for UiPlugin {
                     button_select_skill_system
                         .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerCommand))),
                     button_visual_state_system.run_if(in_state(GameState::Battle)),
-                    update_battle_ui_system.run_if(in_state(GameState::Battle)),
+                    update_battle_text_system.run_if(in_state(GameState::Battle)),
+                    update_battle_bars_system.run_if(in_state(GameState::Battle)),
                     update_result_ui_system.run_if(in_state(GameState::Result)),
+                    process_battle_fx_events,
+                    tick_skill_flash_timer.after(process_battle_fx_events),
+                    tick_screen_flashes,
+                    tick_fx_lifetimes,
                 ),
             );
     }
@@ -106,7 +220,6 @@ fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-/// 尝试加载支持中文的系统字体，优先使用本机常见字体。
 fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
     let candidates = [
         "C:/Windows/Fonts/msyh.ttc",
@@ -129,227 +242,461 @@ fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Assets<Font>>)
     }
 }
 
-/// 创建战斗 UI 节点树（属性、血条、技能栏、日志、结算文本）。
+fn spawn_hp_bar(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    border_1: UiRect,
+    radius_hp: Val,
+    fill: Color,
+    fill_marker: impl Component,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(14.0),
+                overflow: Overflow::clip(),
+                border_radius: BorderRadius::all(radius_hp),
+                border: border_1,
+                ..default()
+            },
+            BackgroundColor(theme.hp_track),
+            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Stretch,
+                    border_radius: BorderRadius::all(radius_hp),
+                    padding: UiRect::axes(Val::Px(1.0), Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(fill),
+                fill_marker,
+            ))
+            .with_children(|fill_ent| {
+                fill_ent.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(36.0),
+                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.2)),
+                ));
+            });
+        });
+}
+
+fn spawn_shield_bar(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    border_1: UiRect,
+    _radius_hp: Val,
+    fill: Color,
+    fill_marker: impl Component,
+    track_marker: impl Component,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(10.0),
+                margin: UiRect::top(Val::Px(4.0)),
+                overflow: Overflow::clip(),
+                border_radius: BorderRadius::all(Val::Px(5.0)),
+                border: border_1,
+                ..default()
+            },
+            BackgroundColor(theme.shield_track),
+            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.3)),
+            Visibility::Hidden,
+            track_marker,
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                    ..default()
+                },
+                BackgroundColor(fill),
+                fill_marker,
+            ));
+        });
+}
+
+fn spawn_skill_row_player(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    border_1: UiRect,
+    radius_button: Val,
+    body_font: TextFont,
+    meta_font: TextFont,
+    icon_font: TextFont,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(120.0),
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(8.0),
+                row_gap: Val::Px(8.0),
+                align_items: AlignItems::Stretch,
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            for idx in 0..4 {
+                row.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(49.0),
+                        min_height: Val::Px(64.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    SkillButton { index: idx },
+                    SkillSlotId {
+                        side: Side::Player,
+                        index: idx,
+                    },
+                ))
+                .with_children(|button| {
+                    button
+                        .spawn((
+                            Node {
+                                width: Val::Px(28.0),
+                                height: Val::Px(28.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            ImageNode::solid_color(Color::srgba(0.3, 0.45, 0.55, 0.9)),
+                        ))
+                        .with_children(|icon_box| {
+                            icon_box.spawn((
+                                Text::new("?"),
+                                icon_font.clone(),
+                                TextColor(Color::WHITE),
+                                SkillButtonIconText { index: idx },
+                            ));
+                        });
+
+                    button
+                        .spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(2.0),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|column| {
+                            column.spawn((
+                                Text::new(format!("技能 {}", idx + 1)),
+                                body_font.clone(),
+                                TextColor(Color::WHITE),
+                                SkillButtonText { index: idx },
+                            ));
+                            column.spawn((
+                                Text::new("类型：--"),
+                                meta_font.clone(),
+                                TextColor(Color::srgb(0.70, 0.82, 0.92)),
+                                SkillButtonMetaText { index: idx },
+                            ));
+                        });
+                });
+            }
+        });
+}
+
+fn spawn_skill_row_enemy(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    border_1: UiRect,
+    radius_button: Val,
+    body_font: TextFont,
+    meta_font: TextFont,
+    icon_font: TextFont,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(120.0),
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(8.0),
+                row_gap: Val::Px(8.0),
+                align_items: AlignItems::Stretch,
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            for idx in 0..4 {
+                row.spawn((
+                    Node {
+                        width: Val::Percent(49.0),
+                        min_height: Val::Px(64.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        ..default()
+                    },
+                    BackgroundColor(theme.enemy_card_bg),
+                    BorderColor::all(theme.enemy_card_border),
+                    theme.button_shadow(),
+                    SkillSlotId {
+                        side: Side::Enemy,
+                        index: idx,
+                    },
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Node {
+                            width: Val::Px(28.0),
+                            height: Val::Px(28.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        ImageNode::solid_color(Color::srgba(0.45, 0.28, 0.32, 0.92)),
+                    ))
+                    .with_children(|icon_box| {
+                        icon_box.spawn((
+                            Text::new("?"),
+                            icon_font.clone(),
+                            TextColor(Color::srgb(0.95, 0.85, 0.88)),
+                            EnemySkillIconText { index: idx },
+                        ));
+                    });
+
+                    card.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|column| {
+                        column.spawn((
+                            Text::new(format!("技能 {}", idx + 1)),
+                            body_font.clone(),
+                            TextColor(Color::WHITE),
+                            EnemySkillText { index: idx },
+                        ));
+                        column.spawn((
+                            Text::new("类型：--"),
+                            meta_font.clone(),
+                            TextColor(Color::srgb(0.75, 0.78, 0.88)),
+                            EnemySkillMetaText { index: idx },
+                        ));
+                    });
+                });
+            }
+        });
+}
+
 fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<Res<UiFontHandle>>) {
+    let radius_panel = theme.radius_panel;
+    let radius_button = theme.radius_button;
+    let radius_hp = theme.radius_hp;
+    let border_1 = UiRect::all(Val::Px(1.0));
+
+    let title_font = make_text_font(24.0, ui_font.as_deref());
+    let body_font = make_text_font(19.0, ui_font.as_deref());
+    let meta_font = make_text_font(14.0, ui_font.as_deref());
+    let result_font = make_text_font(28.0, ui_font.as_deref());
+    let icon_font = make_text_font(16.0, ui_font.as_deref());
+
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::SpaceBetween,
+                justify_content: JustifyContent::FlexStart,
                 row_gap: Val::Px(10.0),
                 padding: UiRect::all(Val::Px(14.0)),
                 ..default()
             },
-            BackgroundColor(theme.bg_main),
+            theme.root_background(),
+            BattleUiRoot,
         ))
         .with_children(|root| {
-            let title_font = make_text_font(24.0, ui_font.as_deref());
-            let body_font = make_text_font(19.0, ui_font.as_deref());
-            let log_font = make_text_font(17.0, ui_font.as_deref());
-            let result_font = make_text_font(28.0, ui_font.as_deref());
-            let icon_font = make_text_font(16.0, ui_font.as_deref());
-            let meta_font = make_text_font(14.0, ui_font.as_deref());
-
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
                     padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.20, 0.35, 0.46, 0.50)),
+                theme.top_bar_background(),
+                BorderColor::all(theme.border_top_bar),
+                theme.panel_shadow(),
             ))
             .with_children(|bar| {
                 bar.spawn((
                     Text::new("战斗阶段：准备中"),
                     body_font.clone(),
                     TextColor(Color::srgb(0.95, 0.98, 1.0)),
+                    theme.title_text_shadow(),
                     BattlePhaseText,
                 ));
                 bar.spawn((
                     Text::new("操作提示：按 1-4 选择技能，按 Q 切换成员，按 R 重新开始"),
                     meta_font.clone(),
                     TextColor(Color::srgb(0.80, 0.90, 0.95)),
+                    TextShadow {
+                        offset: Vec2::new(1.0, 1.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.45),
+                    },
                 ));
             });
 
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
+                    flex_grow: 1.0,
+                    min_height: Val::Px(200.0),
                     padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(8.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
                     ..default()
                 },
                 BackgroundColor(theme.panel),
+                BorderColor::all(theme.border_panel),
+                theme.panel_shadow(),
             ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new("玩家：..."),
+            .with_children(|enemy_zone| {
+                enemy_zone.spawn((
+                    Text::new("敌方"),
                     title_font.clone(),
-                    TextColor(Color::WHITE),
-                    PlayerStatsText,
+                    TextColor(Color::srgb(1.0, 0.75, 0.78)),
+                    theme.title_text_shadow(),
                 ));
-                panel
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(14.0),
-                            ..default()
-                        },
-                        BackgroundColor(theme.hp_track),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(theme.hp_fill_player),
-                            PlayerHpBarFill,
-                        ));
-                    });
-
-                panel.spawn((
+                enemy_zone.spawn((
                     Text::new("敌方：..."),
-                    title_font,
+                    body_font.clone(),
                     TextColor(Color::WHITE),
+                    theme.title_text_shadow(),
                     EnemyStatsText,
                 ));
-                panel
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(14.0),
-                            ..default()
-                        },
-                        BackgroundColor(theme.hp_track),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(theme.hp_fill_enemy),
-                            EnemyHpBarFill,
-                        ));
-                    });
+                spawn_hp_bar(
+                    enemy_zone,
+                    &theme,
+                    border_1,
+                    radius_hp,
+                    theme.hp_fill_enemy,
+                    EnemyHpBarFill,
+                );
+                spawn_shield_bar(
+                    enemy_zone,
+                    &theme,
+                    border_1,
+                    radius_hp,
+                    theme.shield_fill_enemy,
+                    EnemyShieldBarFill,
+                    EnemyShieldBarTrack,
+                );
+                spawn_skill_row_enemy(
+                    enemy_zone,
+                    &theme,
+                    border_1,
+                    radius_button,
+                    body_font.clone(),
+                    meta_font.clone(),
+                    icon_font.clone(),
+                );
             });
 
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    min_height: Val::Px(120.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    column_gap: Val::Px(8.0),
-                    row_gap: Val::Px(8.0),
-                    align_items: AlignItems::Stretch,
-                    ..default()
-                },
-            ))
-            .with_children(|row| {
-                for idx in 0..4 {
-                    row.spawn((
-                        Button,
-                        Node {
-                            width: Val::Percent(49.0),
-                            min_height: Val::Px(64.0),
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(8.0),
-                            ..default()
-                        },
-                        BackgroundColor(theme.button_idle),
-                        SkillButton { index: idx },
-                    ))
-                    .with_children(|button| {
-                        button
-                            .spawn((
-                                Node {
-                                    width: Val::Px(24.0),
-                                    height: Val::Px(24.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12)),
-                            ))
-                            .with_children(|icon_box| {
-                                icon_box.spawn((
-                                    Text::new("?"),
-                                    icon_font.clone(),
-                                    TextColor(Color::WHITE),
-                                    SkillButtonIconText { index: idx },
-                                ));
-                            });
-
-                        button
-                            .spawn((
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(2.0),
-                                    ..default()
-                                },
-                            ))
-                            .with_children(|column| {
-                                column.spawn((
-                                    Text::new(format!("技能 {}", idx + 1)),
-                                    body_font.clone(),
-                                    TextColor(Color::WHITE),
-                                    SkillButtonText { index: idx },
-                                ));
-                                column.spawn((
-                                    Text::new("类型：--"),
-                                    meta_font.clone(),
-                                    TextColor(Color::srgb(0.70, 0.82, 0.92)),
-                                    SkillButtonMetaText { index: idx },
-                                ));
-                            });
-                    });
-                }
-            });
-
-            root.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    min_height: Val::Px(140.0),
-                    padding: UiRect::all(Val::Px(10.0)),
+                    flex_grow: 1.0,
+                    min_height: Val::Px(200.0),
+                    padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(6.0),
+                    row_gap: Val::Px(8.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.11, 0.80)),
+                BackgroundColor(theme.panel),
+                BorderColor::all(theme.border_panel),
+                theme.panel_shadow(),
             ))
-            .with_children(|log_panel| {
-                log_panel.spawn((
-                    Text::new("战斗日志"),
-                    body_font,
-                    TextColor(Color::srgb(0.93, 0.96, 0.98)),
+            .with_children(|player_zone| {
+                player_zone.spawn((
+                    Text::new("我方"),
+                    title_font.clone(),
+                    TextColor(Color::srgb(0.75, 0.92, 1.0)),
+                    theme.title_text_shadow(),
                 ));
-                log_panel.spawn((
-                    Text::new(""),
-                    log_font,
-                    TextColor(Color::srgb(0.82, 0.87, 0.90)),
-                    LogText,
+                player_zone.spawn((
+                    Text::new("玩家：..."),
+                    body_font.clone(),
+                    TextColor(Color::WHITE),
+                    theme.title_text_shadow(),
+                    PlayerStatsText,
                 ));
+                spawn_hp_bar(
+                    player_zone,
+                    &theme,
+                    border_1,
+                    radius_hp,
+                    theme.hp_fill_player,
+                    PlayerHpBarFill,
+                );
+                spawn_shield_bar(
+                    player_zone,
+                    &theme,
+                    border_1,
+                    radius_hp,
+                    theme.shield_fill_player,
+                    PlayerShieldBarFill,
+                    PlayerShieldBarTrack,
+                );
+                spawn_skill_row_player(
+                    player_zone,
+                    &theme,
+                    border_1,
+                    radius_button,
+                    body_font.clone(),
+                    meta_font.clone(),
+                    icon_font.clone(),
+                );
             });
 
             root.spawn((
                 Text::new(""),
                 result_font,
                 TextColor(Color::srgb(1.0, 0.82, 0.35)),
+                theme.result_text_shadow(),
                 ResultText,
             ));
         });
 }
 
-/// 处理技能按钮点击，行为与键盘选招保持一致。
 fn button_select_skill_system(
     mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -374,21 +721,31 @@ fn button_select_skill_system(
     }
 }
 
-/// 根据交互状态更新按钮色，先用统一主题，后期可切换贴图方案。
 fn button_visual_state_system(
-    mut buttons: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<SkillButton>)>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<SkillButton>,
+            Without<SkillFlashTimer>,
+        ),
+    >,
     theme: Res<UiTheme>,
 ) {
-    for (interaction, mut bg) in &mut buttons {
+    for (interaction, mut bg, mut border) in &mut buttons {
         *bg = match *interaction {
             Interaction::Pressed => BackgroundColor(theme.button_pressed),
             Interaction::Hovered => BackgroundColor(theme.button_hover),
             Interaction::None => BackgroundColor(theme.button_idle),
         };
+        *border = match *interaction {
+            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+            Interaction::None => BorderColor::all(theme.button_border_idle),
+        };
     }
 }
 
-/// 将队伍编成多行面板文案：存活汇总、每位成员场上/替补、生命、护盾、倒下。
 fn format_team_roster(
     header: &str,
     team: &Team,
@@ -430,29 +787,29 @@ fn format_team_roster(
     lines.join("\n")
 }
 
-/// 每帧刷新战斗页文本内容（属性、日志、技能名、图标占位、血条）。
-fn update_battle_ui_system(
+/// 仅更新战斗相关 `Text`，避免与 `Node` 宽度更新在同一系统内触发 B0001（同一 UI 实体常同时有 `Text` 与 `Node`）。
+#[allow(clippy::too_many_arguments)]
+fn update_battle_text_system(
     mut text_q: Query<
         (
             &mut Text,
             Option<&BattlePhaseText>,
             Option<&PlayerStatsText>,
             Option<&EnemyStatsText>,
-            Option<&LogText>,
             Option<&ResultText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
+            Option<&EnemySkillText>,
+            Option<&EnemySkillMetaText>,
+            Option<&EnemySkillIconText>,
         ),
     >,
-    mut player_hp_fill_q: Query<&mut Node, (With<PlayerHpBarFill>, Without<EnemyHpBarFill>)>,
-    mut enemy_hp_fill_q: Query<&mut Node, (With<EnemyHpBarFill>, Without<PlayerHpBarFill>)>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>,
     skill_query: Query<&SkillList, With<InBattle>>,
     skill_db: Res<SkillDb>,
-    battle_log: Res<BattleLog>,
     battle_phase: Res<State<BattlePhase>>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
@@ -461,12 +818,6 @@ fn update_battle_ui_system(
 
     let player_line = format_team_roster("玩家队伍", &player_team.0, &combat_query);
     let enemy_line = format_team_roster("敌方队伍", &enemy_team.0, &combat_query);
-    let log_line = battle_log
-        .0
-        .iter()
-        .map(|line| format!("• {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
 
     let mut player_skills = None;
     if let Some(p_entity) = player_team.0.active_combatant() {
@@ -475,16 +826,25 @@ fn update_battle_ui_system(
         }
     }
 
+    let mut enemy_skills = None;
+    if let Some(e_entity) = enemy_team.0.active_combatant() {
+        if let Ok(skills) = skill_query.get(e_entity) {
+            enemy_skills = Some(skills.0);
+        }
+    }
+
     for (
         mut text,
         is_phase,
         is_player,
         is_enemy,
-        is_log,
         is_result,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
+        enemy_skill_text,
+        enemy_skill_meta,
+        enemy_skill_icon,
     ) in &mut text_q
     {
         if is_result.is_some() {
@@ -503,10 +863,6 @@ fn update_battle_ui_system(
             text.0 = enemy_line.clone();
             continue;
         }
-        if is_log.is_some() {
-            text.0 = log_line.clone();
-            continue;
-        }
         if let (Some(button), Some(skills)) = (skill_button_text, player_skills) {
             let skill_id = skills[button.index];
             text.0 = format!("{}号: {}", button.index + 1, skill_name(skill_id, &skill_db));
@@ -519,21 +875,82 @@ fn update_battle_ui_system(
         }
         if let (Some(icon), Some(_skills)) = (skill_icon_text, player_skills) {
             text.0 = (icon.index + 1).to_string();
+            continue;
+        }
+        if let (Some(button), Some(skills)) = (enemy_skill_text, enemy_skills) {
+            let skill_id = skills[button.index];
+            text.0 = format!("{}号: {}", button.index + 1, skill_name(skill_id, &skill_db));
+            continue;
+        }
+        if let (Some(meta), Some(skills)) = (enemy_skill_meta, enemy_skills) {
+            let skill_id = skills[meta.index];
+            text.0 = skill_meta(skill_id, &skill_db);
+            continue;
+        }
+        if let (Some(icon), Some(_skills)) = (enemy_skill_icon, enemy_skills) {
+            text.0 = (icon.index + 1).to_string();
         }
     }
+}
+
+fn update_battle_bars_system(
+    mut fills: ParamSet<(
+        Query<&mut Node, With<PlayerHpBarFill>>,
+        Query<&mut Node, With<EnemyHpBarFill>>,
+        Query<&mut Node, With<PlayerShieldBarFill>>,
+        Query<&mut Node, With<EnemyShieldBarFill>>,
+    )>,
+    mut tracks: ParamSet<(
+        Query<&mut Visibility, With<PlayerShieldBarTrack>>,
+        Query<&mut Visibility, With<EnemyShieldBarTrack>>,
+    )>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
 
     let player_hp_pct = active_hp_percent(&player_team.0, &combat_query);
     let enemy_hp_pct = active_hp_percent(&enemy_team.0, &combat_query);
 
-    if let Ok(mut node) = player_hp_fill_q.single_mut() {
+    if let Ok(mut node) = fills.p0().single_mut() {
         node.width = Val::Percent(player_hp_pct);
     }
-    if let Ok(mut node) = enemy_hp_fill_q.single_mut() {
+    if let Ok(mut node) = fills.p1().single_mut() {
         node.width = Val::Percent(enemy_hp_pct);
+    }
+
+    let player_shield_pct = active_shield_percent(&player_team.0, &combat_query);
+    let enemy_shield_pct = active_shield_percent(&enemy_team.0, &combat_query);
+
+    if let Ok(mut node) = fills.p2().single_mut() {
+        node.width = Val::Percent(player_shield_pct);
+    }
+    if let Ok(mut node) = fills.p3().single_mut() {
+        node.width = Val::Percent(enemy_shield_pct);
+    }
+
+    let player_has_shield = active_shield(&player_team.0, &combat_query) > 0;
+    let enemy_has_shield = active_shield(&enemy_team.0, &combat_query) > 0;
+
+    if let Ok(mut vis) = tracks.p0().single_mut() {
+        *vis = if player_has_shield {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if let Ok(mut vis) = tracks.p1().single_mut() {
+        *vis = if enemy_has_shield {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 
-/// 更新结果页文本。
 fn update_result_ui_system(
     mut result_text_q: Query<&mut Text, With<ResultText>>,
     battle_result: Res<BattleResult>,
@@ -543,7 +960,6 @@ fn update_result_ui_system(
     }
 }
 
-/// 从技能库读取技能展示名称。
 fn skill_name(skill_id: SkillId, db: &SkillDb) -> String {
     db.0
         .get(&skill_id)
@@ -593,7 +1009,29 @@ fn active_hp_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shi
     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
 }
 
-/// 将元素类型转换为中文显示名称。
+fn active_shield(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>) -> i32 {
+    let Some(entity) = team.active_combatant() else {
+        return 0;
+    };
+    let Ok((_, _, _, shield)) = query.get(entity) else {
+        return 0;
+    };
+    shield.0.max(0)
+}
+
+fn active_shield_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>) -> f32 {
+    let Some(entity) = team.active_combatant() else {
+        return 0.0;
+    };
+    let Ok((_, stats, _, shield)) = query.get(entity) else {
+        return 0.0;
+    };
+    if stats.max_hp <= 0 {
+        return 0.0;
+    }
+    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
+}
+
 fn element_name(element: ElementType) -> &'static str {
     match element {
         ElementType::Water => "水",
