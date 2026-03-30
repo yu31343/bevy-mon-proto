@@ -66,6 +66,7 @@ impl ElementMatrix {
 
 /// 元素附着/反应的“盾免疫”判定：
 /// 当护盾吸收了本次伤害的一部分（absorbed > 0）时，不触发元素附着/消耗。
+#[allow(dead_code)]
 pub fn shield_blocks_element_attachment(shield: i32, theoretical_damage: i32) -> bool {
     shield.min(theoretical_damage) > 0
 }

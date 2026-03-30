@@ -193,6 +193,7 @@ fn monster_skill_ap_cost(slot: usize) -> i32 {
     }
 }
 
+#[allow(dead_code)]
 fn card_hotkey_to_index(key: KeyCode) -> Option<usize> {
     match key {
         KeyCode::KeyZ => Some(0),
@@ -403,7 +404,7 @@ pub fn player_turn_input_system(
 
         let Ok(
             [
-                (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
+                (_, _attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
                 (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
             ],
         ) = query.get_many_mut([p_entity, e_entity])
@@ -575,7 +576,7 @@ pub fn player_turn_input_system(
     // 执行技能：玩家为攻击方/施术方。
     let Ok(
         [
-            (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
+            (_, _attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
             (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
         ],
     ) = query.get_many_mut([p_entity, e_entity])
@@ -709,7 +710,7 @@ pub fn enemy_turn_ai_system(
 
         let Ok(
             [
-                (_, e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, mut e_aura_m, _),
+                (_, _e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, _e_aura_m, _),
                 (_, p_combatant, mut p_stats_m, _, mut p_shield_m, mut p_aura_m, _),
             ],
         ) = exec_query.get_many_mut([e_entity, p_entity])
@@ -929,6 +930,7 @@ pub fn enemy_turn_ai_system(
 }
 
 /// 处理玩家输入（键盘 1-4 / Space），记录本回合玩家技能。按 Q 切换精灵。
+#[allow(dead_code)]
 pub fn player_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -1009,6 +1011,7 @@ pub fn player_input_system(
 }
 
 /// 敌方 AI 选招：低血优先治疗，被克制时提高防御权重，否则按收益选择。
+#[allow(dead_code)]
 pub fn enemy_choose_skill_system(
     mut turn_ctx: ResMut<TurnContext>,
     skill_db: Res<SkillDb>,
@@ -1135,6 +1138,7 @@ pub fn enemy_choose_skill_system(
 }
 
 /// 回合结算：按行动优先级排序（换人 > 防御/治疗 > 攻击），同优先级按速度。
+#[allow(dead_code)]
 pub fn resolve_turn_system(
     mut query: Query<
         (
@@ -1729,6 +1733,7 @@ fn element_text(element: crate::data::ElementType) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn action_priority(action: &TurnAction, skill_db: &SkillDb) -> i32 {
     match action {
         TurnAction::Switch => 300,

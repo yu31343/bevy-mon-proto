@@ -53,6 +53,7 @@ pub struct Combatant {
 
 /// 战斗属性组件。
 #[derive(Component, Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct Stats {
     pub hp: i32,
     pub max_hp: i32,
@@ -82,6 +83,7 @@ pub struct InBattle;
 
 /// 表达一次行动（出招或换人）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TurnAction {
     Skill(SkillId),
     Switch,
