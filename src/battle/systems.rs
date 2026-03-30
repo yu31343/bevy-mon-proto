@@ -6,33 +6,10 @@ use crate::{
 };
 
 use super::{
-    push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Shield, Side, SkillList, Stats,
-    ActionPoints, ElementAura, Hand, PendingBoosts, CARDS_PER_ROUND, AP_PER_ROUND, TurnAction, TurnContext, TurnCount,
+    push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Shield, Side,
+    SkillList, Stats, ActionPoints, ElementAura, Hand, PendingBoosts, CARDS_PER_ROUND, AP_PER_ROUND,
+    TurnAction, TurnContext, TurnCount,
 };
-
-// #region agent log
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn agent_debug_log(hypothesis_id: &str, location: &str, message: &str, run_id: &str) {
-    let _ = (|| {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("debug-648aa6.log");
-        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-        let line = format!(
-            "{{\"sessionId\":\"648aa6\",\"runId\":\"{}\",\"hypothesisId\":\"{}\",\"location\":\"{}\",\"message\":\"{}\",\"data\":{{}},\"timestamp\":{}}}\n",
-            run_id, hypothesis_id, location, message, ts
-        );
-        f.write_all(line.as_bytes())?;
-        f.flush()?;
-        Ok::<(), std::io::Error>(())
-    })();
-}
-// #endregion
 
 /// 初始化战斗：清理旧实体、生成双方单位并进入玩家指令阶段。
 pub fn init_battle_system(
@@ -203,15 +180,6 @@ pub fn init_battle_system(
         &mut battle_log,
         "战斗已开始：每回合开始抽取手牌并获得行动点；按 1-4 使用精灵技能，按 F 弃牌换 AP，按 E 结束回合。",
     );
-
-    // #region agent log
-    agent_debug_log(
-        "H5",
-        "src/battle/systems.rs:init_battle_system",
-        "init_battle_system_completed",
-        "post-fix",
-    );
-    // #endregion
     next_phase.set(BattlePhase::RoundStart);
 }
 
@@ -239,6 +207,7 @@ fn card_hotkey_to_index(key: KeyCode) -> Option<usize> {
 /// 回合开始：抽 5 张牌 + 给双方本回合 AP（“叠加 +6”，不清零继承）。
 pub fn round_start_system(
     card_deck: Res<CardDeck>,
+    card_db: Res<CardDb>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -268,6 +237,31 @@ pub fn round_start_system(
         hand.enemy.push(card_deck.0[idx]);
     }
 
+    let player_cards: Vec<String> = hand
+        .player
+        .iter()
+        .map(|cid| {
+            card_db
+                .0
+                .get(cid)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect();
+    let enemy_cards: Vec<String> = hand
+        .enemy
+        .iter()
+        .map(|cid| {
+            card_db
+                .0
+                .get(cid)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect();
+    println!("玩家抽到: {}", player_cards.join(" / "));
+    println!("敌方抽到: {}", enemy_cards.join(" / "));
+
     // “回合开始时额外 +6”，并保留继承的剩余 AP。
     action_points.player += AP_PER_ROUND;
     action_points.enemy += AP_PER_ROUND;
@@ -292,7 +286,7 @@ pub fn player_turn_input_system(
     mut pending_boosts: ResMut<PendingBoosts>,
     card_db: Res<CardDb>,
     skill_db: Res<SkillDb>,
-    player_team: Res<crate::battle::PlayerTeam>,
+    mut player_team: ResMut<crate::battle::PlayerTeam>,
     enemy_team: Res<crate::battle::EnemyTeam>,
     mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
@@ -345,6 +339,37 @@ pub fn player_turn_input_system(
         );
         return;
     };
+
+    // 0) 回合内切换精灵（消耗 1 AP）：5/6/7 -> 队伍第 1/2/3 只
+    let switch_target = if keyboard.just_pressed(KeyCode::Digit5) {
+        Some(0_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit6) {
+        Some(1_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit7) {
+        Some(2_usize)
+    } else {
+        None
+    };
+
+    if let Some(target_index) = switch_target {
+        if action_points.player >= 1
+            && target_index < player_team.0.combatants.len()
+            && target_index != player_team.0.active_index
+        {
+            let target_entity = player_team.0.combatants[target_index];
+            if let Ok((_, _, stats, _, _, _, name)) = query.get(target_entity) {
+                if stats.hp > 0 {
+                    action_points.player -= 1;
+                    player_team.0.active_index = target_index;
+                    event_writer.write(BattleEvent::Switched {
+                        side: Side::Player,
+                        name: name.to_string(),
+                    });
+                }
+            }
+        }
+        return;
+    }
 
     // 1) 来自 UI 的按钮选择（若存在则优先执行）。
     if let Some(TurnAction::Skill(skill_id)) = turn_ctx.player_action {

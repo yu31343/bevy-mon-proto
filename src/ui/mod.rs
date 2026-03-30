@@ -7,9 +7,9 @@ use std::fs;
 use crate::{
     battle::{
         ActionPoints, BattleResult, Combatant, EnemyTeam, Hand, InBattle, PlayerTeam, Shield, Side,
-        SkillList, Stats, Team, TurnContext, BattleEvent,
+        ElementAura, PendingBoosts, SkillList, Stats, Team, TurnContext, BattleEvent,
     },
-    data::{CardDb, CardId, ElementType, SkillDb, SkillEffect, SkillId},
+    data::{CardDb, CardEffect, CardDef, ElementType, SkillDb, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
 };
 
@@ -39,7 +39,30 @@ struct BattlePhaseText;
 struct ActionPointsText;
 
 #[derive(Component)]
-struct PlayerHandCardText {
+struct BattleHintText;
+
+#[derive(Component)]
+struct PlayerCardButton {
+    index: usize,
+}
+
+#[derive(Component)]
+struct PlayerCardHotkeyText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct PlayerCardNameText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct PlayerCardCostText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct PlayerCardDescText {
     index: usize,
 }
 
@@ -48,6 +71,36 @@ struct DiscardButton;
 
 #[derive(Component)]
 struct EndTurnButton;
+
+#[derive(Component)]
+struct TeamMemberButton {
+    index: usize,
+}
+
+#[derive(Component)]
+struct TeamMemberButtonText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct TeamMemberAuraText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct TeamMemberHpBarFill {
+    index: usize,
+}
+
+#[derive(Component)]
+struct TeamMemberShieldBarTrack {
+    index: usize,
+}
+
+#[derive(Component)]
+struct TeamMemberShieldBarFill {
+    index: usize,
+}
 
 #[derive(Component)]
 struct SkillButton {
@@ -99,35 +152,10 @@ pub struct UiPlugin;
 #[derive(Resource, Clone)]
 pub(crate) struct UiFontHandle(Handle<Font>);
 
-// #region agent log
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn agent_debug_log(
-    hypothesis_id: &str,
-    location: &str,
-    message: &str,
-    run_id: &str,
-) {
-    // Debug logs are best-effort; if writing fails, ignore to avoid hiding the original panic.
-    let _ = (|| {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("debug-648aa6.log");
-        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-        let line = format!(
-            "{{\"sessionId\":\"648aa6\",\"runId\":\"{}\",\"hypothesisId\":\"{}\",\"location\":\"{}\",\"message\":\"{}\",\"data\":{{}},\"timestamp\":{}}}\n",
-            run_id, hypothesis_id, location, message, ts
-        );
-        f.write_all(line.as_bytes())?;
-        f.flush()?;
-        Ok::<(), std::io::Error>(())
-    })();
+#[derive(Resource, Default, Clone, Copy)]
+struct SelectedCard {
+    index: Option<usize>,
 }
-// #endregion
 
 #[derive(Resource, Clone)]
 struct UiTheme {
@@ -241,9 +269,8 @@ impl UiTheme {
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiTheme>()
+            .init_resource::<SelectedCard>()
             .add_systems(Startup, (spawn_camera, load_cjk_font_system, setup_ui_system).chain())
-
-            // #region agent log
             .add_systems(
                 Update,
                 (
@@ -251,33 +278,21 @@ impl Plugin for UiPlugin {
                         .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
                     button_discard_system
                         .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                    button_switch_member_system
+                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                    button_play_card_two_step_system
+                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
                 ),
             );
 
-        // #endregion
-
-        // #region agent log
-        agent_debug_log(
-            "H2",
-            "src/ui/mod.rs",
-            "about_to_register_update_player_hand_text_system",
-            "instrumentation-pre",
-        );
-        // #endregion
-
         app.add_systems(
             Update,
-            update_player_hand_text_system.run_if(in_state(GameState::Battle)),
+            update_player_hand_ui_system.run_if(in_state(GameState::Battle)),
         );
-
-        // #region agent log
-        agent_debug_log(
-            "H3",
-            "src/ui/mod.rs",
-            "about_to_register_update_battle_text_system",
-            "instrumentation-pre",
+        app.add_systems(
+            Update,
+            update_player_roster_ui_system.run_if(in_state(GameState::Battle)),
         );
-        // #endregion
 
         app.add_systems(
             Update,
@@ -431,7 +446,7 @@ fn spawn_skill_row_player(
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(120.0),
+                min_height: Val::Px(96.0),
                 flex_wrap: FlexWrap::Wrap,
                 column_gap: Val::Px(8.0),
                 row_gap: Val::Px(8.0),
@@ -523,7 +538,7 @@ fn spawn_skill_row_enemy(
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(120.0),
+                min_height: Val::Px(96.0),
                 flex_wrap: FlexWrap::Wrap,
                 column_gap: Val::Px(8.0),
                 row_gap: Val::Px(8.0),
@@ -617,8 +632,8 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexStart,
-                row_gap: Val::Px(10.0),
-                padding: UiRect::all(Val::Px(14.0)),
+                row_gap: Val::Px(8.0),
+                padding: UiRect::all(Val::Px(10.0)),
                 ..default()
             },
             theme.root_background(),
@@ -655,6 +670,7 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                         offset: Vec2::new(1.0, 1.0),
                         color: Color::srgba(0.0, 0.0, 0.0, 0.45),
                     },
+                    BattleHintText,
                 ));
 
                 bar.spawn((
@@ -718,7 +734,7 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                 Node {
                     width: Val::Percent(100.0),
                     flex_grow: 1.0,
-                    min_height: Val::Px(200.0),
+                    min_height: Val::Px(168.0),
                     padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(8.0),
@@ -776,7 +792,7 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                 Node {
                     width: Val::Percent(100.0),
                     flex_grow: 1.0,
-                    min_height: Val::Px(200.0),
+                    min_height: Val::Px(168.0),
                     padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(8.0),
@@ -829,6 +845,115 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                     icon_font.clone(),
                 );
 
+                // 队伍切换按钮（回合内耗 1 AP，保留被切换精灵的状态）
+                player_zone
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(96.0),
+                            max_height: Val::Px(124.0),
+                            overflow: Overflow {
+                                x: OverflowAxis::Clip,
+                                y: OverflowAxis::Scroll,
+                            },
+                            padding: UiRect::top(Val::Px(6.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|scroll| {
+                        scroll.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(8.0),
+                                flex_wrap: FlexWrap::Wrap,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|row| {
+                            for idx in 0..3 {
+                                row.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Percent(49.0),
+                                        min_height: Val::Px(58.0),
+                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                        border: border_1,
+                                        border_radius: BorderRadius::all(radius_button),
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(3.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.button_idle),
+                                    BorderColor::all(theme.button_border_idle),
+                                    theme.button_shadow(),
+                                    TeamMemberButton { index: idx },
+                                ))
+                                .with_children(|p| {
+                                    p.spawn((
+                                        Text::new(format!("队伍{}", idx + 1)),
+                                        meta_font.clone(),
+                                        TextColor(Color::WHITE),
+                                        TeamMemberButtonText { index: idx },
+                                    ));
+                                    p.spawn((
+                                        Text::new("附着: 无"),
+                                        TextFont::from_font_size(12.0),
+                                        TextColor(Color::srgb(0.78, 0.88, 0.98)),
+                                        TeamMemberAuraText { index: idx },
+                                    ));
+                                    p.spawn((
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            height: Val::Px(8.0),
+                                            overflow: Overflow::clip(),
+                                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.hp_track),
+                                    ))
+                                    .with_children(|bar| {
+                                        bar.spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Percent(100.0),
+                                                border_radius: BorderRadius::all(Val::Px(4.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(theme.hp_fill_player),
+                                            TeamMemberHpBarFill { index: idx },
+                                        ));
+                                    });
+                                    p.spawn((
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            height: Val::Px(6.0),
+                                            overflow: Overflow::clip(),
+                                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.shield_track),
+                                        Visibility::Hidden,
+                                        TeamMemberShieldBarTrack { index: idx },
+                                    ))
+                                    .with_children(|bar| {
+                                        bar.spawn((
+                                            Node {
+                                                width: Val::Percent(100.0),
+                                                height: Val::Percent(100.0),
+                                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(theme.shield_fill_player),
+                                            TeamMemberShieldBarFill { index: idx },
+                                        ));
+                                    });
+                                });
+                            }
+                        });
+                    });
+
                 player_zone.spawn((
                     Node {
                         width: Val::Percent(100.0),
@@ -840,18 +965,70 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                 ))
                 .with_children(|hand_node| {
                     hand_node.spawn((
-                        Text::new("手牌："),
+                        Text::new("手牌（点击一次查看描述，再点一次出牌）："),
                         meta_font.clone(),
                         TextColor(Color::srgb(0.75, 0.92, 1.0)),
                     ));
-                    for idx in 0..5 {
-                        hand_node.spawn((
-                            Text::new(format!("{}: —", idx + 1)),
-                            body_font.clone(),
-                            TextColor(Color::WHITE),
-                            PlayerHandCardText { index: idx },
-                        ));
-                    }
+
+                    hand_node
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(8.0),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|row| {
+                            for idx in 0..5 {
+                                row.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Percent(49.0),
+                                        min_height: Val::Px(58.0),
+                                        padding: UiRect::all(Val::Px(8.0)),
+                                        border: border_1,
+                                        border_radius: BorderRadius::all(radius_button),
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(2.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.button_idle),
+                                    BorderColor::all(theme.button_border_idle),
+                                    theme.button_shadow(),
+                                    PlayerCardButton { index: idx },
+                                ))
+                                .with_children(|card| {
+                                    card.spawn((
+                                        Text::new(card_hotkey_label(idx)),
+                                        icon_font.clone(),
+                                        TextColor(Color::srgb(0.90, 0.95, 1.0)),
+                                        PlayerCardHotkeyText { index: idx },
+                                    ));
+                                    card.spawn((
+                                        Text::new("—"),
+                                        body_font.clone(),
+                                        TextColor(Color::WHITE),
+                                        PlayerCardNameText { index: idx },
+                                    ));
+                                    card.spawn((
+                                        Text::new("AP—"),
+                                        meta_font.clone(),
+                                        TextColor(Color::srgb(0.78, 0.88, 0.98)),
+                                        PlayerCardCostText { index: idx },
+                                    ));
+                                    card.spawn((
+                                        Text::new(""),
+                                        meta_font.clone(),
+                                        TextColor(Color::srgb(0.86, 0.92, 0.98)),
+                                        Visibility::Hidden,
+                                        PlayerCardDescText { index: idx },
+                                    ));
+                                });
+                            }
+                        });
                 });
             });
 
@@ -895,6 +1072,42 @@ fn button_select_skill_system(
     }
 }
 
+fn button_switch_member_system(
+    mut interaction_query: Query<(&Interaction, &TeamMemberButton), (Changed<Interaction>, With<Button>)>,
+    mut action_points: ResMut<ActionPoints>,
+    mut player_team: ResMut<PlayerTeam>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    combat_query: Query<(&Stats, &Name), With<InBattle>>,
+) {
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let target_index = button.index;
+        if action_points.player < 1 {
+            continue;
+        }
+        if target_index >= player_team.0.combatants.len() || target_index == player_team.0.active_index {
+            continue;
+        }
+
+        let target_entity = player_team.0.combatants[target_index];
+        let Ok((stats, name)) = combat_query.get(target_entity) else {
+            continue;
+        };
+        if stats.hp <= 0 {
+            continue;
+        }
+
+        action_points.player -= 1;
+        player_team.0.active_index = target_index;
+        event_writer.write(BattleEvent::Switched {
+            side: Side::Player,
+            name: name.to_string(),
+        });
+    }
+}
+
 fn button_visual_state_system(
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
@@ -920,45 +1133,27 @@ fn button_visual_state_system(
     }
 }
 
-fn format_team_roster(
+fn format_active_summary(
     header: &str,
     team: &Team,
-    query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>,
+    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
 ) -> String {
-    let total = team.combatants.len();
-    let alive = team
-        .combatants
-        .iter()
-        .filter(|&&e| query.get(e).map(|(_, stats, _, _)| stats.hp > 0).unwrap_or(false))
-        .count();
-
-    let mut lines = vec![format!("{}（存活 {}/{}）", header, alive, total)];
-
-    for (i, &entity) in team.combatants.iter().enumerate() {
-        let Ok((combatant, stats, name, shield)) = query.get(entity) else {
-            continue;
-        };
-        let slot = if i == team.active_index { "[场上]" } else { "[替补]" };
-        let shield_str = if shield.0 > 0 {
-            format!(" 护盾: {}", shield.0)
-        } else {
-            String::new()
-        };
-        let faint = if stats.hp <= 0 { " 倒下" } else { "" };
-        lines.push(format!(
-            "{} [{}] {} [{}] 生命: {}/{}{}{}",
-            slot,
-            combatant.side,
-            name,
-            element_name(combatant.element),
-            stats.hp,
-            stats.max_hp,
-            shield_str,
-            faint,
-        ));
-    }
-
-    lines.join("\n")
+    let Some(entity) = team.active_combatant() else {
+        return format!("{header}：无在场精灵");
+    };
+    let Ok((combatant, stats, name, shield, aura)) = query.get(entity) else {
+        return format!("{header}：数据读取失败");
+    };
+    format!(
+        "{}在场 [{}] {} | HP {}/{} | 护盾 {} | 附着 {}",
+        header,
+        combatant.side,
+        name,
+        stats.hp.max(0),
+        stats.max_hp,
+        shield.0.max(0),
+        aura_label(aura.attached),
+    )
 }
 
 /// 仅更新战斗相关 `Text`，避免与 `Node` 宽度更新在同一系统内触发 B0001（同一 UI 实体常同时有 `Text` 与 `Node`）。
@@ -980,13 +1175,19 @@ fn update_battle_text_system(
         ),
         (
             Without<ActionPointsText>,
-            Without<PlayerHandCardText>,
             Without<ResultText>,
+            Without<BattleHintText>,
+            Without<TeamMemberButtonText>,
+            Without<TeamMemberAuraText>,
+            Without<PlayerCardHotkeyText>,
+            Without<PlayerCardNameText>,
+            Without<PlayerCardCostText>,
+            Without<PlayerCardDescText>,
         ),
     >,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>,
+    combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
     skill_query: Query<&SkillList, With<InBattle>>,
     skill_db: Res<SkillDb>,
     battle_phase: Res<State<BattlePhase>>,
@@ -995,8 +1196,8 @@ fn update_battle_text_system(
         return;
     };
 
-    let player_line = format_team_roster("玩家队伍", &player_team.0, &combat_query);
-    let enemy_line = format_team_roster("敌方队伍", &enemy_team.0, &combat_query);
+    let player_line = format_active_summary("玩家", &player_team.0, &combat_query);
+    let enemy_line = format_active_summary("敌方", &enemy_team.0, &combat_query);
 
     let mut player_skills = None;
     if let Some(p_entity) = player_team.0.active_combatant() {
@@ -1089,7 +1290,7 @@ fn update_battle_bars_system(
     )>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>,
+    combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;
@@ -1146,21 +1347,251 @@ fn update_action_points_text_system(
     }
 }
 
-fn update_player_hand_text_system(
+fn update_player_hand_ui_system(
     hand: Res<Hand>,
     card_db: Res<CardDb>,
-    mut text_q: Query<(&PlayerHandCardText, &mut Text)>,
+    selected: Res<SelectedCard>,
+    mut card_text_q: Query<
+        (
+            &mut Text,
+            Option<&BattleHintText>,
+            Option<&PlayerCardHotkeyText>,
+            Option<&PlayerCardNameText>,
+            Option<&PlayerCardCostText>,
+            Option<&PlayerCardDescText>,
+        ),
+        Without<ResultText>,
+    >,
+    mut desc_vis_q: Query<(&PlayerCardDescText, &mut Visibility)>,
+    mut card_nodes: Query<(&PlayerCardButton, &mut Node)>,
 ) {
-    for (meta, mut text) in &mut text_q {
-        if meta.index < hand.player.len() {
-            let cid = hand.player[meta.index];
-            if let Some(card) = card_db.0.get(&cid) {
-                text.0 = format!("{}: {}（AP{}）", meta.index + 1, card.name, card.cost_ap);
-            } else {
-                text.0 = format!("{}: —", meta.index + 1);
+    for (meta, mut node) in &mut card_nodes {
+        let has_card = meta.index < hand.player.len();
+        node.display = if has_card { Display::Flex } else { Display::None };
+    }
+
+    // 更新文本内容
+    for (mut text, is_hint, hotkey, name, cost, desc) in &mut card_text_q {
+        if is_hint.is_some() {
+            text.0 = "操作提示：按 1-4 使用精灵技能；手牌快捷键 Z/X/C/V/B；点击卡牌一次查看描述，再点一次出牌；按 F 弃牌换 AP；按 E 结束回合；按 R 重新开始"
+                .to_string();
+            continue;
+        }
+        let Some(idx) = hotkey
+            .map(|m| m.index)
+            .or_else(|| name.map(|m| m.index))
+            .or_else(|| cost.map(|m| m.index))
+            .or_else(|| desc.map(|m| m.index))
+        else {
+            continue;
+        };
+
+        if idx >= hand.player.len() {
+            if name.is_some() {
+                text.0 = "—".to_string();
+            } else if cost.is_some() {
+                text.0 = "AP—".to_string();
+            } else if hotkey.is_some() {
+                text.0 = card_hotkey_label(idx).to_string();
+            } else if desc.is_some() {
+                text.0.clear();
             }
+            continue;
+        }
+
+        let card_id = hand.player[idx];
+        let Some(card) = card_db.0.get(&card_id) else {
+            continue;
+        };
+
+        if hotkey.is_some() {
+            text.0 = card_hotkey_label(idx).to_string();
+        } else if name.is_some() {
+            text.0 = card.name.to_string();
+        } else if cost.is_some() {
+            text.0 = format!("AP{}", card.cost_ap);
+        } else if desc.is_some() {
+            text.0 = card_description(card);
+        }
+    }
+
+    // 展开描述：仅展开选中的那一张
+    for (meta, mut vis) in &mut desc_vis_q {
+        *vis = if selected.index == Some(meta.index) {
+            Visibility::Visible
         } else {
-            text.0 = format!("{}: —", meta.index + 1);
+            Visibility::Hidden
+        };
+    }
+}
+
+fn button_play_card_two_step_system(
+    mut interaction_query: Query<(&Interaction, &PlayerCardButton), (Changed<Interaction>, With<Button>)>,
+    mut selected: ResMut<SelectedCard>,
+    mut turn_ctx: ResMut<TurnContext>,
+    mut action_points: ResMut<ActionPoints>,
+    mut hand: ResMut<Hand>,
+    mut pending_boosts: ResMut<PendingBoosts>,
+    card_db: Res<CardDb>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+) {
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let idx = button.index;
+        if idx >= hand.player.len() {
+            selected.index = None;
+            continue;
+        }
+
+        if selected.index != Some(idx) {
+            selected.index = Some(idx);
+            continue;
+        }
+
+        // 第二次点击：尝试出牌
+        let card_id = hand.player[idx];
+        let Some(card) = card_db.0.get(&card_id) else {
+            continue;
+        };
+        if action_points.player < card.cost_ap {
+            continue;
+        }
+
+        hand.player.remove(idx);
+        action_points.player -= card.cost_ap;
+        event_writer.write(BattleEvent::CardUsed {
+            side: Side::Player,
+            card_name: card.name.to_string(),
+        });
+
+        match card.effect {
+            CardEffect::GainAp { amount } => action_points.player += amount,
+            CardEffect::NextAttackBoost { amount } => pending_boosts.player.next_attack_bonus += amount,
+            CardEffect::NextShieldBoost { amount } => pending_boosts.player.next_shield_bonus += amount,
+            CardEffect::NextHealBoost { amount } => pending_boosts.player.next_heal_bonus += amount,
+        }
+
+        // 清理一次性动作，避免 UI 点击后的残留。
+        turn_ctx.player_action = None;
+        selected.index = None;
+
+        if action_points.player <= 0 {
+            turn_ctx.player_ended = true;
+            next_phase.set(BattlePhase::EnemyTurn);
+        }
+        break;
+    }
+}
+
+fn update_player_roster_ui_system(
+    player_team: Option<Res<PlayerTeam>>,
+    combat_query: Query<(&Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
+    mut roster_text_q: Query<
+        (
+            &mut Text,
+            Option<&TeamMemberButtonText>,
+            Option<&TeamMemberAuraText>,
+        ),
+        (Without<ActionPointsText>, Without<PlayerCardNameText>),
+    >,
+    mut nodes: ParamSet<(
+        Query<(&TeamMemberHpBarFill, &mut Node)>,
+        Query<(&TeamMemberShieldBarFill, &mut Node)>,
+        Query<(&TeamMemberButton, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+    )>,
+    mut shield_track_q: Query<(&TeamMemberShieldBarTrack, &mut Visibility)>,
+    theme: Res<UiTheme>,
+) {
+    let Some(player_team) = player_team else {
+        return;
+    };
+
+    let get_entity = |index: usize| player_team.0.combatants.get(index).copied();
+
+    for (mut text, maybe_name, maybe_aura) in &mut roster_text_q {
+        if let Some(meta) = maybe_name {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((stats, name, _, _)) = combat_query.get(entity) {
+                    let marker = if meta.index == player_team.0.active_index {
+                        " [场上]"
+                    } else {
+                        ""
+                    };
+                    let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
+                    text.0 = format!("{}{}{}", name, marker, dead);
+                } else {
+                    text.0 = format!("队伍{}", meta.index + 1);
+                }
+            } else {
+                text.0 = format!("队伍{}", meta.index + 1);
+            }
+            continue;
+        }
+        if let Some(meta) = maybe_aura {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((_, _, _, aura)) = combat_query.get(entity) {
+                    text.0 = format!("附着: {}", aura_label(aura.attached));
+                } else {
+                    text.0 = "附着: 无".to_string();
+                }
+            } else {
+                text.0 = "附着: 无".to_string();
+            }
+            continue;
+        }
+    }
+
+    for (meta, mut node) in &mut nodes.p0() {
+        if let Some(entity) = get_entity(meta.index) {
+            if let Ok((stats, _, _, _)) = combat_query.get(entity) {
+                let hp_pct = if stats.max_hp > 0 {
+                    ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+                node.width = Val::Percent(hp_pct);
+            }
+        }
+    }
+
+    for (meta, mut node) in &mut nodes.p1() {
+        if let Some(entity) = get_entity(meta.index) {
+            if let Ok((stats, _, shield, _)) = combat_query.get(entity) {
+                let shield_pct = if stats.max_hp > 0 {
+                    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+                node.width = Val::Percent(shield_pct);
+            }
+        }
+    }
+
+    // 在场精灵卡片更突出（大卡）；替补为紧凑小卡
+    for (meta, mut node, mut bg, mut border) in &mut nodes.p2() {
+        let active = meta.index == player_team.0.active_index;
+        node.min_height = if active { Val::Px(78.0) } else { Val::Px(58.0) };
+        if active {
+            *bg = BackgroundColor(theme.button_hover);
+            *border = BorderColor::all(theme.button_border_hover);
+        } else {
+            *bg = BackgroundColor(theme.button_idle);
+            *border = BorderColor::all(theme.button_border_idle);
+        }
+    }
+
+    for (meta, mut vis) in &mut shield_track_q {
+        if let Some(entity) = get_entity(meta.index) {
+            if let Ok((_, _, shield, _)) = combat_query.get(entity) {
+                *vis = if shield.0 > 0 {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                };
+            }
         }
     }
 }
@@ -1273,11 +1704,11 @@ fn phase_label(phase: BattlePhase) -> &'static str {
     }
 }
 
-fn active_hp_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>) -> f32 {
+fn active_hp_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>) -> f32 {
     let Some(entity) = team.active_combatant() else {
         return 0.0;
     };
-    let Ok((_, stats, _, _)) = query.get(entity) else {
+    let Ok((_, stats, _, _, _)) = query.get(entity) else {
         return 0.0;
     };
     if stats.max_hp <= 0 {
@@ -1286,21 +1717,21 @@ fn active_hp_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shi
     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
 }
 
-fn active_shield(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>) -> i32 {
+fn active_shield(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>) -> i32 {
     let Some(entity) = team.active_combatant() else {
         return 0;
     };
-    let Ok((_, _, _, shield)) = query.get(entity) else {
+    let Ok((_, _, _, shield, _)) = query.get(entity) else {
         return 0;
     };
     shield.0.max(0)
 }
 
-fn active_shield_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield), With<InBattle>>) -> f32 {
+fn active_shield_percent(team: &Team, query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>) -> f32 {
     let Some(entity) = team.active_combatant() else {
         return 0.0;
     };
-    let Ok((_, stats, _, shield)) = query.get(entity) else {
+    let Ok((_, stats, _, shield, _)) = query.get(entity) else {
         return 0.0;
     };
     if stats.max_hp <= 0 {
@@ -1318,6 +1749,33 @@ fn element_name(element: ElementType) -> &'static str {
         ElementType::Dark => "暗",
         ElementType::Thunder => "雷",
         ElementType::Wind => "风",
+    }
+}
+
+fn aura_label(aura: Option<ElementType>) -> &'static str {
+    match aura {
+        Some(element) => element_name(element),
+        None => "无",
+    }
+}
+
+fn card_hotkey_label(index: usize) -> &'static str {
+    match index {
+        0 => "Z",
+        1 => "X",
+        2 => "C",
+        3 => "V",
+        4 => "B",
+        _ => "",
+    }
+}
+
+fn card_description(card: &CardDef) -> String {
+    match card.effect {
+        CardEffect::GainAp { amount } => format!("效果：获得 +{} AP。", amount),
+        CardEffect::NextAttackBoost { amount } => format!("效果：下次进攻 +{}。", amount),
+        CardEffect::NextShieldBoost { amount } => format!("效果：下次护盾 +{}。", amount),
+        CardEffect::NextHealBoost { amount } => format!("效果：下次治疗 +{}。", amount),
     }
 }
 
