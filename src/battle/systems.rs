@@ -432,6 +432,20 @@ pub fn player_turn_input_system(
             &mut event_writer,
         );
 
+        let should_go_check_end = query
+            .get(p_entity)
+            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .unwrap_or(false)
+            || query
+                .get(e_entity)
+                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .unwrap_or(false);
+        if should_go_check_end {
+            turn_ctx.player_ended = true;
+            next_phase.set(BattlePhase::CheckEnd);
+            return;
+        }
+
         if action_points.player <= 0 {
             turn_ctx.player_ended = true;
             next_phase.set(BattlePhase::EnemyTurn);
@@ -500,6 +514,20 @@ pub fn player_turn_input_system(
                             CardEffect::NextHealBoost { amount } => {
                                 pending_boosts.player.next_heal_bonus += amount;
                             }
+                        }
+
+                        let should_go_check_end = query
+                            .get(p_entity)
+                            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                            .unwrap_or(false)
+                            || query
+                                .get(e_entity)
+                                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                                .unwrap_or(false);
+                        if should_go_check_end {
+                            turn_ctx.player_ended = true;
+                            next_phase.set(BattlePhase::CheckEnd);
+                            return;
                         }
 
                         if action_points.player <= 0 {
@@ -577,6 +605,20 @@ pub fn player_turn_input_system(
         &mut event_writer,
     );
 
+    let should_go_check_end = query
+        .get(p_entity)
+        .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+        .unwrap_or(false)
+        || query
+            .get(e_entity)
+            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .unwrap_or(false);
+    if should_go_check_end {
+        turn_ctx.player_ended = true;
+        next_phase.set(BattlePhase::CheckEnd);
+        return;
+    }
+
     if action_points.player <= 0 {
         turn_ctx.player_ended = true;
         next_phase.set(BattlePhase::EnemyTurn);
@@ -640,6 +682,20 @@ pub fn enemy_turn_ai_system(
     };
 
     while action_points.enemy > 0 {
+        let should_go_check_end = exec_query
+            .get(p_entity)
+            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .unwrap_or(false)
+            || exec_query
+                .get(e_entity)
+                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .unwrap_or(false);
+        if should_go_check_end {
+            turn_ctx.enemy_ended = true;
+            next_phase.set(BattlePhase::CheckEnd);
+            return;
+        }
+
         let Ok(
             [
                 (_, e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, mut e_aura_m, _),
@@ -797,6 +853,20 @@ pub fn enemy_turn_ai_system(
                 &mut pending_boosts,
                 &mut event_writer,
             );
+
+            let should_go_check_end = exec_query
+                .get(p_entity)
+                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .unwrap_or(false)
+                || exec_query
+                    .get(e_entity)
+                    .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                    .unwrap_or(false);
+            if should_go_check_end {
+                turn_ctx.enemy_ended = true;
+                next_phase.set(BattlePhase::CheckEnd);
+                return;
+            }
         } else {
             // 没有可用技能：弃牌换 AP（或直接结束）
             if !hand.enemy.is_empty() {
@@ -814,6 +884,20 @@ pub fn enemy_turn_ai_system(
             } else {
                 break;
             }
+        }
+
+        let should_go_check_end = exec_query
+            .get(p_entity)
+            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .unwrap_or(false)
+            || exec_query
+                .get(e_entity)
+                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .unwrap_or(false);
+        if should_go_check_end {
+            turn_ctx.enemy_ended = true;
+            next_phase.set(BattlePhase::CheckEnd);
+            return;
         }
 
         if action_points.enemy <= 0 {
@@ -1294,6 +1378,10 @@ pub fn check_end_system(
             p_dead = false;
             let new_e = player_team.0.combatants[idx];
             if let Ok((_, _, new_n)) = query.get(new_e) {
+                event_writer.write(BattleEvent::Switched {
+                    side: Side::Player,
+                    name: new_n.to_string(),
+                });
                 push_battle_line(&mut battle_log, format!("玩家换上了 {}！", new_n));
             }
         }
@@ -1341,6 +1429,10 @@ pub fn check_end_system(
             e_dead = false;
             let new_e = enemy_team.0.combatants[idx];
             if let Ok((_, _, new_n)) = query.get(new_e) {
+                event_writer.write(BattleEvent::Switched {
+                    side: Side::Enemy,
+                    name: new_n.to_string(),
+                });
                 push_battle_line(&mut battle_log, format!("敌方换上了 {}！", new_n));
             }
         }
