@@ -38,4 +38,4 @@ desktop.ini
 # *.psd
 
 # 忽略 cursor 文件夹
-cursor/
+.cursor/
