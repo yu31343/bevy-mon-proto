@@ -101,4 +101,42 @@
             skills: (NormalAttack, ElementGrassAttack, Guard, FirstAid),
         )
     ],
+    cards: [
+        (
+            id: GainAp,
+            name: "行动充能",
+            cost_ap: 1,
+            effect: GainAp(amount: 2),
+        ),
+        (
+            id: NextAttackBoost,
+            name: "猛攻许可",
+            cost_ap: 2,
+            effect: NextAttackBoost(amount: 5),
+        ),
+        (
+            id: NextShieldBoost,
+            name: "守备许可",
+            cost_ap: 2,
+            effect: NextShieldBoost(amount: 5),
+        ),
+        (
+            id: NextHealBoost,
+            name: "治疗许可",
+            cost_ap: 2,
+            effect: NextHealBoost(amount: 5),
+        ),
+    ],
+    deck: [
+        GainAp,
+        GainAp,
+        NextAttackBoost,
+        NextShieldBoost,
+        GainAp,
+        NextHealBoost,
+        NextAttackBoost,
+        GainAp,
+        NextShieldBoost,
+        NextHealBoost,
+    ],
 )

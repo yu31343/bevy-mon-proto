@@ -1,3 +1,5 @@
+pub mod cards;
+
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -5,6 +7,8 @@ use std::{
 
 use bevy::prelude::*;
 use serde::Deserialize;
+
+pub use cards::{CardDb, CardDeck, CardDef, CardEffect, CardId};
 
 /// 元素类型（系别）：火、水、草、光、暗、雷、风。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
@@ -182,6 +186,8 @@ struct BattleConfig {
     pub skills: Vec<SkillDef>,
     pub player: Vec<MonsterPrototype>,
     pub enemy: Vec<MonsterPrototype>,
+    pub cards: Vec<CardDef>,
+    pub deck: Vec<CardId>,
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -192,44 +198,6 @@ pub struct TeamSetup {
     pub player: Vec<MonsterPrototype>,
     pub enemy: Vec<MonsterPrototype>,
 }
-
-/// 技能卡唯一标识。
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum CardId {
-    /// 使用后获得行动点（示例：消耗 1 点，获得 +2 点）。
-    GainAp,
-    /// 使用后给“下次进攻”附加伤害增益（示例：消耗 2 点，给 +5）。
-    NextAttackBoost,
-    /// 使用后给“下次防御”附加护盾增益（示例：消耗 2 点，给 +5）。
-    NextShieldBoost,
-    /// 使用后给“下次治疗”附加回复增益（示例：消耗 2 点，给 +5）。
-    NextHealBoost,
-}
-
-/// 技能卡效果定义。
-#[derive(Debug, Clone, Copy)]
-pub enum CardEffect {
-    GainAp { amount: i32 },
-    NextAttackBoost { amount: i32 },
-    NextShieldBoost { amount: i32 },
-    NextHealBoost { amount: i32 },
-}
-
-#[derive(Debug, Clone)]
-pub struct CardDef {
-    pub id: CardId,
-    pub name: &'static str,
-    pub cost_ap: i32,
-    pub effect: CardEffect,
-}
-
-/// 技能卡数据库（当前原型：卡表内置，不走 RON）。
-#[derive(Resource, Debug, Clone)]
-pub struct CardDb(pub HashMap<CardId, CardDef>);
-
-/// 技能卡组（每回合从中抽取固定数量的卡）。
-#[derive(Resource, Debug, Clone)]
-pub struct CardDeck(pub Vec<CardId>);
 
 /// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。
 #[derive(Resource, Debug, Clone, Default)]
@@ -253,10 +221,9 @@ fn load_battle_data(mut commands: Commands) {
         Ok(raw) => raw,
         Err(e) => {
             commands.insert_resource(SkillDb(HashMap::new()));
-            commands.insert_resource(TeamSetup {
-                player: vec![],
-                enemy: vec![],
-            });
+            commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+            commands.insert_resource(CardDb::default());
+            commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
             });
@@ -267,10 +234,9 @@ fn load_battle_data(mut commands: Commands) {
         Ok(config) => config,
         Err(e) => {
             commands.insert_resource(SkillDb(HashMap::new()));
-            commands.insert_resource(TeamSetup {
-                player: vec![],
-                enemy: vec![],
-            });
+            commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+            commands.insert_resource(CardDb::default());
+            commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
             });
@@ -280,10 +246,9 @@ fn load_battle_data(mut commands: Commands) {
 
     if let Err(reason) = validate_battle_config(&config) {
         commands.insert_resource(SkillDb(HashMap::new()));
-        commands.insert_resource(TeamSetup {
-            player: vec![],
-            enemy: vec![],
-        });
+        commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+        commands.insert_resource(CardDb::default());
+        commands.insert_resource(CardDeck::default());
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
         });
@@ -301,53 +266,12 @@ fn load_battle_data(mut commands: Commands) {
         enemy: config.enemy,
     });
 
-    // 简易技能卡组：为了原型先内置几种卡并重复组成“牌库”。
-    // 后续可把它迁移到 RON 数据驱动。
     let mut card_map = HashMap::new();
-    let card_defs = [
-        CardDef {
-            id: CardId::GainAp,
-            name: "行动充能",
-            cost_ap: 1,
-            effect: CardEffect::GainAp { amount: 2 },
-        },
-        CardDef {
-            id: CardId::NextAttackBoost,
-            name: "猛攻许可",
-            cost_ap: 2,
-            effect: CardEffect::NextAttackBoost { amount: 5 },
-        },
-        CardDef {
-            id: CardId::NextShieldBoost,
-            name: "守备许可",
-            cost_ap: 2,
-            effect: CardEffect::NextShieldBoost { amount: 5 },
-        },
-        CardDef {
-            id: CardId::NextHealBoost,
-            name: "治疗许可",
-            cost_ap: 2,
-            effect: CardEffect::NextHealBoost { amount: 5 },
-        },
-    ];
-    for def in card_defs {
+    for def in config.cards {
         card_map.insert(def.id, def);
     }
     commands.insert_resource(CardDb(card_map));
-
-    // 牌库包含重复卡，用于“抽取”时有一定可选性。
-    commands.insert_resource(CardDeck(vec![
-        CardId::GainAp,
-        CardId::GainAp,
-        CardId::NextAttackBoost,
-        CardId::NextShieldBoost,
-        CardId::GainAp,
-        CardId::NextHealBoost,
-        CardId::NextAttackBoost,
-        CardId::GainAp,
-        CardId::NextShieldBoost,
-        CardId::NextHealBoost,
-    ]));
+    commands.insert_resource(CardDeck(config.deck));
 
     commands.insert_resource(BattleDataStatus::default());
 }
