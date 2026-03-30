@@ -76,9 +76,18 @@ mod tests {
 
     #[test]
     fn element_matrix_basic_cycles() {
-        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Fire), 2.0);
-        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Fire, ElementType::Grass), 2.0);
-        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Grass, ElementType::Water), 2.0);
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Fire),
+            2.0
+        );
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Fire, ElementType::Grass),
+            2.0
+        );
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Grass, ElementType::Water),
+            2.0
+        );
 
         assert_eq!(
             ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Grass),
@@ -88,8 +97,14 @@ mod tests {
 
     #[test]
     fn element_matrix_light_dark() {
-        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Light, ElementType::Dark), 2.0);
-        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Dark, ElementType::Light), 0.5);
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Light, ElementType::Dark),
+            2.0
+        );
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Dark, ElementType::Light),
+            0.5
+        );
     }
 
     #[test]

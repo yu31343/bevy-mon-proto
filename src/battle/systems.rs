@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    data::{BattleDataStatus, CardDb, CardEffect, CardDeck, SkillDb, SkillEffect, TeamSetup},
+    data::{BattleDataStatus, CardDb, CardDeck, CardEffect, SkillDb, SkillEffect, TeamSetup},
     game_state::{BattlePhase, GameState},
 };
 
 use super::{
-    push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Shield, Side,
-    SkillList, Stats, ActionPoints, ElementAura, Hand, PendingBoosts, CARDS_PER_ROUND, AP_PER_ROUND,
-    TurnAction, TurnContext, TurnCount,
+    AP_PER_ROUND, ActionPoints, BattleEvent, BattleLog, BattleResult, CARDS_PER_ROUND, Combatant,
+    ElementAura, Hand, InBattle, PendingBoosts, Shield, Side, SkillList, Stats, TurnAction,
+    TurnContext, TurnCount, push_battle_line,
 };
 
 /// 初始化战斗：清理旧实体、生成双方单位并进入玩家指令阶段。
@@ -292,15 +292,18 @@ pub fn player_turn_input_system(
     mut battle_result: ResMut<BattleResult>,
     mut next_game_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
-    mut query: Query<(
-        Entity,
-        &Combatant,
-        &mut Stats,
-        &SkillList,
-        &mut Shield,
-        &mut ElementAura,
-        &Name,
-    ), With<InBattle>>,
+    mut query: Query<
+        (
+            Entity,
+            &Combatant,
+            &mut Stats,
+            &SkillList,
+            &mut Shield,
+            &mut ElementAura,
+            &Name,
+        ),
+        With<InBattle>,
+    >,
 ) {
     if turn_ctx.player_ended {
         return;
@@ -398,10 +401,12 @@ pub fn player_turn_input_system(
         action_points.player -= cost;
         turn_ctx.player_action = None;
 
-        let Ok([
-            (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
-            (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
-        ]) = query.get_many_mut([p_entity, e_entity])
+        let Ok(
+            [
+                (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
+                (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
+            ],
+        ) = query.get_many_mut([p_entity, e_entity])
         else {
             return;
         };
@@ -533,15 +538,19 @@ pub fn player_turn_input_system(
         return;
     }
 
-    let Some(skill) = skill_db.0.get(&skill_id) else { return };
+    let Some(skill) = skill_db.0.get(&skill_id) else {
+        return;
+    };
 
     action_points.player -= cost;
 
     // 执行技能：玩家为攻击方/施术方。
-    let Ok([
-        (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
-        (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
-    ]) = query.get_many_mut([p_entity, e_entity])
+    let Ok(
+        [
+            (_, attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
+            (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
+        ],
+    ) = query.get_many_mut([p_entity, e_entity])
     else {
         return;
     };
@@ -589,15 +598,18 @@ pub fn enemy_turn_ai_system(
     mut battle_result: ResMut<BattleResult>,
     mut next_game_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
-    mut exec_query: Query<(
-        Entity,
-        &Combatant,
-        &mut Stats,
-        &SkillList,
-        &mut Shield,
-        &mut ElementAura,
-        &Name,
-    ), With<InBattle>>,
+    mut exec_query: Query<
+        (
+            Entity,
+            &Combatant,
+            &mut Stats,
+            &SkillList,
+            &mut Shield,
+            &mut ElementAura,
+            &Name,
+        ),
+        With<InBattle>,
+    >,
 ) {
     if turn_ctx.enemy_ended {
         return;
@@ -628,10 +640,12 @@ pub fn enemy_turn_ai_system(
     };
 
     while action_points.enemy > 0 {
-        let Ok([
-            (_, e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, mut e_aura_m, _),
-            (_, p_combatant, mut p_stats_m, _, mut p_shield_m, mut p_aura_m, _),
-        ]) = exec_query.get_many_mut([e_entity, p_entity])
+        let Ok(
+            [
+                (_, e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, mut e_aura_m, _),
+                (_, p_combatant, mut p_stats_m, _, mut p_shield_m, mut p_aura_m, _),
+            ],
+        ) = exec_query.get_many_mut([e_entity, p_entity])
         else {
             break;
         };
@@ -654,17 +668,12 @@ pub fn enemy_turn_ai_system(
             let can_attack0 = action_points.enemy >= monster_skill_ap_cost(0);
             let can_attack1 = action_points.enemy >= monster_skill_ap_cost(1);
             if can_attack0 || can_attack1 {
-                if let Some((idx, _)) = hand
-                    .enemy
-                    .iter()
-                    .enumerate()
-                    .find(|(_, cid)| {
-                        card_db
-                            .0
-                            .get(cid)
-                            .is_some_and(|c| matches!(c.effect, CardEffect::NextAttackBoost { .. }) && c.cost_ap <= action_points.enemy)
+                if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
+                    card_db.0.get(cid).is_some_and(|c| {
+                        matches!(c.effect, CardEffect::NextAttackBoost { .. })
+                            && c.cost_ap <= action_points.enemy
                     })
-                {
+                }) {
                     let card_id = hand.enemy.remove(idx);
                     if let Some(card) = card_db.0.get(&card_id) {
                         action_points.enemy -= card.cost_ap;
@@ -687,19 +696,12 @@ pub fn enemy_turn_ai_system(
             && action_points.enemy >= 2
             && action_points.enemy >= monster_skill_ap_cost(3)
         {
-            if let Some((idx, _)) = hand
-                .enemy
-                .iter()
-                .enumerate()
-                .find(|(_, cid)| {
-                    card_db
-                        .0
-                        .get(cid)
-                        .is_some_and(|c| {
-                            matches!(c.effect, CardEffect::NextHealBoost { .. }) && c.cost_ap <= action_points.enemy
-                        })
+            if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
+                card_db.0.get(cid).is_some_and(|c| {
+                    matches!(c.effect, CardEffect::NextHealBoost { .. })
+                        && c.cost_ap <= action_points.enemy
                 })
-            {
+            }) {
                 let card_id = hand.enemy.remove(idx);
                 if let Some(card) = card_db.0.get(&card_id) {
                     action_points.enemy -= card.cost_ap;
@@ -720,19 +722,12 @@ pub fn enemy_turn_ai_system(
             && action_points.enemy >= 2
             && action_points.enemy >= monster_skill_ap_cost(2)
         {
-            if let Some((idx, _)) = hand
-                .enemy
-                .iter()
-                .enumerate()
-                .find(|(_, cid)| {
-                    card_db
-                        .0
-                        .get(cid)
-                        .is_some_and(|c| {
-                            matches!(c.effect, CardEffect::NextShieldBoost { .. }) && c.cost_ap <= action_points.enemy
-                        })
+            if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
+                card_db.0.get(cid).is_some_and(|c| {
+                    matches!(c.effect, CardEffect::NextShieldBoost { .. })
+                        && c.cost_ap <= action_points.enemy
                 })
-            {
+            }) {
                 let card_id = hand.enemy.remove(idx);
                 if let Some(card) = card_db.0.get(&card_id) {
                     action_points.enemy -= card.cost_ap;
@@ -961,7 +956,10 @@ pub fn enemy_choose_skill_system(
     };
 
     let low_hp = enemy_stats.max_hp > 0 && enemy_stats.hp * 100 < enemy_stats.max_hp * 30;
-    let under_counter = crate::data::ElementMatrix::get_effectiveness(player_combatant.element, enemy_combatant.element) > 1.0;
+    let under_counter = crate::data::ElementMatrix::get_effectiveness(
+        player_combatant.element,
+        enemy_combatant.element,
+    ) > 1.0;
 
     let mut heal_candidates = Vec::new();
     let mut best_scored: Option<(crate::data::SkillId, i32)> = None;
@@ -975,7 +973,10 @@ pub fn enemy_choose_skill_system(
             SkillEffect::Attack { power } => {
                 let base_damage = *power + enemy_stats.atk - player_stats.def;
                 let effectiveness = if let Some(skill_element) = skill.element {
-                    crate::data::ElementMatrix::get_effectiveness(skill_element, player_combatant.element)
+                    crate::data::ElementMatrix::get_effectiveness(
+                        skill_element,
+                        player_combatant.element,
+                    )
                 } else {
                     1.0
                 };
@@ -1032,15 +1033,18 @@ pub fn enemy_choose_skill_system(
 
 /// 回合结算：按行动优先级排序（换人 > 防御/治疗 > 攻击），同优先级按速度。
 pub fn resolve_turn_system(
-    mut query: Query<(
-        Entity,
-        &Combatant,
-        &mut Stats,
-        &SkillList,
-        &mut Shield,
-        &mut ElementAura,
-        &Name,
-    ), With<InBattle>>,
+    mut query: Query<
+        (
+            Entity,
+            &Combatant,
+            &mut Stats,
+            &SkillList,
+            &mut Shield,
+            &mut ElementAura,
+            &Name,
+        ),
+        With<InBattle>,
+    >,
     mut turn_ctx: ResMut<TurnContext>,
     skill_db: Res<SkillDb>,
     player_team: Res<crate::battle::PlayerTeam>,
@@ -1152,10 +1156,12 @@ pub fn resolve_turn_system(
             .map(|(_, _, _, sl, _, _, _)| sl.0.iter().position(|&s| s == skill_id).unwrap_or(0))
             .unwrap_or(0);
 
-        let Ok([
-            (_, a_combatant, mut a_stats, _, mut a_shield, mut a_aura, _),
-            (_, t_combatant, mut t_stats, _, mut t_shield, mut t_aura, _),
-        ]) = query.get_many_mut([player_entity, enemy_entity])
+        let Ok(
+            [
+                (_, a_combatant, mut a_stats, _, mut a_shield, mut a_aura, _),
+                (_, t_combatant, mut t_stats, _, mut t_shield, mut t_aura, _),
+            ],
+        ) = query.get_many_mut([player_entity, enemy_entity])
         else {
             abort_battle(
                 "回合结算失败：无法同时访问双方成员。",
@@ -1398,7 +1404,9 @@ pub fn consume_battle_events_system(
                     effectiveness
                 )
             }
-            BattleEvent::SkillUsed { side, skill_name, .. } => {
+            BattleEvent::SkillUsed {
+                side, skill_name, ..
+            } => {
                 format!("{} 使用了 {}。", side_text(*side), skill_name)
             }
             BattleEvent::DamageDealt {
@@ -1414,12 +1422,18 @@ pub fn consume_battle_events_system(
             BattleEvent::ShieldAbsorbed { side, amount } => {
                 format!("{} 的护盾吸收了 {} 点伤害。", side_text(*side), amount)
             }
-            BattleEvent::Healed { side, amount } => format!("{} 恢复了 {} 点生命。", side_text(*side), amount),
+            BattleEvent::Healed { side, amount } => {
+                format!("{} 恢复了 {} 点生命。", side_text(*side), amount)
+            }
             BattleEvent::ShieldGained { side, amount } => {
                 format!("{} 获得了 {} 点护盾。", side_text(*side), amount)
             }
-            BattleEvent::CombatantFainted { side, name } => format!("【{}】{} 倒下了。", side_text(*side), name),
-            BattleEvent::Switched { side, name } => format!("{} 换上了 {}！", side_text(*side), name),
+            BattleEvent::CombatantFainted { side, name } => {
+                format!("【{}】{} 倒下了。", side_text(*side), name)
+            }
+            BattleEvent::Switched { side, name } => {
+                format!("{} 换上了 {}！", side_text(*side), name)
+            }
         };
 
         push_battle_line(&mut log, line);
@@ -1477,8 +1491,7 @@ fn apply_effect(
                 );
                 let theoretical_damage_with_aura =
                     (raw as f32 * effectiveness_with_aura).max(1.0) as i32;
-                let absorbed_with_aura =
-                    target_shield.0.min(theoretical_damage_with_aura);
+                let absorbed_with_aura = target_shield.0.min(theoretical_damage_with_aura);
 
                 if absorbed_with_aura > 0 {
                     // 盾免疫：元素附着/反应不生效，改用“固有元素”重算伤害。

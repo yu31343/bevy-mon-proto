@@ -22,16 +22,35 @@ pub enum BattleEvent {
         /// 技能在 4 格栏中的索引（用于 UI 高亮）。
         slot: usize,
     },
-    DamageDealt { source: Side, target: Side, amount: i32 },
-    ShieldAbsorbed { side: Side, amount: i32 },
-    Healed { side: Side, amount: i32 },
-    ShieldGained { side: Side, amount: i32 },
+    DamageDealt {
+        source: Side,
+        target: Side,
+        amount: i32,
+    },
+    ShieldAbsorbed {
+        side: Side,
+        amount: i32,
+    },
+    Healed {
+        side: Side,
+        amount: i32,
+    },
+    ShieldGained {
+        side: Side,
+        amount: i32,
+    },
     ElementAuraApplied {
         side: Side,
         from: Option<ElementType>,
         to: ElementType,
         effectiveness: f32,
     },
-    CombatantFainted { side: Side, name: String },
-    Switched { side: Side, name: String },
+    CombatantFainted {
+        side: Side,
+        name: String,
+    },
+    Switched {
+        side: Side,
+        name: String,
+    },
 }

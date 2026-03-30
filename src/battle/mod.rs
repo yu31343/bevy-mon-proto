@@ -48,7 +48,10 @@ impl Plugin for BattlePlugin {
             systems::check_end_system
                 .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::CheckEnd))),
         )
-        .add_systems(Update, systems::restart_from_result_system.run_if(in_state(GameState::Result)))
+        .add_systems(
+            Update,
+            systems::restart_from_result_system.run_if(in_state(GameState::Result)),
+        )
         .add_systems(Update, systems::consume_battle_events_system);
     }
 }
