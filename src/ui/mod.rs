@@ -42,6 +42,9 @@ struct ActionPointsText;
 struct BattleHintText;
 
 #[derive(Component)]
+struct BattleActionText;
+
+#[derive(Component)]
 struct PlayerCardButton {
     index: usize,
 }
@@ -185,6 +188,7 @@ pub(crate) struct UiFontHandle(Handle<Font>);
 #[derive(Resource, Default, Clone, Copy)]
 struct SelectedCard {
     index: Option<usize>,
+    discard_armed: bool,
 }
 
 #[derive(Resource, Clone)]
@@ -341,6 +345,7 @@ impl Plugin for UiPlugin {
                 button_visual_state_system.run_if(in_state(GameState::Battle)),
                 update_battle_bars_system.run_if(in_state(GameState::Battle)),
                 update_action_points_text_system.run_if(in_state(GameState::Battle)),
+                update_battle_action_text_system.run_if(in_state(GameState::Battle)),
                 process_battle_fx_events,
                 tick_skill_flash_timer.after(process_battle_fx_events),
                 tick_screen_flashes,
@@ -715,6 +720,16 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                     TextColor(Color::srgb(0.95, 0.98, 1.0)),
                     theme.title_text_shadow(),
                     ActionPointsText,
+                ));
+                bar.spawn((
+                    Text::new("行为：等待操作"),
+                    meta_font.clone(),
+                    TextColor(Color::srgb(0.90, 0.93, 0.98)),
+                    TextShadow {
+                        offset: Vec2::new(1.0, 1.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.45),
+                    },
+                    BattleActionText,
                 ));
             });
 
@@ -1626,7 +1641,30 @@ fn button_play_card_two_step_system(
         let idx = button.index;
         if idx >= hand.player.len() {
             selected.index = None;
+            selected.discard_armed = false;
             continue;
+        }
+
+        if selected.discard_armed {
+            let card_id = hand.player[idx];
+            hand.player.remove(idx);
+            action_points.player += 1;
+
+            let card_name = card_db
+                .0
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+
+            event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Player,
+                card_name,
+            });
+
+            turn_ctx.player_action = None;
+            selected.index = None;
+            selected.discard_armed = false;
+            break;
         }
 
         if selected.index != Some(idx) {
@@ -1658,6 +1696,7 @@ fn button_play_card_two_step_system(
 
         turn_ctx.player_action = None;
         selected.index = None;
+        selected.discard_armed = false;
 
         if action_points.player <= 0 {
             turn_ctx.player_ended = true;
@@ -1885,6 +1924,7 @@ fn update_enemy_roster_ui_system(
 fn button_discard_system(
     mut interaction_query: Query<(&Interaction, &DiscardButton), (Changed<Interaction>, With<Button>)>,
     mut turn_ctx: ResMut<TurnContext>,
+    mut selected: ResMut<SelectedCard>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     card_db: Res<CardDb>,
@@ -1893,9 +1933,20 @@ fn button_discard_system(
     for (interaction, _) in &mut interaction_query {
         if *interaction == Interaction::Pressed {
             if hand.player.is_empty() {
+                selected.discard_armed = false;
+                selected.index = None;
                 continue;
             }
-            let card_id = hand.player.remove(0);
+
+            let target_index = match selected.index {
+                Some(idx) if idx < hand.player.len() => idx,
+                _ => {
+                    selected.discard_armed = true;
+                    continue;
+                }
+            };
+
+            let card_id = hand.player.remove(target_index);
             action_points.player += 1;
 
             let card_name = card_db
@@ -1910,6 +1961,8 @@ fn button_discard_system(
             });
 
             turn_ctx.player_action = None;
+            selected.index = None;
+            selected.discard_armed = false;
             break;
         }
     }
@@ -1927,6 +1980,44 @@ fn button_end_turn_system(
             next_phase.set(BattlePhase::EnemyTurn);
             break;
         }
+    }
+}
+
+fn update_battle_action_text_system(
+    mut events: MessageReader<BattleEvent>,
+    mut text_q: Query<&mut Text, With<BattleActionText>>,
+) {
+    let Ok(mut text) = text_q.single_mut() else {
+        return;
+    };
+
+    for event in events.read() {
+        let line = match event {
+            BattleEvent::SkillUsed {
+                side, skill_name, ..
+            } => {
+                let owner = if *side == Side::Player { "我方" } else { "对方" };
+                format!("行为：{}发动{}", owner, skill_name)
+            }
+            BattleEvent::CardUsed { side, card_name } => {
+                let owner = if *side == Side::Player { "我方" } else { "对方" };
+                format!("行为：{}使用技能牌{}", owner, card_name)
+            }
+            BattleEvent::CardDiscarded { side, card_name } => {
+                let owner = if *side == Side::Player { "我方" } else { "对方" };
+                format!("行为：{}弃置{}", owner, card_name)
+            }
+            BattleEvent::Switched { side, name } => {
+                let owner = if *side == Side::Player { "我方" } else { "对方" };
+                format!("行为：{}换上{}", owner, name)
+            }
+            BattleEvent::CombatantFainted { side, name } => {
+                let owner = if *side == Side::Player { "我方" } else { "对方" };
+                format!("行为：{}{}倒下", owner, name)
+            }
+            _ => continue,
+        };
+        text.0 = line;
     }
 }
 

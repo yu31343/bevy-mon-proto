@@ -627,6 +627,7 @@ pub fn player_turn_input_system(
 
 /// 敌方 AI：连续行动，直到 AP 为 0。
 pub fn enemy_turn_ai_system(
+    time: Res<Time>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut action_points: ResMut<ActionPoints>,
@@ -640,6 +641,7 @@ pub fn enemy_turn_ai_system(
     mut battle_result: ResMut<BattleResult>,
     mut next_game_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut ai_action_cooldown: Local<f32>,
     mut exec_query: Query<
         (
             Entity,
@@ -653,11 +655,18 @@ pub fn enemy_turn_ai_system(
         With<InBattle>,
     >,
 ) {
+    if *ai_action_cooldown > 0.0 {
+        *ai_action_cooldown = (*ai_action_cooldown - time.delta_secs()).max(0.0);
+        return;
+    }
+
     if turn_ctx.enemy_ended {
+        *ai_action_cooldown = 0.0;
         return;
     }
     if action_points.enemy <= 0 {
         turn_ctx.enemy_ended = true;
+        *ai_action_cooldown = 0.0;
         next_phase.set(BattlePhase::CheckEnd);
         return;
     }
@@ -681,6 +690,7 @@ pub fn enemy_turn_ai_system(
         return;
     };
 
+    let mut acted_this_update = false;
     while action_points.enemy > 0 {
         let should_go_check_end = exec_query
             .get(p_entity)
@@ -692,6 +702,7 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
+            *ai_action_cooldown = 0.0;
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -800,10 +811,8 @@ pub fn enemy_turn_ai_system(
         }
 
         if played_card {
-            if action_points.enemy <= 0 {
-                break;
-            }
-            continue;
+            acted_this_update = true;
+            break;
         }
 
         // 否则优先使用精灵技能（根据 HP 简单选择）。
@@ -864,9 +873,11 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or(false);
             if should_go_check_end {
                 turn_ctx.enemy_ended = true;
+                *ai_action_cooldown = 0.0;
                 next_phase.set(BattlePhase::CheckEnd);
                 return;
             }
+            acted_this_update = true;
         } else {
             // 没有可用技能：弃牌换 AP（或直接结束）
             if !hand.enemy.is_empty() {
@@ -881,6 +892,7 @@ pub fn enemy_turn_ai_system(
                     side: Side::Enemy,
                     card_name,
                 });
+                acted_this_update = true;
             } else {
                 break;
             }
@@ -896,6 +908,7 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
+            *ai_action_cooldown = 0.0;
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -905,6 +918,12 @@ pub fn enemy_turn_ai_system(
         }
     }
 
+    if acted_this_update && action_points.enemy > 0 {
+        *ai_action_cooldown = 1.55;
+        return;
+    }
+
+    *ai_action_cooldown = 0.0;
     turn_ctx.enemy_ended = true;
     next_phase.set(BattlePhase::CheckEnd);
 }
