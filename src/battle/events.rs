@@ -8,6 +8,7 @@ pub enum BattleEvent {
     TurnStarted(u32),
     SkillUsed { side: Side, skill_name: String },
     DamageDealt { source: Side, target: Side, amount: i32 },
+    ShieldAbsorbed { side: Side, amount: i32 },
     Healed { side: Side, amount: i32 },
     ShieldGained { side: Side, amount: i32 },
     CombatantFainted { side: Side, name: String },

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
 };
 
@@ -100,6 +100,12 @@ pub struct TeamSetup {
     pub enemy: Vec<MonsterPrototype>,
 }
 
+/// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。
+#[derive(Resource, Debug, Clone, Default)]
+pub struct BattleDataStatus {
+    pub error: Option<String>,
+}
+
 /// 数据插件：启动时加载技能与双方初始数据。
 pub struct DataPlugin;
 
@@ -112,12 +118,46 @@ impl Plugin for DataPlugin {
 fn load_battle_data(mut commands: Commands) {
     // 从 RON 配置加载战斗数据，便于后续扩展为纯数据驱动。
     let path = "assets/data/battle_data.ron";
-    let raw = fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("failed to read {path}: {e}");
-    });
-    let config: BattleConfig = ron::from_str(&raw).unwrap_or_else(|e| {
-        panic!("failed to parse {path}: {e}");
-    });
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            commands.insert_resource(SkillDb(HashMap::new()));
+            commands.insert_resource(TeamSetup {
+                player: vec![],
+                enemy: vec![],
+            });
+            commands.insert_resource(BattleDataStatus {
+                error: Some(format!("读取战斗配置失败: {path} ({e})")),
+            });
+            return;
+        }
+    };
+    let config: BattleConfig = match ron::from_str(&raw) {
+        Ok(config) => config,
+        Err(e) => {
+            commands.insert_resource(SkillDb(HashMap::new()));
+            commands.insert_resource(TeamSetup {
+                player: vec![],
+                enemy: vec![],
+            });
+            commands.insert_resource(BattleDataStatus {
+                error: Some(format!("解析战斗配置失败: {path} ({e})")),
+            });
+            return;
+        }
+    };
+
+    if let Err(reason) = validate_battle_config(&config) {
+        commands.insert_resource(SkillDb(HashMap::new()));
+        commands.insert_resource(TeamSetup {
+            player: vec![],
+            enemy: vec![],
+        });
+        commands.insert_resource(BattleDataStatus {
+            error: Some(format!("战斗配置非法: {reason}")),
+        });
+        return;
+    }
 
     let mut skills = HashMap::new();
     for skill in config.skills {
@@ -129,4 +169,39 @@ fn load_battle_data(mut commands: Commands) {
         player: config.player,
         enemy: config.enemy,
     });
+    commands.insert_resource(BattleDataStatus::default());
+}
+
+fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
+    if config.skills.is_empty() {
+        return Err("skills 不能为空".to_string());
+    }
+    if config.player.is_empty() {
+        return Err("player 队伍不能为空".to_string());
+    }
+    if config.enemy.is_empty() {
+        return Err("enemy 队伍不能为空".to_string());
+    }
+
+    let mut skill_ids = HashSet::new();
+    for skill in &config.skills {
+        if !skill_ids.insert(skill.id) {
+            return Err(format!("技能ID重复: {:?}", skill.id));
+        }
+    }
+
+    for (team_name, team) in [("player", &config.player), ("enemy", &config.enemy)] {
+        for mon in team {
+            for sid in mon.skills {
+                if !skill_ids.contains(&sid) {
+                    return Err(format!(
+                        "{team_name} 队伍中的角色 {} 使用了未定义技能 {:?}",
+                        mon.name, sid
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
