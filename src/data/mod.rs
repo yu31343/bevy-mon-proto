@@ -6,12 +6,16 @@ use std::{
 use bevy::prelude::*;
 use serde::Deserialize;
 
-/// 元素类型（系别）：水、火、草。
+/// 元素类型（系别）：火、水、草、光、暗、雷、风。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
 pub enum ElementType {
-    Water,
     Fire,
+    Water,
     Grass,
+    Light,
+    Dark,
+    Thunder,
+    Wind,
 }
 
 /// 元素克制矩阵。
@@ -25,23 +29,96 @@ impl ElementMatrix {
     /// 克制关系（2.0）、微弱关系（0.5），其他情况默认为正常伤害（1.0）。
     pub fn get_effectiveness(attacker: ElementType, defender: ElementType) -> f32 {
         match (attacker, defender) {
-            // 克制关系：水克火，火克草，草克水
+            // 光/暗
+            (ElementType::Light, ElementType::Dark) => 2.0,
+            (ElementType::Dark, ElementType::Light) => 0.5,
+
+            // 水/火/草（保留原有循环）
             (ElementType::Water, ElementType::Fire) => 2.0,
             (ElementType::Fire, ElementType::Grass) => 2.0,
             (ElementType::Grass, ElementType::Water) => 2.0,
-            // 微弱关系：水弱于草，火弱于水，草弱于火
             (ElementType::Water, ElementType::Grass) => 0.5,
             (ElementType::Fire, ElementType::Water) => 0.5,
             (ElementType::Grass, ElementType::Fire) => 0.5,
+
+            // 雷/水/风/草（“常识化合理”）
+            (ElementType::Thunder, ElementType::Water) => 2.0,
+            (ElementType::Water, ElementType::Thunder) => 0.5,
+
+            (ElementType::Thunder, ElementType::Wind) => 2.0,
+            (ElementType::Wind, ElementType::Thunder) => 0.5,
+
+            (ElementType::Thunder, ElementType::Grass) => 0.5,
+            (ElementType::Grass, ElementType::Thunder) => 1.0,
+
+            // 风/草/火/雷（“风克草、火克风、雷惧风”）
+            (ElementType::Wind, ElementType::Grass) => 2.0,
+            (ElementType::Grass, ElementType::Wind) => 1.0,
+
+            (ElementType::Fire, ElementType::Wind) => 2.0,
+            (ElementType::Wind, ElementType::Fire) => 0.5,
+
             // 其他所有情况（包括相同系别）都是正常伤害
             _ => 1.0,
         }
     }
 }
 
+/// 元素附着/反应的“盾免疫”判定：
+/// 当护盾吸收了本次伤害的一部分（absorbed > 0）时，不触发元素附着/消耗。
+pub fn shield_blocks_element_attachment(shield: i32, theoretical_damage: i32) -> bool {
+    shield.min(theoretical_damage) > 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_matrix_basic_cycles() {
+        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Fire), 2.0);
+        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Fire, ElementType::Grass), 2.0);
+        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Grass, ElementType::Water), 2.0);
+
+        assert_eq!(
+            ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Grass),
+            0.5
+        );
+    }
+
+    #[test]
+    fn element_matrix_light_dark() {
+        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Light, ElementType::Dark), 2.0);
+        assert_eq!(ElementMatrix::get_effectiveness(ElementType::Dark, ElementType::Light), 0.5);
+    }
+
+    #[test]
+    fn shield_blocks_attachment_when_absorbed_positive() {
+        // 理论伤害 > 0 且护盾 > 0：必定会吸收部分
+        assert!(shield_blocks_element_attachment(5, 1));
+        assert!(shield_blocks_element_attachment(1, 5));
+
+        // 护盾为 0：不会吸收
+        assert!(!shield_blocks_element_attachment(0, 10));
+        // 理论伤害为 0：不会吸收
+        assert!(!shield_blocks_element_attachment(10, 0));
+    }
+}
+
 /// 技能唯一标识（逻辑层使用）。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
 pub enum SkillId {
+    /// slot0：普通攻击（不附着元素）。
+    NormalAttack,
+    /// slot1：对应元素的元素战技（会附着元素）。
+    ElementWaterAttack,
+    ElementFireAttack,
+    ElementGrassAttack,
+    ElementLightAttack,
+    ElementDarkAttack,
+    ElementThunderAttack,
+    ElementWindAttack,
+
     Slash,
     HeavyStrike,
     FirstAid,
@@ -99,6 +176,44 @@ pub struct TeamSetup {
     pub player: Vec<MonsterPrototype>,
     pub enemy: Vec<MonsterPrototype>,
 }
+
+/// 技能卡唯一标识。
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum CardId {
+    /// 使用后获得行动点（示例：消耗 1 点，获得 +2 点）。
+    GainAp,
+    /// 使用后给“下次进攻”附加伤害增益（示例：消耗 2 点，给 +5）。
+    NextAttackBoost,
+    /// 使用后给“下次防御”附加护盾增益（示例：消耗 2 点，给 +5）。
+    NextShieldBoost,
+    /// 使用后给“下次治疗”附加回复增益（示例：消耗 2 点，给 +5）。
+    NextHealBoost,
+}
+
+/// 技能卡效果定义。
+#[derive(Debug, Clone, Copy)]
+pub enum CardEffect {
+    GainAp { amount: i32 },
+    NextAttackBoost { amount: i32 },
+    NextShieldBoost { amount: i32 },
+    NextHealBoost { amount: i32 },
+}
+
+#[derive(Debug, Clone)]
+pub struct CardDef {
+    pub id: CardId,
+    pub name: &'static str,
+    pub cost_ap: i32,
+    pub effect: CardEffect,
+}
+
+/// 技能卡数据库（当前原型：卡表内置，不走 RON）。
+#[derive(Resource, Debug, Clone)]
+pub struct CardDb(pub HashMap<CardId, CardDef>);
+
+/// 技能卡组（每回合从中抽取固定数量的卡）。
+#[derive(Resource, Debug, Clone)]
+pub struct CardDeck(pub Vec<CardId>);
 
 /// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。
 #[derive(Resource, Debug, Clone, Default)]
@@ -169,6 +284,55 @@ fn load_battle_data(mut commands: Commands) {
         player: config.player,
         enemy: config.enemy,
     });
+
+    // 简易技能卡组：为了原型先内置几种卡并重复组成“牌库”。
+    // 后续可把它迁移到 RON 数据驱动。
+    let mut card_map = HashMap::new();
+    let card_defs = [
+        CardDef {
+            id: CardId::GainAp,
+            name: "行动充能",
+            cost_ap: 1,
+            effect: CardEffect::GainAp { amount: 2 },
+        },
+        CardDef {
+            id: CardId::NextAttackBoost,
+            name: "猛攻许可",
+            cost_ap: 2,
+            effect: CardEffect::NextAttackBoost { amount: 5 },
+        },
+        CardDef {
+            id: CardId::NextShieldBoost,
+            name: "守备许可",
+            cost_ap: 2,
+            effect: CardEffect::NextShieldBoost { amount: 5 },
+        },
+        CardDef {
+            id: CardId::NextHealBoost,
+            name: "治疗许可",
+            cost_ap: 2,
+            effect: CardEffect::NextHealBoost { amount: 5 },
+        },
+    ];
+    for def in card_defs {
+        card_map.insert(def.id, def);
+    }
+    commands.insert_resource(CardDb(card_map));
+
+    // 牌库包含重复卡，用于“抽取”时有一定可选性。
+    commands.insert_resource(CardDeck(vec![
+        CardId::GainAp,
+        CardId::GainAp,
+        CardId::NextAttackBoost,
+        CardId::NextShieldBoost,
+        CardId::GainAp,
+        CardId::NextHealBoost,
+        CardId::NextAttackBoost,
+        CardId::GainAp,
+        CardId::NextShieldBoost,
+        CardId::NextHealBoost,
+    ]));
+
     commands.insert_resource(BattleDataStatus::default());
 }
 

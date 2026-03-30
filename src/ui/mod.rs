@@ -6,10 +6,10 @@ use std::fs;
 
 use crate::{
     battle::{
-        BattleResult, Combatant, EnemyTeam, InBattle, PlayerTeam, Shield, Side, SkillList, Stats, Team,
-        TurnContext,
+        ActionPoints, BattleResult, Combatant, EnemyTeam, Hand, InBattle, PlayerTeam, Shield, Side,
+        SkillList, Stats, Team, TurnContext, BattleEvent,
     },
-    data::{ElementType, SkillDb, SkillEffect, SkillId},
+    data::{CardDb, CardId, ElementType, SkillDb, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
 };
 
@@ -34,6 +34,20 @@ struct EnemyStatsText;
 struct ResultText;
 #[derive(Component)]
 struct BattlePhaseText;
+
+#[derive(Component)]
+struct ActionPointsText;
+
+#[derive(Component)]
+struct PlayerHandCardText {
+    index: usize,
+}
+
+#[derive(Component)]
+struct DiscardButton;
+
+#[derive(Component)]
+struct EndTurnButton;
 
 #[derive(Component)]
 struct SkillButton {
@@ -84,6 +98,36 @@ pub struct UiPlugin;
 
 #[derive(Resource, Clone)]
 pub(crate) struct UiFontHandle(Handle<Font>);
+
+// #region agent log
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn agent_debug_log(
+    hypothesis_id: &str,
+    location: &str,
+    message: &str,
+    run_id: &str,
+) {
+    // Debug logs are best-effort; if writing fails, ignore to avoid hiding the original panic.
+    let _ = (|| {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("debug-648aa6.log");
+        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+        let line = format!(
+            "{{\"sessionId\":\"648aa6\",\"runId\":\"{}\",\"hypothesisId\":\"{}\",\"location\":\"{}\",\"message\":\"{}\",\"data\":{{}},\"timestamp\":{}}}\n",
+            run_id, hypothesis_id, location, message, ts
+        );
+        f.write_all(line.as_bytes())?;
+        f.flush()?;
+        Ok::<(), std::io::Error>(())
+    })();
+}
+// #endregion
 
 #[derive(Resource, Clone)]
 struct UiTheme {
@@ -198,21 +242,64 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiTheme>()
             .add_systems(Startup, (spawn_camera, load_cjk_font_system, setup_ui_system).chain())
+
+            // #region agent log
             .add_systems(
                 Update,
                 (
                     button_select_skill_system
-                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerCommand))),
-                    button_visual_state_system.run_if(in_state(GameState::Battle)),
-                    update_battle_text_system.run_if(in_state(GameState::Battle)),
-                    update_battle_bars_system.run_if(in_state(GameState::Battle)),
-                    update_result_ui_system.run_if(in_state(GameState::Result)),
-                    process_battle_fx_events,
-                    tick_skill_flash_timer.after(process_battle_fx_events),
-                    tick_screen_flashes,
-                    tick_fx_lifetimes,
+                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                    button_discard_system
+                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
                 ),
             );
+
+        // #endregion
+
+        // #region agent log
+        agent_debug_log(
+            "H2",
+            "src/ui/mod.rs",
+            "about_to_register_update_player_hand_text_system",
+            "instrumentation-pre",
+        );
+        // #endregion
+
+        app.add_systems(
+            Update,
+            update_player_hand_text_system.run_if(in_state(GameState::Battle)),
+        );
+
+        // #region agent log
+        agent_debug_log(
+            "H3",
+            "src/ui/mod.rs",
+            "about_to_register_update_battle_text_system",
+            "instrumentation-pre",
+        );
+        // #endregion
+
+        app.add_systems(
+            Update,
+            update_battle_text_system.run_if(in_state(GameState::Battle)),
+        );
+
+        app.add_systems(
+            Update,
+            (
+                button_end_turn_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                button_visual_state_system.run_if(in_state(GameState::Battle)),
+                update_battle_bars_system.run_if(in_state(GameState::Battle)),
+                update_action_points_text_system.run_if(in_state(GameState::Battle)),
+                process_battle_fx_events,
+                tick_skill_flash_timer.after(process_battle_fx_events),
+                tick_screen_flashes,
+                tick_fx_lifetimes,
+            ),
+        );
+
+        app.add_systems(Update, update_result_ui_system.run_if(in_state(GameState::Result)));
     }
 }
 
@@ -561,7 +648,7 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                     BattlePhaseText,
                 ));
                 bar.spawn((
-                    Text::new("操作提示：按 1-4 选择技能，按 Q 切换成员，按 R 重新开始"),
+                    Text::new("操作提示：按 1-4 使用精灵技能，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
                     meta_font.clone(),
                     TextColor(Color::srgb(0.80, 0.90, 0.95)),
                     TextShadow {
@@ -569,6 +656,62 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                         color: Color::srgba(0.0, 0.0, 0.0, 0.45),
                     },
                 ));
+
+                bar.spawn((
+                    Text::new("AP：Player 0 / Enemy 0"),
+                    body_font.clone(),
+                    TextColor(Color::srgb(0.95, 0.98, 1.0)),
+                    theme.title_text_shadow(),
+                    ActionPointsText,
+                ));
+
+                bar.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(38.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    DiscardButton,
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        Text::new("弃牌（F）"),
+                        body_font.clone(),
+                        TextColor(Color::WHITE),
+                    ));
+                });
+
+                bar.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(38.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    EndTurnButton,
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        Text::new("结束回合（E）"),
+                        body_font.clone(),
+                        TextColor(Color::WHITE),
+                    ));
+                });
             });
 
             root.spawn((
@@ -685,6 +828,31 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
                     meta_font.clone(),
                     icon_font.clone(),
                 );
+
+                player_zone.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(4.0),
+                        padding: UiRect::top(Val::Px(6.0)),
+                        ..default()
+                    },
+                ))
+                .with_children(|hand_node| {
+                    hand_node.spawn((
+                        Text::new("手牌："),
+                        meta_font.clone(),
+                        TextColor(Color::srgb(0.75, 0.92, 1.0)),
+                    ));
+                    for idx in 0..5 {
+                        hand_node.spawn((
+                            Text::new(format!("{}: —", idx + 1)),
+                            body_font.clone(),
+                            TextColor(Color::WHITE),
+                            PlayerHandCardText { index: idx },
+                        ));
+                    }
+                });
             });
 
             root.spawn((
@@ -700,6 +868,7 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
 fn button_select_skill_system(
     mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,
     mut turn_ctx: ResMut<TurnContext>,
+    action_points: Res<ActionPoints>,
     player_team: Option<Res<PlayerTeam>>,
     query: Query<&SkillList, With<InBattle>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
@@ -713,8 +882,13 @@ fn button_select_skill_system(
 
             for (interaction, button) in &mut interaction_query {
                 if *interaction == Interaction::Pressed {
+                    let cost = monster_skill_ap_cost_ui(button.index);
+                    if action_points.player < cost {
+                        continue;
+                    }
                     turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skills[button.index]));
-                    next_phase.set(BattlePhase::EnemyCommand);
+                    // 保持在玩家回合内，由 `player_turn_input_system` 按 AP 规则执行。
+                    next_phase.set(BattlePhase::PlayerTurn);
                 }
             }
         }
@@ -804,6 +978,11 @@ fn update_battle_text_system(
             Option<&EnemySkillMetaText>,
             Option<&EnemySkillIconText>,
         ),
+        (
+            Without<ActionPointsText>,
+            Without<PlayerHandCardText>,
+            Without<ResultText>,
+        ),
     >,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -870,7 +1049,11 @@ fn update_battle_text_system(
         }
         if let (Some(meta), Some(skills)) = (skill_button_meta_text, player_skills) {
             let skill_id = skills[meta.index];
-            text.0 = skill_meta(skill_id, &skill_db);
+            text.0 = format!(
+                "{} AP消耗：{}",
+                skill_meta(skill_id, &skill_db),
+                monster_skill_ap_cost_ui(meta.index)
+            );
             continue;
         }
         if let (Some(icon), Some(_skills)) = (skill_icon_text, player_skills) {
@@ -951,6 +1134,86 @@ fn update_battle_bars_system(
     }
 }
 
+fn update_action_points_text_system(
+    action_points: Res<ActionPoints>,
+    mut text_q: Query<&mut Text, With<ActionPointsText>>,
+) {
+    if let Ok(mut text) = text_q.single_mut() {
+        text.0 = format!(
+            "AP：Player {} / Enemy {}",
+            action_points.player, action_points.enemy
+        );
+    }
+}
+
+fn update_player_hand_text_system(
+    hand: Res<Hand>,
+    card_db: Res<CardDb>,
+    mut text_q: Query<(&PlayerHandCardText, &mut Text)>,
+) {
+    for (meta, mut text) in &mut text_q {
+        if meta.index < hand.player.len() {
+            let cid = hand.player[meta.index];
+            if let Some(card) = card_db.0.get(&cid) {
+                text.0 = format!("{}: {}（AP{}）", meta.index + 1, card.name, card.cost_ap);
+            } else {
+                text.0 = format!("{}: —", meta.index + 1);
+            }
+        } else {
+            text.0 = format!("{}: —", meta.index + 1);
+        }
+    }
+}
+
+fn button_discard_system(
+    mut interaction_query: Query<(&Interaction, &DiscardButton), (Changed<Interaction>, With<Button>)>,
+    mut turn_ctx: ResMut<TurnContext>,
+    mut action_points: ResMut<ActionPoints>,
+    mut hand: ResMut<Hand>,
+    card_db: Res<CardDb>,
+    mut event_writer: MessageWriter<BattleEvent>,
+) {
+    for (interaction, _) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            if hand.player.is_empty() {
+                continue;
+            }
+            let card_id = hand.player.remove(0);
+            action_points.player += 1;
+
+            let card_name = card_db
+                .0
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+
+            event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Player,
+                card_name,
+            });
+
+            // 清理一次性动作，避免 UI 点击后的残留。
+            turn_ctx.player_action = None;
+            break;
+        }
+    }
+}
+
+fn button_end_turn_system(
+    mut interaction_query: Query<(&Interaction, &EndTurnButton), (Changed<Interaction>, With<Button>)>,
+    mut turn_ctx: ResMut<TurnContext>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+) {
+    for (interaction, _) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            turn_ctx.player_ended = true;
+            turn_ctx.player_action = None;
+            next_phase.set(BattlePhase::EnemyTurn);
+            break;
+        }
+    }
+}
+
 fn update_result_ui_system(
     mut result_text_q: Query<&mut Text, With<ResultText>>,
     battle_result: Res<BattleResult>,
@@ -977,6 +1240,10 @@ fn skill_meta(skill_id: SkillId, db: &SkillDb) -> String {
                 Some(ElementType::Water) => "·水系",
                 Some(ElementType::Fire) => "·火系",
                 Some(ElementType::Grass) => "·草系",
+                Some(ElementType::Light) => "·光系",
+                Some(ElementType::Dark) => "·暗系",
+                Some(ElementType::Thunder) => "·雷系",
+                Some(ElementType::Wind) => "·风系",
                 None => "",
             };
             format!("类型：攻击{}", element_text)
@@ -986,12 +1253,22 @@ fn skill_meta(skill_id: SkillId, db: &SkillDb) -> String {
     }
 }
 
+fn monster_skill_ap_cost_ui(slot: usize) -> i32 {
+    match slot {
+        0 => 2,
+        1 => 3,
+        2 => 1,
+        3 => 1,
+        _ => 999,
+    }
+}
+
 fn phase_label(phase: BattlePhase) -> &'static str {
     match phase {
         BattlePhase::Init => "初始化",
-        BattlePhase::PlayerCommand => "玩家指令",
-        BattlePhase::EnemyCommand => "敌方决策",
-        BattlePhase::Resolve => "回合结算",
+        BattlePhase::RoundStart => "回合开始",
+        BattlePhase::PlayerTurn => "玩家回合",
+        BattlePhase::EnemyTurn => "敌方回合",
         BattlePhase::CheckEnd => "胜负判定",
     }
 }
@@ -1037,6 +1314,10 @@ fn element_name(element: ElementType) -> &'static str {
         ElementType::Water => "水",
         ElementType::Fire => "火",
         ElementType::Grass => "草",
+        ElementType::Light => "光",
+        ElementType::Dark => "暗",
+        ElementType::Thunder => "雷",
+        ElementType::Wind => "风",
     }
 }
 

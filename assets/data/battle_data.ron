@@ -1,16 +1,52 @@
 (
     skills: [
         (
-            id: Slash,
+            id: NormalAttack,
+            name: "普通攻击",
+            effect: Attack(power: 10),
+            element: None,
+        ),
+        (
+            id: ElementWaterAttack,
             name: "水刃",
             effect: Attack(power: 10),
             element: Some(Water),
         ),
         (
-            id: HeavyStrike,
+            id: ElementFireAttack,
             name: "火焰冲击",
             effect: Attack(power: 16),
             element: Some(Fire),
+        ),
+        (
+            id: ElementGrassAttack,
+            name: "草叶斩击",
+            effect: Attack(power: 12),
+            element: Some(Grass),
+        ),
+        (
+            id: ElementLightAttack,
+            name: "光辉之刃",
+            effect: Attack(power: 14),
+            element: Some(Light),
+        ),
+        (
+            id: ElementDarkAttack,
+            name: "暗影切割",
+            effect: Attack(power: 14),
+            element: Some(Dark),
+        ),
+        (
+            id: ElementThunderAttack,
+            name: "雷霆打击",
+            effect: Attack(power: 14),
+            element: Some(Thunder),
+        ),
+        (
+            id: ElementWindAttack,
+            name: "风刃疾袭",
+            effect: Attack(power: 14),
+            element: Some(Wind),
         ),
         (
             id: FirstAid,
@@ -30,19 +66,19 @@
             name: "水精灵",
             element: Water,
             stats: (hp: 100, atk: 16, def: 10, spd: 12),
-            skills: (Slash, HeavyStrike, FirstAid, Guard),
+            skills: (NormalAttack, ElementWaterAttack, Guard, FirstAid),
         ),
         (
             name: "草精灵",
             element: Grass,
             stats: (hp: 80, atk: 14, def: 12, spd: 15),
-            skills: (FirstAid, Guard, Slash, HeavyStrike),
+            skills: (NormalAttack, ElementGrassAttack, Guard, FirstAid),
         ),
         (
             name: "火精灵",
             element: Fire,
             stats: (hp: 100, atk: 18, def: 9, spd: 11),
-            skills: (HeavyStrike, Slash, FirstAid, Guard),
+            skills: (NormalAttack, ElementFireAttack, Guard, FirstAid),
         )
     ],
     enemy: [
@@ -50,19 +86,19 @@
             name: "火精灵",
             element: Fire,
             stats: (hp: 100, atk: 18, def: 9, spd: 11),
-            skills: (HeavyStrike, Slash, FirstAid, Guard),
+            skills: (NormalAttack, ElementFireAttack, Guard, FirstAid),
         ),
         (
             name: "暗精灵",
-            element: Fire,
+            element: Dark,
             stats: (hp: 90, atk: 20, def: 8, spd: 14),
-            skills: (HeavyStrike, Slash, Guard, FirstAid),
+            skills: (NormalAttack, ElementDarkAttack, Guard, FirstAid),
         ),
         (
             name: "草精灵",
             element: Grass,
             stats: (hp: 80, atk: 14, def: 12, spd: 15),
-            skills: (FirstAid, Guard, Slash, HeavyStrike),
+            skills: (NormalAttack, ElementGrassAttack, Guard, FirstAid),
         )
     ],
 )

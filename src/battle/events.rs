@@ -1,11 +1,21 @@
 use bevy::prelude::*;
 
+use crate::data::ElementType;
+
 use super::Side;
 
 /// 战斗事件：逻辑层发出，日志/UI 统一消费。
 #[derive(Message, Debug, Clone)]
 pub enum BattleEvent {
     TurnStarted(u32),
+    CardUsed {
+        side: Side,
+        card_name: String,
+    },
+    CardDiscarded {
+        side: Side,
+        card_name: String,
+    },
     SkillUsed {
         side: Side,
         skill_name: String,
@@ -16,6 +26,12 @@ pub enum BattleEvent {
     ShieldAbsorbed { side: Side, amount: i32 },
     Healed { side: Side, amount: i32 },
     ShieldGained { side: Side, amount: i32 },
+    ElementAuraApplied {
+        side: Side,
+        from: Option<ElementType>,
+        to: ElementType,
+        effectiveness: f32,
+    },
     CombatantFainted { side: Side, name: String },
     Switched { side: Side, name: String },
 }
