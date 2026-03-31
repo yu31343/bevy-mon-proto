@@ -17,7 +17,8 @@ use crate::{
 };
 
 use battle::fx::{
-    process_battle_fx_events, tick_fx_lifetimes, tick_screen_flashes, tick_skill_flash_timer,
+    process_battle_fx_events, spawn_button_click_flash, tick_button_click_flash,
+    tick_fx_lifetimes, tick_screen_flashes, tick_skill_flash_timer,
 };
 
 pub struct UiPlugin;
@@ -79,6 +80,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             tick_skill_flash_timer.after(process_battle_fx_events),
             tick_screen_flashes,
             tick_fx_lifetimes,
+            spawn_button_click_flash
+                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                .after(update_player_roster_ui_system),
+            tick_button_click_flash.run_if(in_state(GameState::Battle)),
         ),
     );
 

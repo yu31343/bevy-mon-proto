@@ -19,7 +19,7 @@ pub(crate) fn update_player_roster_ui_system(
     mut nodes: ParamSet<(
         Query<(&TeamMemberHpBarFill, &mut Node)>,
         Query<(&TeamMemberShieldBarFill, &mut Node)>,
-        Query<(&TeamMemberButton, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(&TeamMemberButton, &Interaction, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
     )>,
     mut shield_track_q: Query<(&TeamMemberShieldBarTrack, &mut Visibility)>,
     theme: Res<UiTheme>,
@@ -87,17 +87,20 @@ pub(crate) fn update_player_roster_ui_system(
         }
     }
 
-    for (meta, mut node, mut bg, mut border) in &mut nodes.p2() {
+    for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p2() {
         let active = meta.index == player_team.0.active_index;
         node.display = if active { Display::None } else { Display::Flex };
         node.min_height = Val::Px(58.0);
-        if active {
-            *bg = BackgroundColor(theme.button_hover);
-            *border = BorderColor::all(theme.button_border_hover);
-        } else {
-            *bg = BackgroundColor(theme.button_idle);
-            *border = BorderColor::all(theme.button_border_idle);
-        }
+        *bg = match *interaction {
+            Interaction::Hovered => BackgroundColor(theme.button_hover),
+            Interaction::Pressed => BackgroundColor(theme.button_pressed),
+            Interaction::None => BackgroundColor(theme.button_idle),
+        };
+        *border = match *interaction {
+            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+            Interaction::None => BorderColor::all(theme.button_border_idle),
+        };
     }
 
     for (meta, mut vis) in &mut shield_track_q {

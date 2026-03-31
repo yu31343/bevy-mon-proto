@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::battle::{BattleEvent, Side};
 
-use super::{components::{BattleUiRoot, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
+use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, PlayerCardButton, SkillButton, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
 
 /// 技能格闪白计时（与 `SkillSlotId` 同实体）。
 #[derive(Component)]
@@ -174,6 +174,57 @@ pub fn tick_fx_lifetimes(
         life.0.tick(time.delta());
         if life.0.just_finished() {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// 按钮点击闪光计时（插入到被点击的按钮实体上）。
+#[derive(Component)]
+pub struct ButtonClickFlash(pub Timer);
+
+const CLICK_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.90);
+const CLICK_FLASH_BORDER: Color = Color::srgba(0.72, 0.88, 1.0, 0.70);
+
+/// 检测所有可交互按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
+pub fn spawn_button_click_flash(
+    mut commands: Commands,
+    mut q: Query<
+        (Entity, &Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            Or<(
+                With<SkillButton>,
+                With<PlayerCardButton>,
+                With<EndTurnButton>,
+                With<DiscardButton>,
+            )>,
+        ),
+    >,
+) {
+    for (entity, interaction, mut bg, mut border) in &mut q {
+        if *interaction == Interaction::Pressed {
+            *bg = BackgroundColor(CLICK_FLASH_COLOR);
+            *border = BorderColor::all(CLICK_FLASH_BORDER);
+            commands
+                .entity(entity)
+                .insert(ButtonClickFlash(Timer::from_seconds(0.15, TimerMode::Once)));
+        }
+    }
+}
+
+/// Tick 闪光计时器，到期后移除组件并恢复按钮颜色。
+pub fn tick_button_click_flash(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut ButtonClickFlash, &mut BackgroundColor, &mut BorderColor)>,
+    theme: Res<UiTheme>,
+) {
+    for (entity, mut flash, mut bg, mut border) in &mut q {
+        flash.0.tick(time.delta());
+        if flash.0.just_finished() {
+            commands.entity(entity).remove::<ButtonClickFlash>();
+            *bg = BackgroundColor(theme.button_idle);
+            *border = BorderColor::all(theme.button_border_idle);
         }
     }
 }

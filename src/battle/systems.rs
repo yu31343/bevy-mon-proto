@@ -940,7 +940,7 @@ pub fn enemy_turn_ai_system(
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        *ai_action_cooldown = 1.55;
+        *ai_action_cooldown = 3.55; //AI 每次行动后冷却约 3.5 秒，给玩家反应时间（UI 更新、动画等）。
         return;
     }
 

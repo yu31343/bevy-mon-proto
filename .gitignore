@@ -39,5 +39,11 @@ desktop.ini
 
 # 忽略 cursor 文件夹
 .cursor/
+# 忽略claude文件夹
+.claude/
+
+
 # 忽略日志
 *.log
+
+
