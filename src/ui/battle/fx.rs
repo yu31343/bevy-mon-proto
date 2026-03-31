@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::battle::{BattleEvent, Side};
 
-use super::{BattleUiRoot, SkillSlotId, UiFontHandle, UiTheme};
+use super::{components::{BattleUiRoot, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
 
 /// 技能格闪白计时（与 `SkillSlotId` 同实体）。
 #[derive(Component)]
@@ -177,3 +177,4 @@ pub fn tick_fx_lifetimes(
         }
     }
 }
+

@@ -1,0 +1,83 @@
+use bevy::prelude::*;
+
+use crate::{battle::Hand, data::CardDb};
+
+use super::super::components::*;
+use super::super::resources::SelectedCard;
+
+pub(crate) fn update_player_hand_ui_system(
+    hand: Res<Hand>,
+    card_db: Res<CardDb>,
+    selected: Res<SelectedCard>,
+    mut card_text_q: Query<
+        (
+            &mut Text,
+            Option<&BattleHintText>,
+            Option<&PlayerCardHotkeyText>,
+            Option<&PlayerCardNameText>,
+            Option<&PlayerCardCostText>,
+            Option<&PlayerCardDescText>,
+        ),
+        Without<ResultText>,
+    >,
+    mut desc_vis_q: Query<(&PlayerCardDescText, &mut Visibility)>,
+    mut card_nodes: Query<(&PlayerCardButton, &mut Node)>,
+) {
+    for (meta, mut node) in &mut card_nodes {
+        let has_card = meta.index < hand.player.len();
+        node.display = if has_card { Display::Flex } else { Display::None };
+    }
+
+    for (mut text, is_hint, hotkey, name, cost, desc) in &mut card_text_q {
+        if is_hint.is_some() {
+            text.0 = "操作提示：按 1-4 使用精灵技能；按 5/6/7 切换我方队伍1/2/3；手牌快捷键 Z/X/C/V/B；点击卡牌一次查看描述，再点一次出牌；按 F 弃牌换 AP；按 E 结束回合；按 R 重新开始"
+                .to_string();
+            continue;
+        }
+        let Some(idx) = hotkey
+            .map(|m| m.index)
+            .or_else(|| name.map(|m| m.index))
+            .or_else(|| cost.map(|m| m.index))
+            .or_else(|| desc.map(|m| m.index))
+        else {
+            continue;
+        };
+
+        if idx >= hand.player.len() {
+            if name.is_some() {
+                text.0 = "—".to_string();
+            } else if cost.is_some() {
+                text.0 = "AP—".to_string();
+            } else if hotkey.is_some() {
+                text.0 = crate::ui::card_hotkey_label(idx).to_string();
+            } else if desc.is_some() {
+                text.0.clear();
+            }
+            continue;
+        }
+
+        let card_id = hand.player[idx];
+        let Some(card) = card_db.0.get(&card_id) else {
+            continue;
+        };
+
+        if hotkey.is_some() {
+            text.0 = crate::ui::card_hotkey_label(idx).to_string();
+        } else if name.is_some() {
+            text.0 = card.name.to_string();
+        } else if cost.is_some() {
+            text.0 = format!("AP{}", card.cost_ap);
+        } else if desc.is_some() {
+            text.0 = crate::ui::card_description(card);
+        }
+    }
+
+    for (meta, mut vis) in &mut desc_vis_q {
+        *vis = if selected.index == Some(meta.index) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
