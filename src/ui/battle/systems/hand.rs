@@ -26,6 +26,16 @@ pub(crate) fn update_player_hand_ui_system(
     for (meta, mut node) in &mut card_nodes {
         let has_card = meta.index < hand.player.len();
         node.display = if has_card { Display::Flex } else { Display::None };
+        let is_selected = selected.index == Some(meta.index);
+        if is_selected {
+            node.width = Val::Px(140.0);
+            node.height = Val::Px(194.0);
+            node.margin.top = Val::Px(-10.0);
+        } else {
+            node.width = Val::Px(130.0);
+            node.height = Val::Px(180.0);
+            node.margin.top = Val::Px(0.0);
+        }
     }
 
     for (mut text, is_hint, hotkey, name, cost, desc) in &mut card_text_q {

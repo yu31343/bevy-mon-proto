@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::battle::{BattleEvent, Side};
 
-use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, PlayerCardButton, SkillButton, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
+use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
 
 /// 技能格闪白计时（与 `SkillSlotId` 同实体）。
 #[derive(Component)]
@@ -194,7 +194,6 @@ pub fn spawn_button_click_flash(
             Changed<Interaction>,
             Or<(
                 With<SkillButton>,
-                With<PlayerCardButton>,
                 With<EndTurnButton>,
                 With<DiscardButton>,
             )>,
