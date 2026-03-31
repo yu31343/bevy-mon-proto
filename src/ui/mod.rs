@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use battle::{
     layout::{load_cjk_font_system, setup_ui_system, spawn_camera},
-    resources::{SelectedCard, UiFontHandle},
+    resources::UiFontHandle,
     systems::*,
     theme::UiTheme,
 };
@@ -33,7 +33,6 @@ impl Plugin for UiPlugin {
 /// 后续重构会逐步把实现迁移进 `src/ui/battle/`，此处保持行为不变。
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.init_resource::<UiTheme>()
-        .init_resource::<SelectedCard>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system, setup_ui_system).chain())
         .add_systems(
             Update,

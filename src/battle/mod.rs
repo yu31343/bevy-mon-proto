@@ -21,6 +21,7 @@ impl Plugin for BattlePlugin {
             .init_resource::<ActionPoints>()
             .init_resource::<Hand>()
             .init_resource::<PendingBoosts>()
+            .init_resource::<SelectedCard>()
             .add_message::<BattleEvent>()
             .add_systems(
                 Update,

@@ -7,8 +7,8 @@ use crate::{
 
 use super::{
     AP_PER_ROUND, ActionPoints, BattleEvent, BattleLog, BattleResult, CARDS_PER_ROUND, Combatant,
-    ElementAura, Hand, InBattle, PendingBoosts, Shield, Side, SkillList, Stats, TurnAction,
-    TurnContext, TurnCount, push_battle_line,
+    ElementAura, Hand, InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillList, Stats,
+    TurnAction, TurnContext, TurnCount, push_battle_line,
 };
 
 /// 初始化战斗：清理旧实体、生成双方单位并进入玩家指令阶段。
@@ -44,6 +44,7 @@ pub fn init_battle_system(
     });
     commands.insert_resource(Hand::default());
     commands.insert_resource(PendingBoosts::default());
+    commands.insert_resource(SelectedCard::default());
 
     if let Some(status) = data_status {
         if let Some(reason) = &status.error {
@@ -214,6 +215,7 @@ pub fn round_start_system(
     mut turn_ctx: ResMut<TurnContext>,
     mut turn_count: ResMut<TurnCount>,
     mut pending_boosts: ResMut<PendingBoosts>,
+    mut selected: ResMut<SelectedCard>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
@@ -273,6 +275,8 @@ pub fn round_start_system(
 
     // 每回合开始清空增益，增益仅本回合有效。
     *pending_boosts = PendingBoosts::default();
+    // 清除上回合残留的卡牌选择状态。
+    *selected = SelectedCard::default();
 
     next_phase.set(BattlePhase::PlayerTurn);
 }
@@ -292,6 +296,7 @@ pub fn player_turn_input_system(
     mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
     mut next_game_state: ResMut<NextState<GameState>>,
+    mut selected: ResMut<SelectedCard>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut query: Query<
         (
@@ -451,26 +456,33 @@ pub fn player_turn_input_system(
         return;
     }
 
-    // 2) 弃牌：弃置 1 张技能牌，获得 +1 AP
+    // 2) 弃牌：弃置选中的牌；若无选中则武装弃牌模式（需再选一张才弃置）
     if keyboard.just_pressed(KeyCode::KeyF) {
-        if !hand.player.is_empty() {
-            let card_id = hand.player.remove(0);
-            action_points.player += 1;
-            let card_name = card_db
-                .0
-                .get(&card_id)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| format!("{card_id:?}"));
-            event_writer.write(BattleEvent::CardDiscarded {
-                side: Side::Player,
-                card_name,
-            });
+        if hand.player.is_empty() {
+            return;
         }
+        let Some(target_index) = selected.index.filter(|&i| i < hand.player.len()) else {
+            selected.discard_armed = true;
+            return;
+        };
+        let card_id = hand.player.remove(target_index);
+        action_points.player += 1;
+        let card_name = card_db
+            .0
+            .get(&card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| format!("{card_id:?}"));
+        event_writer.write(BattleEvent::CardDiscarded {
+            side: Side::Player,
+            card_name,
+        });
+        selected.index = None;
+        selected.discard_armed = false;
         // 弃牌可能使 AP 从 0 变为正，这种情况不触发自动结束。
         return;
     }
 
-    // 3) 出牌（手牌 5 张热键：Z X C V B）
+    // 3) 出牌/选牌（手牌热键：Z X C V B；两步式：首按选中，再按出牌；弃牌武装时直接弃置）
     for (key, idx) in [
         (KeyCode::KeyZ, 0_usize),
         (KeyCode::KeyX, 1_usize),
@@ -479,48 +491,74 @@ pub fn player_turn_input_system(
         (KeyCode::KeyB, 4_usize),
     ] {
         if keyboard.just_pressed(key) {
-            if idx < hand.player.len() {
-                let card_id = hand.player[idx];
-                if let Some(card) = card_db.0.get(&card_id) {
-                    if action_points.player >= card.cost_ap {
-                        hand.player.remove(idx);
-                        action_points.player -= card.cost_ap;
+            if idx >= hand.player.len() {
+                return;
+            }
+            // 若已武装弃牌模式（由点击"弃牌"按钮触发），直接弃置该牌
+            if selected.discard_armed {
+                let card_id = hand.player.remove(idx);
+                action_points.player += 1;
+                let card_name = card_db
+                    .0
+                    .get(&card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| format!("{card_id:?}"));
+                event_writer.write(BattleEvent::CardDiscarded {
+                    side: Side::Player,
+                    card_name,
+                });
+                selected.index = None;
+                selected.discard_armed = false;
+                return;
+            }
+            // 第一步：选中该牌（显示描述）
+            if selected.index != Some(idx) {
+                selected.index = Some(idx);
+                return;
+            }
+            // 第二步：出牌
+            let card_id = hand.player[idx];
+            if let Some(card) = card_db.0.get(&card_id) {
+                if action_points.player >= card.cost_ap {
+                    hand.player.remove(idx);
+                    action_points.player -= card.cost_ap;
 
-                        let card_name = card.name.to_string();
-                        event_writer.write(BattleEvent::CardUsed {
-                            side: Side::Player,
-                            card_name,
-                        });
+                    let card_name = card.name.to_string();
+                    event_writer.write(BattleEvent::CardUsed {
+                        side: Side::Player,
+                        card_name,
+                    });
 
-                        match card.effect {
-                            CardEffect::GainAp { amount } => {
-                                action_points.player += amount;
-                            }
-                            CardEffect::NextAttackBoost { amount } => {
-                                pending_boosts.player.next_attack_bonus = amount;
-                            }
-                            CardEffect::NextShieldBoost { amount } => {
-                                pending_boosts.player.next_shield_bonus = amount;
-                            }
-                            CardEffect::NextHealBoost { amount } => {
-                                pending_boosts.player.next_heal_bonus = amount;
-                            }
+                    match card.effect {
+                        CardEffect::GainAp { amount } => {
+                            action_points.player += amount;
                         }
+                        CardEffect::NextAttackBoost { amount } => {
+                            pending_boosts.player.next_attack_bonus = amount;
+                        }
+                        CardEffect::NextShieldBoost { amount } => {
+                            pending_boosts.player.next_shield_bonus = amount;
+                        }
+                        CardEffect::NextHealBoost { amount } => {
+                            pending_boosts.player.next_heal_bonus = amount;
+                        }
+                    }
 
-                        let should_go_check_end = query
-                            .get(p_entity)
+                    selected.index = None;
+                    selected.discard_armed = false;
+
+                    let should_go_check_end = query
+                        .get(p_entity)
+                        .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                        .unwrap_or(false)
+                        || query
+                            .get(e_entity)
                             .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false)
-                            || query
-                                .get(e_entity)
-                                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
-                                .unwrap_or(false);
-                        if should_go_check_end {
-                            turn_ctx.player_ended = true;
-                            next_phase.set(BattlePhase::CheckEnd);
-                            return;
-                        }
-
+                            .unwrap_or(false);
+                    if should_go_check_end {
+                        turn_ctx.player_ended = true;
+                        next_phase.set(BattlePhase::CheckEnd);
+                        return;
                     }
                 }
             }

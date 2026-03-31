@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::super::components::*;
-use super::super::resources::SelectedCard;
+use crate::battle::SelectedCard;
 
 pub(crate) fn button_select_skill_system(
     mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,

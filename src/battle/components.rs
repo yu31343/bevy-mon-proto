@@ -172,3 +172,10 @@ pub struct PendingBoosts {
     pub player: PendingBoost,
     pub enemy: PendingBoost,
 }
+
+/// 当前选中的手牌索引（用于两步式出牌/弃牌逻辑，键鼠共享状态）。
+#[derive(Resource, Default, Clone, Copy)]
+pub struct SelectedCard {
+    pub index: Option<usize>,
+    pub discard_armed: bool,
+}
