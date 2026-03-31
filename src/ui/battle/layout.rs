@@ -316,11 +316,11 @@ pub(crate) fn setup_ui_system(
     let radius_hp = theme.radius_hp;
     let border_1 = UiRect::all(Val::Px(1.0));
 
-    let title_font = crate::ui::make_text_font(21.0, ui_font.as_deref());
-    let body_font = crate::ui::make_text_font(17.0, ui_font.as_deref());
-    let meta_font = crate::ui::make_text_font(13.0, ui_font.as_deref());
-    let result_font = crate::ui::make_text_font(38.0, ui_font.as_deref());
-    let icon_font = crate::ui::make_text_font(14.0, ui_font.as_deref());
+    let title_font = super::helpers::make_text_font(21.0, ui_font.as_deref());
+    let body_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
+    let meta_font = super::helpers::make_text_font(13.0, ui_font.as_deref());
+    let result_font = super::helpers::make_text_font(38.0, ui_font.as_deref());
+    let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
 
     commands
         .spawn((
@@ -761,7 +761,7 @@ pub(crate) fn setup_ui_system(
                     ))
                     .with_children(|card| {
                         card.spawn((
-                            Text::new(crate::ui::card_hotkey_label(idx)),
+                            Text::new(super::helpers::card_hotkey_label(idx)),
                             icon_font.clone(),
                             TextColor(Color::srgb(0.90, 0.95, 1.0)),
                             PlayerCardHotkeyText { index: idx },

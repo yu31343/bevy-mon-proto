@@ -30,7 +30,7 @@ fn format_active_summary(
         stats.hp.max(0),
         stats.max_hp,
         shield.0.max(0),
-        crate::ui::aura_label(aura.attached),
+        super::super::helpers::aura_label(aura.attached),
     )
 }
 
@@ -110,7 +110,10 @@ pub(crate) fn update_battle_text_system(
             continue;
         }
         if is_phase.is_some() {
-            text.0 = format!("战斗阶段：{}", crate::ui::phase_label(*battle_phase.get()));
+            text.0 = format!(
+                "战斗阶段：{}",
+                super::super::helpers::phase_label(*battle_phase.get())
+            );
             continue;
         }
         if is_player.is_some() {
@@ -126,7 +129,7 @@ pub(crate) fn update_battle_text_system(
             text.0 = format!(
                 "{}号: {}",
                 button.index + 1,
-                crate::ui::skill_name(skill_id, &skill_db)
+                super::super::helpers::skill_name(skill_id, &skill_db)
             );
             continue;
         }
@@ -134,8 +137,8 @@ pub(crate) fn update_battle_text_system(
             let skill_id = skills[meta.index];
             text.0 = format!(
                 "{} AP消耗：{}",
-                crate::ui::skill_meta(skill_id, &skill_db),
-                crate::ui::monster_skill_ap_cost_ui(meta.index)
+                super::super::helpers::skill_meta(skill_id, &skill_db),
+                super::super::helpers::monster_skill_ap_cost_ui(meta.index)
             );
             continue;
         }
@@ -148,13 +151,13 @@ pub(crate) fn update_battle_text_system(
             text.0 = format!(
                 "{}号: {}",
                 button.index + 1,
-                crate::ui::skill_name(skill_id, &skill_db)
+                super::super::helpers::skill_name(skill_id, &skill_db)
             );
             continue;
         }
         if let (Some(meta), Some(skills)) = (enemy_skill_meta, enemy_skills) {
             let skill_id = skills[meta.index];
-            text.0 = crate::ui::skill_meta(skill_id, &skill_db);
+            text.0 = super::super::helpers::skill_meta(skill_id, &skill_db);
             continue;
         }
         if let (Some(icon), Some(_skills)) = (enemy_skill_icon, enemy_skills) {

@@ -23,8 +23,8 @@ pub(crate) fn update_battle_bars_system(
         return;
     };
 
-    let player_hp_pct = crate::ui::active_hp_percent(&player_team.0, &combat_query);
-    let enemy_hp_pct = crate::ui::active_hp_percent(&enemy_team.0, &combat_query);
+    let player_hp_pct = super::super::helpers::active_hp_percent(&player_team.0, &combat_query);
+    let enemy_hp_pct = super::super::helpers::active_hp_percent(&enemy_team.0, &combat_query);
 
     if let Ok(mut node) = fills.p0().single_mut() {
         node.width = Val::Percent(player_hp_pct);
@@ -33,8 +33,8 @@ pub(crate) fn update_battle_bars_system(
         node.width = Val::Percent(enemy_hp_pct);
     }
 
-    let player_shield_pct = crate::ui::active_shield_percent(&player_team.0, &combat_query);
-    let enemy_shield_pct = crate::ui::active_shield_percent(&enemy_team.0, &combat_query);
+    let player_shield_pct = super::super::helpers::active_shield_percent(&player_team.0, &combat_query);
+    let enemy_shield_pct = super::super::helpers::active_shield_percent(&enemy_team.0, &combat_query);
 
     if let Ok(mut node) = fills.p2().single_mut() {
         node.width = Val::Percent(player_shield_pct);
@@ -43,8 +43,8 @@ pub(crate) fn update_battle_bars_system(
         node.width = Val::Percent(enemy_shield_pct);
     }
 
-    let player_has_shield = crate::ui::active_shield(&player_team.0, &combat_query) > 0;
-    let enemy_has_shield = crate::ui::active_shield(&enemy_team.0, &combat_query) > 0;
+    let player_has_shield = super::super::helpers::active_shield(&player_team.0, &combat_query) > 0;
+    let enemy_has_shield = super::super::helpers::active_shield(&enemy_team.0, &combat_query) > 0;
 
     if let Ok(mut vis) = tracks.p0().single_mut() {
         *vis = if player_has_shield {

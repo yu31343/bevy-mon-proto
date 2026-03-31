@@ -49,7 +49,7 @@ pub(crate) fn update_player_hand_ui_system(
             } else if cost.is_some() {
                 text.0 = "AP—".to_string();
             } else if hotkey.is_some() {
-                text.0 = crate::ui::card_hotkey_label(idx).to_string();
+                text.0 = super::super::helpers::card_hotkey_label(idx).to_string();
             } else if desc.is_some() {
                 text.0.clear();
             }
@@ -62,13 +62,13 @@ pub(crate) fn update_player_hand_ui_system(
         };
 
         if hotkey.is_some() {
-            text.0 = crate::ui::card_hotkey_label(idx).to_string();
+            text.0 = super::super::helpers::card_hotkey_label(idx).to_string();
         } else if name.is_some() {
             text.0 = card.name.to_string();
         } else if cost.is_some() {
             text.0 = format!("AP{}", card.cost_ap);
         } else if desc.is_some() {
-            text.0 = crate::ui::card_description(card);
+            text.0 = super::super::helpers::card_description(card);
         }
     }
 

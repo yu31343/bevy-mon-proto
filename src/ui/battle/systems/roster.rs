@@ -47,7 +47,10 @@ pub(crate) fn update_player_roster_ui_system(
         if let Some(meta) = maybe_aura {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", crate::ui::aura_label(aura.attached));
+                    text.0 = format!(
+                        "附着: {}",
+                        super::super::helpers::aura_label(aura.attached)
+                    );
                 } else {
                     text.0 = "附着: 无".to_string();
                 }
@@ -157,7 +160,10 @@ pub(crate) fn update_enemy_roster_ui_system(
         if let Some(meta) = maybe_aura {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", crate::ui::aura_label(aura.attached));
+                    text.0 = format!(
+                        "附着: {}",
+                        super::super::helpers::aura_label(aura.attached)
+                    );
                 } else {
                     text.0 = "附着: 无".to_string();
                 }

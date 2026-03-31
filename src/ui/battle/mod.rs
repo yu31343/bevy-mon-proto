@@ -6,6 +6,7 @@ pub(crate) mod layout;
 pub(crate) mod resources;
 pub(crate) mod systems;
 pub(crate) mod theme;
+pub(crate) mod helpers;
 
 mod plugin;
 

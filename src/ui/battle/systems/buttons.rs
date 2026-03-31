@@ -28,7 +28,7 @@ pub(crate) fn button_select_skill_system(
 
             for (interaction, button) in &mut interaction_query {
                 if *interaction == Interaction::Pressed {
-                    let cost = crate::ui::monster_skill_ap_cost_ui(button.index);
+                    let cost = super::super::helpers::monster_skill_ap_cost_ui(button.index);
                     if action_points.player < cost {
                         continue;
                     }
