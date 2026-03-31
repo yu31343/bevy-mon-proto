@@ -87,7 +87,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         ),
     );
 
-    app.add_systems(Update, update_result_ui_system.run_if(in_state(GameState::Result)));
+    app.add_systems(Update, update_result_ui_system);
 }
 
 #[allow(dead_code)]

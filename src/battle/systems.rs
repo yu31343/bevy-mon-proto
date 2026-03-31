@@ -662,7 +662,7 @@ pub fn enemy_turn_ai_system(
     mut battle_result: ResMut<BattleResult>,
     mut next_game_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
-    mut ai_action_cooldown: Local<f32>,
+    mut ai_state: Local<(f32, bool)>,
     mut exec_query: Query<
         (
             Entity,
@@ -676,18 +676,26 @@ pub fn enemy_turn_ai_system(
         With<InBattle>,
     >,
 ) {
-    if *ai_action_cooldown > 0.0 {
-        *ai_action_cooldown = (*ai_action_cooldown - time.delta_secs()).max(0.0);
+    if ai_state.0 > 0.0 {
+        ai_state.0 = (ai_state.0 - time.delta_secs()).max(0.0);
         return;
     }
 
     if turn_ctx.enemy_ended {
-        *ai_action_cooldown = 0.0;
+        ai_state.0 = 0.0;
+        ai_state.1 = false;
+        return;
+    }
+
+    if !ai_state.1 {
+        ai_state.1 = true;
+        ai_state.0 = 1.55;
         return;
     }
     if action_points.enemy <= 0 {
         turn_ctx.enemy_ended = true;
-        *ai_action_cooldown = 0.0;
+        ai_state.0 = 0.0;
+        ai_state.1 = false;
         next_phase.set(BattlePhase::CheckEnd);
         return;
     }
@@ -723,7 +731,8 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
-            *ai_action_cooldown = 0.0;
+            ai_state.0 = 0.0;
+            ai_state.1 = false;
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -894,7 +903,8 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or(false);
             if should_go_check_end {
                 turn_ctx.enemy_ended = true;
-                *ai_action_cooldown = 0.0;
+                ai_state.0 = 0.0;
+                ai_state.1 = false;
                 next_phase.set(BattlePhase::CheckEnd);
                 return;
             }
@@ -929,7 +939,8 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
-            *ai_action_cooldown = 0.0;
+            ai_state.0 = 0.0;
+            ai_state.1 = false;
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -940,11 +951,12 @@ pub fn enemy_turn_ai_system(
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        *ai_action_cooldown = 3.55; //AI 每次行动后冷却约 3.5 秒，给玩家反应时间（UI 更新、动画等）。
+        ai_state.0 = 2.55; //AI 每次行动后冷却约 2.5 秒，给玩家反应时间（UI 更新、动画等）。
         return;
     }
 
-    *ai_action_cooldown = 0.0;
+    ai_state.0 = 0.0;
+    ai_state.1 = false;
     turn_ctx.enemy_ended = true;
     next_phase.set(BattlePhase::CheckEnd);
 }
