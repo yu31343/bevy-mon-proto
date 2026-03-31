@@ -660,18 +660,18 @@ fn setup_ui_system(mut commands: Commands, theme: Res<UiTheme>, ui_font: Option<
     let radius_hp = theme.radius_hp;
     let border_1 = UiRect::all(Val::Px(1.0));
 
-    let title_font = make_text_font(24.0, ui_font.as_deref());
-    let body_font = make_text_font(19.0, ui_font.as_deref());
-    let meta_font = make_text_font(14.0, ui_font.as_deref());
-    let result_font = make_text_font(28.0, ui_font.as_deref());
-    let icon_font = make_text_font(16.0, ui_font.as_deref());
+    let title_font = make_text_font(21.0, ui_font.as_deref());
+    let body_font = make_text_font(17.0, ui_font.as_deref());
+    let meta_font = make_text_font(13.0, ui_font.as_deref());
+    let result_font = make_text_font(38.0, ui_font.as_deref());
+    let icon_font = make_text_font(14.0, ui_font.as_deref());
 
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                position_type: PositionType::Absolute,
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
             theme.root_background(),

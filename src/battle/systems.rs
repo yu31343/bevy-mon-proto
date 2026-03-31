@@ -271,8 +271,8 @@ pub fn round_start_system(
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
 
-    // PendingBoost 不在这里清空：它应该“用于下一次对应技能”，可以跨回合继承。
-    let _ = &mut pending_boosts;
+    // 每回合开始清空增益，增益仅本回合有效。
+    *pending_boosts = PendingBoosts::default();
 
     next_phase.set(BattlePhase::PlayerTurn);
 }
@@ -309,12 +309,6 @@ pub fn player_turn_input_system(
     if turn_ctx.player_ended {
         return;
     }
-    if action_points.player <= 0 {
-        turn_ctx.player_ended = true;
-        next_phase.set(BattlePhase::EnemyTurn);
-        return;
-    }
-
     if player_team.0.combatants.is_empty() || enemy_team.0.combatants.is_empty() {
         abort_battle(
             "战斗数据异常：队伍为空。",
@@ -447,10 +441,6 @@ pub fn player_turn_input_system(
             return;
         }
 
-        if action_points.player <= 0 {
-            turn_ctx.player_ended = true;
-            next_phase.set(BattlePhase::EnemyTurn);
-        }
         return;
     }
 
@@ -507,13 +497,13 @@ pub fn player_turn_input_system(
                                 action_points.player += amount;
                             }
                             CardEffect::NextAttackBoost { amount } => {
-                                pending_boosts.player.next_attack_bonus += amount;
+                                pending_boosts.player.next_attack_bonus = amount;
                             }
                             CardEffect::NextShieldBoost { amount } => {
-                                pending_boosts.player.next_shield_bonus += amount;
+                                pending_boosts.player.next_shield_bonus = amount;
                             }
                             CardEffect::NextHealBoost { amount } => {
-                                pending_boosts.player.next_heal_bonus += amount;
+                                pending_boosts.player.next_heal_bonus = amount;
                             }
                         }
 
@@ -531,10 +521,6 @@ pub fn player_turn_input_system(
                             return;
                         }
 
-                        if action_points.player <= 0 {
-                            turn_ctx.player_ended = true;
-                            next_phase.set(BattlePhase::EnemyTurn);
-                        }
                     }
                 }
             }
@@ -620,10 +606,6 @@ pub fn player_turn_input_system(
         return;
     }
 
-    if action_points.player <= 0 {
-        turn_ctx.player_ended = true;
-        next_phase.set(BattlePhase::EnemyTurn);
-    }
 }
 
 /// 敌方 AI：连续行动，直到 AP 为 0。
