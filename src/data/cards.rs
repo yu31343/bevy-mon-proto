@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 use serde::Deserialize;
 
@@ -33,10 +31,6 @@ pub struct CardDef {
     pub cost_ap: i32,
     pub effect: CardEffect,
 }
-
-/// 技能卡数据库：从配置文件加载，按 CardId 索引。
-#[derive(Resource, Debug, Clone, Default)]
-pub struct CardDb(pub HashMap<CardId, CardDef>);
 
 /// 技能牌库：按顺序排列的卡牌列表，每回合随机抽取。
 #[derive(Resource, Debug, Clone, Default)]

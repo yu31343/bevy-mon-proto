@@ -5,7 +5,7 @@ use crate::{
         BattleEvent, Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, SkillList,
         Stats, Team,
     },
-    data::SkillDb,
+    data::BattleDbs,
     game_state::BattlePhase,
 };
 
@@ -67,7 +67,7 @@ pub(crate) fn update_battle_text_system(
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
     skill_query: Query<&SkillList, With<InBattle>>,
-    skill_db: Res<SkillDb>,
+    skill_db: Res<BattleDbs>,
     battle_phase: Res<State<BattlePhase>>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {

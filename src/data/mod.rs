@@ -8,7 +8,7 @@ use std::{
 use bevy::prelude::*;
 use serde::Deserialize;
 
-pub use cards::{CardDb, CardDeck, CardDef, CardEffect, CardId};
+pub use cards::{CardDeck, CardDef, CardEffect, CardId};
 
 /// 元素类型（系别）：火、水、草、光、暗、雷、风。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
@@ -22,50 +22,86 @@ pub enum ElementType {
     Wind,
 }
 
-/// 元素克制矩阵。
-/// 行表示攻击方，列表示防御方。
-/// 矩阵[i][j] 表示元素 i 攻击元素 j 的伤害倍数。
-/// 2.0 = 克制（超有效），1.0 = 正常，0.5 = 微弱。
-pub struct ElementMatrix;
+/// 元素克制矩阵资源（数据驱动）。
+/// 使用 HashMap 存储元素对之间的伤害倍率。
+/// 未显式定义的组合默认为 1.0（正常伤害）。
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ElementDb {
+    /// (攻击方元素, 防御方元素) -> 伤害倍率
+    matrix: HashMap<(ElementType, ElementType), f32>,
+}
 
-impl ElementMatrix {
+impl ElementDb {
     /// 获取攻击方元素对防御方元素的伤害倍数。
-    /// 克制关系（2.0）、微弱关系（0.5），其他情况默认为正常伤害（1.0）。
-    pub fn get_effectiveness(attacker: ElementType, defender: ElementType) -> f32 {
-        match (attacker, defender) {
-            // 光/暗
-            (ElementType::Light, ElementType::Dark) => 2.0,
-            (ElementType::Dark, ElementType::Light) => 0.5,
+    /// 若未显式定义，默认返回 1.0。
+    pub fn get_effectiveness(&self, attacker: ElementType, defender: ElementType) -> f32 {
+        self.matrix.get(&(attacker, defender)).copied().unwrap_or(1.0)
+    }
 
-            // 水/火/草（保留原有循环）
-            (ElementType::Water, ElementType::Fire) => 2.0,
-            (ElementType::Fire, ElementType::Grass) => 2.0,
-            (ElementType::Grass, ElementType::Water) => 2.0,
-            (ElementType::Water, ElementType::Grass) => 0.5,
-            (ElementType::Fire, ElementType::Water) => 0.5,
-            (ElementType::Grass, ElementType::Fire) => 0.5,
+    /// 从配置构建默认的元素克制矩阵（用于 fallback）。
+    pub fn from_default_config() -> Self {
+        let mut matrix = HashMap::new();
 
-            // 雷/水/风/草（“常识化合理”）
-            (ElementType::Thunder, ElementType::Water) => 2.0,
-            (ElementType::Water, ElementType::Thunder) => 0.5,
+        // 光/暗
+        matrix.insert((ElementType::Light, ElementType::Dark), 2.0);
+        matrix.insert((ElementType::Dark, ElementType::Light), 0.5);
 
-            (ElementType::Thunder, ElementType::Wind) => 2.0,
-            (ElementType::Wind, ElementType::Thunder) => 0.5,
+        // 水/火/草循环
+        matrix.insert((ElementType::Water, ElementType::Fire), 2.0);
+        matrix.insert((ElementType::Fire, ElementType::Grass), 2.0);
+        matrix.insert((ElementType::Grass, ElementType::Water), 2.0);
+        matrix.insert((ElementType::Water, ElementType::Grass), 0.5);
+        matrix.insert((ElementType::Fire, ElementType::Water), 0.5);
+        matrix.insert((ElementType::Grass, ElementType::Fire), 0.5);
 
-            (ElementType::Thunder, ElementType::Grass) => 0.5,
-            (ElementType::Grass, ElementType::Thunder) => 1.0,
+        // 雷/水/风/草
+        matrix.insert((ElementType::Thunder, ElementType::Water), 2.0);
+        matrix.insert((ElementType::Water, ElementType::Thunder), 0.5);
+        matrix.insert((ElementType::Thunder, ElementType::Wind), 2.0);
+        matrix.insert((ElementType::Wind, ElementType::Thunder), 0.5);
+        matrix.insert((ElementType::Thunder, ElementType::Grass), 0.5);
 
-            // 风/草/火/雷（“风克草、火克风、雷惧风”）
-            (ElementType::Wind, ElementType::Grass) => 2.0,
-            (ElementType::Grass, ElementType::Wind) => 1.0,
+        // 风/草/火
+        matrix.insert((ElementType::Wind, ElementType::Grass), 2.0);
+        matrix.insert((ElementType::Fire, ElementType::Wind), 2.0);
+        matrix.insert((ElementType::Wind, ElementType::Fire), 0.5);
 
-            (ElementType::Fire, ElementType::Wind) => 2.0,
-            (ElementType::Wind, ElementType::Fire) => 0.5,
+        Self { matrix }
+    }
 
-            // 其他所有情况（包括相同系别）都是正常伤害
-            _ => 1.0,
+    /// 从 RON 配置加载矩阵。
+    pub fn from_config(config: &ElementMatrixConfig) -> Self {
+        Self {
+            matrix: config.to_hashmap(),
         }
     }
+}
+
+/// RON 配置中的元素矩阵结构。
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ElementMatrixConfig {
+    /// 克制关系列表：每项包含攻击方、防御方和倍率。
+    #[serde(default)]
+    pub relations: Vec<ElementRelation>,
+}
+
+impl ElementMatrixConfig {
+    /// 将配置转换为 HashMap 格式。
+    pub fn to_hashmap(&self) -> HashMap<(ElementType, ElementType), f32> {
+        let mut matrix = HashMap::new();
+        for rel in &self.relations {
+            matrix.insert((rel.attacker, rel.defender), rel.multiplier);
+        }
+        matrix
+    }
+}
+
+/// 单条元素克制关系定义。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ElementRelation {
+    pub attacker: ElementType,
+    pub defender: ElementType,
+    pub multiplier: f32,
 }
 
 /// 元素附着/反应的“盾免疫”判定：
@@ -80,36 +116,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn element_matrix_basic_cycles() {
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Fire),
-            2.0
-        );
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Fire, ElementType::Grass),
-            2.0
-        );
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Grass, ElementType::Water),
-            2.0
-        );
+    fn element_db_basic_cycles() {
+        let db = ElementDb::from_default_config();
+        assert_eq!(db.get_effectiveness(ElementType::Water, ElementType::Fire), 2.0);
+        assert_eq!(db.get_effectiveness(ElementType::Fire, ElementType::Grass), 2.0);
+        assert_eq!(db.get_effectiveness(ElementType::Grass, ElementType::Water), 2.0);
 
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Water, ElementType::Grass),
-            0.5
-        );
+        assert_eq!(db.get_effectiveness(ElementType::Water, ElementType::Grass), 0.5);
     }
 
     #[test]
-    fn element_matrix_light_dark() {
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Light, ElementType::Dark),
-            2.0
-        );
-        assert_eq!(
-            ElementMatrix::get_effectiveness(ElementType::Dark, ElementType::Light),
-            0.5
-        );
+    fn element_db_light_dark() {
+        let db = ElementDb::from_default_config();
+        assert_eq!(db.get_effectiveness(ElementType::Light, ElementType::Dark), 2.0);
+        assert_eq!(db.get_effectiveness(ElementType::Dark, ElementType::Light), 0.5);
+    }
+
+    #[test]
+    fn element_db_default_fallback() {
+        let db = ElementDb::default(); // 空 matrix
+        // 未定义的组合应返回 1.0
+        assert_eq!(db.get_effectiveness(ElementType::Fire, ElementType::Fire), 1.0);
+        assert_eq!(db.get_effectiveness(ElementType::Water, ElementType::Light), 1.0);
     }
 
     #[test]
@@ -183,15 +211,23 @@ pub struct MonsterPrototype {
 
 #[derive(Debug, Clone, Deserialize)]
 struct BattleConfig {
-    pub skills: Vec<SkillDef>,
-    pub player: Vec<MonsterPrototype>,
-    pub enemy: Vec<MonsterPrototype>,
-    pub cards: Vec<CardDef>,
-    pub deck: Vec<CardId>,
+    #[serde(default)]
+    element_matrix: ElementMatrixConfig,
+    skills: Vec<SkillDef>,
+    player: Vec<MonsterPrototype>,
+    enemy: Vec<MonsterPrototype>,
+    cards: Vec<CardDef>,
+    deck: Vec<CardId>,
 }
 
+/// 战斗数据库资源：组合技能、卡牌和元素克制矩阵。
+/// 用于减少系统参数数量，避免超过 Bevy 的 16 参数限制。
 #[derive(Resource, Debug, Clone)]
-pub struct SkillDb(pub HashMap<SkillId, SkillDef>);
+pub struct BattleDbs {
+    pub skills: HashMap<SkillId, SkillDef>,
+    pub cards: HashMap<CardId, CardDef>,
+    pub elements: ElementDb,
+}
 
 #[derive(Resource, Debug, Clone)]
 pub struct TeamSetup {
@@ -220,9 +256,12 @@ fn load_battle_data(mut commands: Commands) {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(e) => {
-            commands.insert_resource(SkillDb(HashMap::new()));
+            commands.insert_resource(BattleDbs {
+                skills: HashMap::new(),
+                cards: HashMap::new(),
+                elements: ElementDb::from_default_config(),
+            });
             commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
-            commands.insert_resource(CardDb::default());
             commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
@@ -233,9 +272,12 @@ fn load_battle_data(mut commands: Commands) {
     let config: BattleConfig = match ron::from_str(&raw) {
         Ok(config) => config,
         Err(e) => {
-            commands.insert_resource(SkillDb(HashMap::new()));
+            commands.insert_resource(BattleDbs {
+                skills: HashMap::new(),
+                cards: HashMap::new(),
+                elements: ElementDb::from_default_config(),
+            });
             commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
-            commands.insert_resource(CardDb::default());
             commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
@@ -245,9 +287,12 @@ fn load_battle_data(mut commands: Commands) {
     };
 
     if let Err(reason) = validate_battle_config(&config) {
-        commands.insert_resource(SkillDb(HashMap::new()));
+        commands.insert_resource(BattleDbs {
+            skills: HashMap::new(),
+            cards: HashMap::new(),
+            elements: ElementDb::from_default_config(),
+        });
         commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
-        commands.insert_resource(CardDb::default());
         commands.insert_resource(CardDeck::default());
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
@@ -260,19 +305,24 @@ fn load_battle_data(mut commands: Commands) {
         skills.insert(skill.id, skill);
     }
 
-    commands.insert_resource(SkillDb(skills));
+    let mut cards = HashMap::new();
+    for def in config.cards {
+        cards.insert(def.id, def);
+    }
+
+    // 加载元素克制矩阵：若配置为空则使用默认值
+    let elements = if config.element_matrix.relations.is_empty() {
+        ElementDb::from_default_config()
+    } else {
+        ElementDb::from_config(&config.element_matrix)
+    };
+
+    commands.insert_resource(BattleDbs { skills, cards, elements });
     commands.insert_resource(TeamSetup {
         player: config.player,
         enemy: config.enemy,
     });
-
-    let mut card_map = HashMap::new();
-    for def in config.cards {
-        card_map.insert(def.id, def);
-    }
-    commands.insert_resource(CardDb(card_map));
     commands.insert_resource(CardDeck(config.deck));
-
     commands.insert_resource(BattleDataStatus::default());
 }
 

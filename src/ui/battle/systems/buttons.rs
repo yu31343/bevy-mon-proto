@@ -92,7 +92,7 @@ pub(crate) fn button_play_card_two_step_system(
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
-    card_db: Res<crate::data::CardDb>,
+    dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
@@ -112,8 +112,8 @@ pub(crate) fn button_play_card_two_step_system(
             hand.player.remove(idx);
             action_points.player += 1;
 
-            let card_name = card_db
-                .0
+            let card_name = dbs
+                .cards
                 .get(&card_id)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| format!("{card_id:?}"));
@@ -135,7 +135,7 @@ pub(crate) fn button_play_card_two_step_system(
         }
 
         let card_id = hand.player[idx];
-        let Some(card) = card_db.0.get(&card_id) else {
+        let Some(card) = dbs.cards.get(&card_id) else {
             continue;
         };
         if action_points.player < card.cost_ap {
@@ -180,7 +180,7 @@ pub(crate) fn button_discard_system(
     mut selected: ResMut<SelectedCard>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
-    card_db: Res<crate::data::CardDb>,
+    dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
     for (interaction, _) in &mut interaction_query {
@@ -202,8 +202,8 @@ pub(crate) fn button_discard_system(
             let card_id = hand.player.remove(target_index);
             action_points.player += 1;
 
-            let card_name = card_db
-                .0
+            let card_name = dbs
+                .cards
                 .get(&card_id)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| format!("{card_id:?}"));

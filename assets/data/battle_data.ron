@@ -1,4 +1,34 @@
 (
+    // 元素克制矩阵：定义各元素之间的伤害倍率
+    // 克制=2.0，微弱=0.5，未定义的组合默认为1.0
+    element_matrix: (
+        relations: [
+            // 光/暗互克
+            (attacker: Light, defender: Dark, multiplier: 2.0),
+            (attacker: Dark, defender: Light, multiplier: 0.5),
+
+            // 水/火/草循环
+            (attacker: Water, defender: Fire, multiplier: 2.0),
+            (attacker: Fire, defender: Grass, multiplier: 2.0),
+            (attacker: Grass, defender: Water, multiplier: 2.0),
+            (attacker: Water, defender: Grass, multiplier: 0.5),
+            (attacker: Fire, defender: Water, multiplier: 0.5),
+            (attacker: Grass, defender: Fire, multiplier: 0.5),
+
+            // 雷/水/风关系
+            (attacker: Thunder, defender: Water, multiplier: 2.0),
+            (attacker: Water, defender: Thunder, multiplier: 0.5),
+            (attacker: Thunder, defender: Wind, multiplier: 2.0),
+            (attacker: Wind, defender: Thunder, multiplier: 0.5),
+            (attacker: Thunder, defender: Grass, multiplier: 0.5),
+
+            // 风/草/火关系
+            (attacker: Wind, defender: Grass, multiplier: 2.0),
+            (attacker: Fire, defender: Wind, multiplier: 2.0),
+            (attacker: Wind, defender: Fire, multiplier: 0.5),
+        ],
+    ),
+
     skills: [
         (
             id: NormalAttack,

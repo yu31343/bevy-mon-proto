@@ -12,7 +12,7 @@ use battle::{
 
 use crate::{
     battle::{Team, Combatant, ElementAura, InBattle, Shield, Stats},
-    data::{CardDef, ElementType, SkillDb, SkillId},
+    data::{BattleDbs, CardDef, ElementType, SkillId},
     game_state::{BattlePhase, GameState},
 };
 
@@ -91,13 +91,13 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
 }
 
 #[allow(dead_code)]
-fn skill_name(skill_id: SkillId, db: &SkillDb) -> String {
-    battle::helpers::skill_name(skill_id, db)
+fn skill_name(skill_id: SkillId, dbs: &BattleDbs) -> String {
+    battle::helpers::skill_name(skill_id, dbs)
 }
 
 #[allow(dead_code)]
-fn skill_meta(skill_id: SkillId, db: &SkillDb) -> String {
-    battle::helpers::skill_meta(skill_id, db)
+fn skill_meta(skill_id: SkillId, dbs: &BattleDbs) -> String {
+    battle::helpers::skill_meta(skill_id, dbs)
 }
 
 #[allow(dead_code)]

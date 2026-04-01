@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 
 use crate::{
-    data::{BattleDataStatus, CardDb, CardDeck, CardEffect, SkillDb, SkillEffect, TeamSetup},
+    data::{BattleDataStatus, BattleDbs, CardDeck, CardEffect, ElementDb, SkillEffect, TeamSetup},
     game_state::{BattlePhase, GameState},
 };
 
@@ -15,7 +17,7 @@ use super::{
 pub fn init_battle_system(
     mut commands: Commands,
     setup: Res<TeamSetup>,
-    skill_db: Res<SkillDb>,
+    dbs: Res<BattleDbs>,
     data_status: Option<Res<BattleDataStatus>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut battle_log: ResMut<BattleLog>,
@@ -68,7 +70,7 @@ pub fn init_battle_system(
         return;
     }
 
-    if skill_db.0.is_empty() {
+    if dbs.skills.is_empty() {
         abort_battle(
             "战斗初始化失败：技能数据库为空。",
             &mut battle_log,
@@ -80,7 +82,7 @@ pub fn init_battle_system(
 
     for mon in setup.player.iter().chain(setup.enemy.iter()) {
         for sid in mon.skills {
-            if !skill_db.0.contains_key(&sid) {
+            if !dbs.skills.contains_key(&sid) {
                 abort_battle(
                     &format!("战斗初始化失败：{} 存在未定义技能 {:?}。", mon.name, sid),
                     &mut battle_log,
@@ -206,10 +208,10 @@ fn card_hotkey_to_index(key: KeyCode) -> Option<usize> {
     }
 }
 
-/// 回合开始：抽 5 张牌 + 给双方本回合 AP（“叠加 +6”，不清零继承）。
+/// 回合开始：抽 5 张牌 + 给双方本回合 AP（”叠加 +6”，不清零继承）。
 pub fn round_start_system(
     card_deck: Res<CardDeck>,
-    card_db: Res<CardDb>,
+    dbs: Res<BattleDbs>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -244,8 +246,7 @@ pub fn round_start_system(
         .player
         .iter()
         .map(|cid| {
-            card_db
-                .0
+            dbs.cards
                 .get(cid)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| format!("{cid:?}"))
@@ -255,8 +256,7 @@ pub fn round_start_system(
         .enemy
         .iter()
         .map(|cid| {
-            card_db
-                .0
+            dbs.cards
                 .get(cid)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| format!("{cid:?}"))
@@ -289,8 +289,7 @@ pub fn player_turn_input_system(
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
-    card_db: Res<CardDb>,
-    skill_db: Res<SkillDb>,
+    dbs: Res<BattleDbs>,
     mut player_team: ResMut<crate::battle::PlayerTeam>,
     enemy_team: Res<crate::battle::EnemyTeam>,
     mut battle_log: ResMut<BattleLog>,
@@ -387,7 +386,7 @@ pub fn player_turn_input_system(
             .position(|&s| s == skill_id)
             .unwrap_or(0);
         let cost = monster_skill_ap_cost(slot);
-        let Some(skill) = skill_db.0.get(&skill_id) else {
+        let Some(skill) = dbs.skills.get(&skill_id) else {
             turn_ctx.player_action = None;
             return;
         };
@@ -429,6 +428,7 @@ pub fn player_turn_input_system(
             &mut e_shield,
             &mut e_aura,
             &mut pending_boosts,
+            &dbs.elements,
             &mut event_writer,
         );
 
@@ -467,8 +467,8 @@ pub fn player_turn_input_system(
         };
         let card_id = hand.player.remove(target_index);
         action_points.player += 1;
-        let card_name = card_db
-            .0
+        let card_name = dbs
+            .cards
             .get(&card_id)
             .map(|c| c.name.to_string())
             .unwrap_or_else(|| format!("{card_id:?}"));
@@ -498,8 +498,8 @@ pub fn player_turn_input_system(
             if selected.discard_armed {
                 let card_id = hand.player.remove(idx);
                 action_points.player += 1;
-                let card_name = card_db
-                    .0
+                let card_name = dbs
+                    .cards
                     .get(&card_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_else(|| format!("{card_id:?}"));
@@ -518,7 +518,7 @@ pub fn player_turn_input_system(
             }
             // 第二步：出牌
             let card_id = hand.player[idx];
-            if let Some(card) = card_db.0.get(&card_id) {
+            if let Some(card) = dbs.cards.get(&card_id) {
                 if action_points.player >= card.cost_ap {
                     hand.player.remove(idx);
                     action_points.player -= card.cost_ap;
@@ -591,7 +591,7 @@ pub fn player_turn_input_system(
         return;
     }
 
-    let Some(skill) = skill_db.0.get(&skill_id) else {
+    let Some(skill) = dbs.skills.get(&skill_id) else {
         return;
     };
 
@@ -627,6 +627,7 @@ pub fn player_turn_input_system(
         &mut e_shield,
         &mut e_aura,
         &mut pending_boosts,
+        &dbs.elements,
         &mut event_writer,
     );
 
@@ -654,8 +655,7 @@ pub fn enemy_turn_ai_system(
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
-    card_db: Res<CardDb>,
-    skill_db: Res<SkillDb>,
+    dbs: Res<BattleDbs>,
     player_team: Res<crate::battle::PlayerTeam>,
     enemy_team: Res<crate::battle::EnemyTeam>,
     mut battle_log: ResMut<BattleLog>,
@@ -766,13 +766,13 @@ pub fn enemy_turn_ai_system(
             let can_attack1 = action_points.enemy >= monster_skill_ap_cost(1);
             if can_attack0 || can_attack1 {
                 if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                    card_db.0.get(cid).is_some_and(|c| {
+                    dbs.cards.get(cid).is_some_and(|c| {
                         matches!(c.effect, CardEffect::NextAttackBoost { .. })
                             && c.cost_ap <= action_points.enemy
                     })
                 }) {
                     let card_id = hand.enemy.remove(idx);
-                    if let Some(card) = card_db.0.get(&card_id) {
+                    if let Some(card) = dbs.cards.get(&card_id) {
                         action_points.enemy -= card.cost_ap;
                         if let CardEffect::NextAttackBoost { amount } = card.effect {
                             pending_boosts.enemy.next_attack_bonus += amount;
@@ -794,13 +794,13 @@ pub fn enemy_turn_ai_system(
             && action_points.enemy >= monster_skill_ap_cost(3)
         {
             if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                card_db.0.get(cid).is_some_and(|c| {
+                dbs.cards.get(cid).is_some_and(|c| {
                     matches!(c.effect, CardEffect::NextHealBoost { .. })
                         && c.cost_ap <= action_points.enemy
                 })
             }) {
                 let card_id = hand.enemy.remove(idx);
-                if let Some(card) = card_db.0.get(&card_id) {
+                if let Some(card) = dbs.cards.get(&card_id) {
                     action_points.enemy -= card.cost_ap;
                     if let CardEffect::NextHealBoost { amount } = card.effect {
                         pending_boosts.enemy.next_heal_bonus += amount;
@@ -820,13 +820,13 @@ pub fn enemy_turn_ai_system(
             && action_points.enemy >= monster_skill_ap_cost(2)
         {
             if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                card_db.0.get(cid).is_some_and(|c| {
+                dbs.cards.get(cid).is_some_and(|c| {
                     matches!(c.effect, CardEffect::NextShieldBoost { .. })
                         && c.cost_ap <= action_points.enemy
                 })
             }) {
                 let card_id = hand.enemy.remove(idx);
-                if let Some(card) = card_db.0.get(&card_id) {
+                if let Some(card) = dbs.cards.get(&card_id) {
                     action_points.enemy -= card.cost_ap;
                     if let CardEffect::NextShieldBoost { amount } = card.effect {
                         pending_boosts.enemy.next_shield_bonus += amount;
@@ -860,7 +860,7 @@ pub fn enemy_turn_ai_system(
 
         if let Some(slot) = chosen_slot {
             let skill_id = e_skills_arr[slot];
-            let Some(skill) = skill_db.0.get(&skill_id) else {
+            let Some(skill) = dbs.skills.get(&skill_id) else {
                 // 没技能直接跳过
                 break;
             };
@@ -890,6 +890,7 @@ pub fn enemy_turn_ai_system(
                 &mut p_shield_m,
                 &mut p_aura_m,
                 &mut pending_boosts,
+                &dbs.elements,
                 &mut event_writer,
             );
 
@@ -914,8 +915,8 @@ pub fn enemy_turn_ai_system(
             if !hand.enemy.is_empty() {
                 let card_id = hand.enemy.remove(0);
                 action_points.enemy += 1;
-                let card_name = card_db
-                    .0
+                let card_name = dbs
+                    .cards
                     .get(&card_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_else(|| format!("{card_id:?}"));
@@ -1046,7 +1047,7 @@ pub fn player_input_system(
 #[allow(dead_code)]
 pub fn enemy_choose_skill_system(
     mut turn_ctx: ResMut<TurnContext>,
-    skill_db: Res<SkillDb>,
+    dbs: Res<BattleDbs>,
     player_team: Res<crate::battle::PlayerTeam>,
     enemy_team: Res<crate::battle::EnemyTeam>,
     mut battle_log: ResMut<BattleLog>,
@@ -1094,7 +1095,7 @@ pub fn enemy_choose_skill_system(
     };
 
     let low_hp = enemy_stats.max_hp > 0 && enemy_stats.hp * 100 < enemy_stats.max_hp * 30;
-    let under_counter = crate::data::ElementMatrix::get_effectiveness(
+    let under_counter = dbs.elements.get_effectiveness(
         player_combatant.element,
         enemy_combatant.element,
     ) > 1.0;
@@ -1103,7 +1104,7 @@ pub fn enemy_choose_skill_system(
     let mut best_scored: Option<(crate::data::SkillId, i32)> = None;
 
     for skill_id in enemy_skills.0 {
-        let Some(skill) = skill_db.0.get(&skill_id) else {
+        let Some(skill) = dbs.skills.get(&skill_id) else {
             continue;
         };
 
@@ -1111,7 +1112,7 @@ pub fn enemy_choose_skill_system(
             SkillEffect::Attack { power } => {
                 let base_damage = *power + enemy_stats.atk - player_stats.def;
                 let effectiveness = if let Some(skill_element) = skill.element {
-                    crate::data::ElementMatrix::get_effectiveness(
+                    dbs.elements.get_effectiveness(
                         skill_element,
                         player_combatant.element,
                     )
@@ -1153,7 +1154,7 @@ pub fn enemy_choose_skill_system(
         .0
         .iter()
         .copied()
-        .find(|sid| skill_db.0.contains_key(sid));
+        .find(|sid| dbs.skills.contains_key(sid));
 
     let Some(final_skill) = selected.or(fallback) else {
         abort_battle(
@@ -1185,7 +1186,7 @@ pub fn resolve_turn_system(
         With<InBattle>,
     >,
     mut turn_ctx: ResMut<TurnContext>,
-    skill_db: Res<SkillDb>,
+    dbs: Res<BattleDbs>,
     player_team: Res<crate::battle::PlayerTeam>,
     enemy_team: Res<crate::battle::EnemyTeam>,
     mut battle_log: ResMut<BattleLog>,
@@ -1250,14 +1251,14 @@ pub fn resolve_turn_system(
         (
             Side::Player,
             player_action,
-            action_priority(&player_action, &skill_db),
+            action_priority(&player_action, &dbs.skills),
             player_spd,
             0_u8,
         ),
         (
             Side::Enemy,
             enemy_action,
-            action_priority(&enemy_action, &skill_db),
+            action_priority(&enemy_action, &dbs.skills),
             enemy_spd,
             1_u8,
         ),
@@ -1321,7 +1322,7 @@ pub fn resolve_turn_system(
             continue;
         }
 
-        let Some(skill) = skill_db.0.get(&skill_id) else {
+        let Some(skill) = dbs.skills.get(&skill_id) else {
             continue;
         };
 
@@ -1355,6 +1356,7 @@ pub fn resolve_turn_system(
                 &mut t_shield,
                 &mut t_aura,
                 &mut pending_boosts,
+                &dbs.elements,
                 &mut event_writer,
             );
         } else {
@@ -1370,6 +1372,7 @@ pub fn resolve_turn_system(
                 &mut a_shield,
                 &mut a_aura,
                 &mut pending_boosts,
+                &dbs.elements,
                 &mut event_writer,
             );
         }
@@ -1613,12 +1616,13 @@ fn apply_effect(
     target_shield: &mut Shield,
     target_aura: &mut ElementAura,
     pending_boosts: &mut PendingBoosts,
+    element_db: &ElementDb,
     event_writer: &mut MessageWriter<BattleEvent>,
 ) {
     match effect {
         SkillEffect::Attack { power } => {
             let mut effective_power = *power;
-            // 待命增益只作用于“对应类型的精灵技能”，并在结算后清空。
+            // 待命增益只作用于”对应类型的精灵技能”，并在结算后清空。
             if attacker_side == Side::Player {
                 effective_power += pending_boosts.player.next_attack_bonus;
                 pending_boosts.player.next_attack_bonus = 0;
@@ -1630,9 +1634,9 @@ fn apply_effect(
             let raw = effective_power + attacker_stats.atk - target_stats.def;
 
             if let Some(incoming_element) = skill_element {
-                // 先用“附着元素（若存在）”计算克制倍率。
+                // 先用”附着元素（若存在）”计算克制倍率。
                 let defender_elem_with_aura = target_aura.attached.unwrap_or(target_element);
-                let effectiveness_with_aura = crate::data::ElementMatrix::get_effectiveness(
+                let effectiveness_with_aura = element_db.get_effectiveness(
                     incoming_element,
                     defender_elem_with_aura,
                 );
@@ -1641,8 +1645,8 @@ fn apply_effect(
                 let absorbed_with_aura = target_shield.0.min(theoretical_damage_with_aura);
 
                 if absorbed_with_aura > 0 {
-                    // 盾免疫：元素附着/反应不生效，改用“固有元素”重算伤害。
-                    let effectiveness_no_aura = crate::data::ElementMatrix::get_effectiveness(
+                    // 盾免疫：元素附着/反应不生效，改用”固有元素”重算伤害。
+                    let effectiveness_no_aura = element_db.get_effectiveness(
                         incoming_element,
                         target_element,
                     );
@@ -1766,11 +1770,11 @@ fn element_text(element: crate::data::ElementType) -> &'static str {
 }
 
 #[allow(dead_code)]
-fn action_priority(action: &TurnAction, skill_db: &SkillDb) -> i32 {
+fn action_priority(action: &TurnAction, skills: &HashMap<crate::data::SkillId, crate::data::SkillDef>) -> i32 {
     match action {
         TurnAction::Switch => 300,
         TurnAction::Skill(skill_id) => {
-            let Some(skill) = skill_db.0.get(skill_id) else {
+            let Some(skill) = skills.get(skill_id) else {
                 return 0;
             };
             match skill.effect {

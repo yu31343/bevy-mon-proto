@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{Combatant, ElementAura, InBattle, Team, Shield, Stats},
-    data::{CardDef, CardEffect, ElementType, SkillDb, SkillEffect, SkillId},
+    data::{BattleDbs, CardDef, CardEffect, ElementType, SkillEffect, SkillId},
     game_state::BattlePhase,
 };
 
@@ -10,15 +10,15 @@ use super::{
     resources::UiFontHandle,
 };
 
-pub(crate) fn skill_name(skill_id: SkillId, db: &SkillDb) -> String {
-    db.0
+pub(crate) fn skill_name(skill_id: SkillId, dbs: &BattleDbs) -> String {
+    dbs.skills
         .get(&skill_id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{skill_id:?}"))
 }
 
-pub(crate) fn skill_meta(skill_id: SkillId, db: &SkillDb) -> String {
-    let Some(skill) = db.0.get(&skill_id) else {
+pub(crate) fn skill_meta(skill_id: SkillId, dbs: &BattleDbs) -> String {
+    let Some(skill) = dbs.skills.get(&skill_id) else {
         return "类型：未知".to_string();
     };
     match &skill.effect {

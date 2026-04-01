@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
-use crate::{battle::Hand, data::CardDb};
+use crate::{battle::Hand, data::BattleDbs};
 
 use super::super::components::*;
 use crate::battle::SelectedCard;
 
 pub(crate) fn update_player_hand_ui_system(
     hand: Res<Hand>,
-    card_db: Res<CardDb>,
+    dbs: Res<BattleDbs>,
     selected: Res<SelectedCard>,
     mut card_text_q: Query<
         (
@@ -67,7 +67,7 @@ pub(crate) fn update_player_hand_ui_system(
         }
 
         let card_id = hand.player[idx];
-        let Some(card) = card_db.0.get(&card_id) else {
+        let Some(card) = dbs.cards.get(&card_id) else {
             continue;
         };
 
