@@ -54,8 +54,21 @@ Each `BattlePhase` variant has a dedicated system in `src/battle/systems.rs` gat
 - Card system: players draw from `CardDeck` each round, spend `ActionPoints` (AP) to play `CardEffect`s (AP gain, next-attack/shield/heal boost).
 - `BattleDataStatus` tracks load errors; `init_battle_system` aborts to `GameState::Result` if data is invalid.
 
+### UI Module (`src/ui/`)
+
+- Entry point is `src/ui/mod.rs`; battle UI lives under `src/ui/battle/`.
+- `layout.rs` spawns the entire UI tree once at startup. Component markers in `components.rs` (e.g. `PlayerHpBar`, `SkillButton`, `HandCardButton`) let update systems query specific nodes without re-traversal.
+- `fx.rs` handles all timed visual effects (damage numbers, screen flash, button flash, discard-armed amber) via their own marker components and despawn timers.
+- `theme.rs` centralises all colours and shadow values — edit there, not inline.
+- `src/ui/battle/systems/` contains one file per concern (buttons, hand, roster, bars, text, visuals) registered as `Update` systems.
+- Font loading tries five Windows CJK font paths in order (msyh → simhei → simsun → simkai) and falls back to Bevy's built-in font. Porting to non-Windows requires updating these paths in `layout.rs`.
+
 ### Key Conventions
 
-- All game data goes in `assets/data/battle_data.ron`, not hardcoded in Rust (except the card definitions, which are currently inline in `DataPlugin`).
+- All game data goes in `assets/data/battle_data.ron`. Card *type* definitions live in `src/data/cards.rs`; the deck composition (which cards, how many) is configured in the RON file.
+- `BattleDbs` is a combined resource (`SkillDb` + `CardDb` + `ElementDb`) that exists solely to stay under Bevy's 16-system-parameter limit — add new shared DB resources there rather than as separate parameters.
 - Battle events (`BattleEvent`) are the contract between logic and UI — add new event variants there rather than coupling systems directly.
 - `PendingBoosts` accumulates card-granted bonuses that apply to the next action; it resets each time a boost is consumed.
+- `SelectedCard` resource tracks the two-step card-play flow (select → confirm); clear it whenever a card play is cancelled or completed.
+- AP costs: skills cost 2 AP (slot 0), 3 AP (slot 1), or 1 AP (slots 2–3); cards cost 1–2 AP; discard grants +1 AP; team switch costs 1 AP.
+- Enemy AI uses real-time delays (1.5–2.5 s between actions via `Timer`) — keep `enemy_turn_ai_system` running in `Update` (not `OnEnter`) so the timer ticks.
