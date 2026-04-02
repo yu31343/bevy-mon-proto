@@ -462,7 +462,8 @@ pub fn player_turn_input_system(
             return;
         }
         let Some(target_index) = selected.index.filter(|&i| i < hand.player.len()) else {
-            selected.discard_armed = true;
+            // 无已选牌：切换武装状态（再按一次 F 取消）
+            selected.discard_armed = !selected.discard_armed;
             return;
         };
         let card_id = hand.player.remove(target_index);

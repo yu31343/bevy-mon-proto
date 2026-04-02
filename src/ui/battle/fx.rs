@@ -45,6 +45,7 @@ pub fn process_battle_fx_events(
     mut commands: Commands,
     root: Query<Entity, With<BattleUiRoot>>,
     slots: Query<(Entity, &SkillSlotId)>,
+    mut discard_button: Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<DiscardButton>>,
     ui_font: Option<Res<UiFontHandle>>,
 ) {
     // 获取UI根节点实体，若不存在则直接返回
@@ -66,7 +67,6 @@ pub fn process_battle_fx_events(
         match event {
             // 处理技能使用事件：触发技能格闪白效果
             BattleEvent::SkillUsed { side, slot, .. } => {
-                // 查找对应的技能槽位实体
                 for (entity, sid) in &slots {
                     if sid.side == *side && sid.index == *slot {
                         // 为技能槽位添加闪白计时器组件
@@ -74,6 +74,16 @@ pub fn process_battle_fx_events(
                             .entity(entity)
                             .insert(SkillFlashTimer(Timer::from_seconds(0.2, TimerMode::Once)));
                     }
+                }
+            }
+            // 玩家实际弃牌时闪光弃牌按钮（武装/取消不触发，因为不会发出此事件）
+            BattleEvent::CardDiscarded { side, .. } if *side == Side::Player => {
+                if let Ok((entity, mut bg, mut border)) = discard_button.single_mut() {
+                    *bg = BackgroundColor(CLICK_FLASH_COLOR);
+                    *border = BorderColor::all(CLICK_FLASH_BORDER);
+                    commands
+                        .entity(entity)
+                        .insert(ButtonClickFlash(Timer::from_seconds(0.15, TimerMode::Once)));
                 }
             }
             // 处理伤害事件：显示伤害飘字和受击闪屏
@@ -269,7 +279,8 @@ pub struct ButtonClickFlash(pub Timer);
 const CLICK_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.90);
 const CLICK_FLASH_BORDER: Color = Color::srgba(0.72, 0.88, 1.0, 0.70);
 
-/// 检测所有可交互按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
+/// 检测技能格与结束回合按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
+/// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn spawn_button_click_flash(
     mut commands: Commands,
     mut q: Query<
@@ -279,7 +290,6 @@ pub fn spawn_button_click_flash(
             Or<(
                 With<SkillButton>,
                 With<EndTurnButton>,
-                With<DiscardButton>,
             )>,
         ),
     >,
@@ -319,6 +329,8 @@ pub fn tick_button_click_flash(
 ///
 /// 使用 `ParamSet` 规避多个 Query 同时 `&mut BackgroundColor` / `&mut BorderColor`
 /// 导致的 Bevy B0001 Query 冲突——ParamSet 保证同一帧内每次只访问其中一个 Query。
+///
+/// 注意：弃牌按钮（F 键）不在此列，其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn keyboard_button_flash_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -327,11 +339,9 @@ pub fn keyboard_button_flash_system(
         Query<(Entity, &super::components::SkillButton, &mut BackgroundColor, &mut BorderColor)>,
         // p1: 结束回合按钮（E）
         Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::EndTurnButton>>,
-        // p2: 弃牌按钮（F）
-        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::DiscardButton>>,
-        // p3: 手牌按钮（Z/X/C/V/B）
+        // p2: 手牌按钮（Z/X/C/V/B）
         Query<(Entity, &super::components::PlayerCardButton, &mut BackgroundColor, &mut BorderColor)>,
-        // p4: 队员切换按钮（5/6/7）
+        // p3: 队员切换按钮（5/6/7）
         Query<(Entity, &super::components::TeamMemberButton, &mut BackgroundColor, &mut BorderColor)>,
     )>,
 ) {
@@ -371,12 +381,7 @@ pub fn keyboard_button_flash_system(
         }
     }
 
-    // F → 弃牌按钮
-    if keyboard.just_pressed(KeyCode::KeyF) {
-        if let Ok((entity, mut bg, mut border)) = queries.p2().single_mut() {
-            do_flash!(entity, bg, border);
-        }
-    }
+    // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
 
     // Z/X/C/V/B → 手牌按钮（index 0-4）
     for (key, idx) in [
@@ -387,7 +392,7 @@ pub fn keyboard_button_flash_system(
         (KeyCode::KeyB, 4),
     ] {
         if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
+            for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {
                 if btn.index == idx {
                     do_flash!(entity, bg, border);
                     break;
@@ -403,7 +408,7 @@ pub fn keyboard_button_flash_system(
         (KeyCode::Digit7, 2),
     ] {
         if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p4().iter_mut() {
+            for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
                 if btn.index == idx {
                     do_flash!(entity, bg, border);
                     break;

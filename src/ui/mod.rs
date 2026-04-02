@@ -73,6 +73,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             button_end_turn_system
                 .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
+            update_discard_armed_visual_system
+                .run_if(in_state(GameState::Battle))
+                .after(button_visual_state_system)
+                .before(process_battle_fx_events),
             update_battle_bars_system.run_if(in_state(GameState::Battle)),
             update_action_points_text_system.run_if(in_state(GameState::Battle)),
             update_battle_action_text_system.run_if(in_state(GameState::Battle)),

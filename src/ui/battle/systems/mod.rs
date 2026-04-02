@@ -16,5 +16,5 @@ pub(crate) use text::{
     update_action_points_text_system, update_battle_action_text_system, update_battle_text_system,
     update_result_ui_system,
 };
-pub(crate) use visuals::button_visual_state_system;
+pub(crate) use visuals::{button_visual_state_system, update_discard_armed_visual_system};
 

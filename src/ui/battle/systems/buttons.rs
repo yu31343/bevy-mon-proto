@@ -194,7 +194,8 @@ pub(crate) fn button_discard_system(
             let target_index = match selected.index {
                 Some(idx) if idx < hand.player.len() => idx,
                 _ => {
-                    selected.discard_armed = true;
+                    // 无已选牌：切换武装状态（再次点击取消）
+                    selected.discard_armed = !selected.discard_armed;
                     continue;
                 }
             };
