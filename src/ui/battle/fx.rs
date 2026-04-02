@@ -312,3 +312,104 @@ pub fn tick_button_click_flash(
     }
 }
 
+/// 将键盘快捷键触发的操作映射到 `ButtonClickFlash`，使视觉反馈与鼠标点击完全一致。
+///
+/// 纯 UI 层：只读取键盘输入、查找对应按钮实体、insert 组件并改颜色，不含任何战斗逻辑。
+/// `tick_button_click_flash` 完全复用——只要实体上有 `ButtonClickFlash` 它就会运行。
+///
+/// 使用 `ParamSet` 规避多个 Query 同时 `&mut BackgroundColor` / `&mut BorderColor`
+/// 导致的 Bevy B0001 Query 冲突——ParamSet 保证同一帧内每次只访问其中一个 Query。
+pub fn keyboard_button_flash_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut queries: ParamSet<(
+        // p0: 技能按钮（1/2/3/4）
+        Query<(Entity, &super::components::SkillButton, &mut BackgroundColor, &mut BorderColor)>,
+        // p1: 结束回合按钮（E）
+        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::EndTurnButton>>,
+        // p2: 弃牌按钮（F）
+        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::DiscardButton>>,
+        // p3: 手牌按钮（Z/X/C/V/B）
+        Query<(Entity, &super::components::PlayerCardButton, &mut BackgroundColor, &mut BorderColor)>,
+        // p4: 队员切换按钮（5/6/7）
+        Query<(Entity, &super::components::TeamMemberButton, &mut BackgroundColor, &mut BorderColor)>,
+    )>,
+) {
+    // 辅助宏：写颜色并 insert 计时器
+    // 宏展开为内联代码，commands 来自外部作用域，entity 为 Copy，无借用冲突
+    macro_rules! do_flash {
+        ($entity:expr, $bg:expr, $border:expr) => {
+            *$bg = BackgroundColor(CLICK_FLASH_COLOR);
+            *$border = BorderColor::all(CLICK_FLASH_BORDER);
+            commands
+                .entity($entity)
+                .insert(ButtonClickFlash(Timer::from_seconds(0.15, TimerMode::Once)));
+        };
+    }
+
+    // 1-4 → 技能按钮（slot 0-3）
+    for (key, idx) in [
+        (KeyCode::Digit1, 0usize),
+        (KeyCode::Digit2, 1),
+        (KeyCode::Digit3, 2),
+        (KeyCode::Digit4, 3),
+    ] {
+        if keyboard.just_pressed(key) {
+            for (entity, btn, mut bg, mut border) in queries.p0().iter_mut() {
+                if btn.index == idx {
+                    do_flash!(entity, bg, border);
+                    break;
+                }
+            }
+        }
+    }
+
+    // E → 结束回合按钮
+    if keyboard.just_pressed(KeyCode::KeyE) {
+        if let Ok((entity, mut bg, mut border)) = queries.p1().single_mut() {
+            do_flash!(entity, bg, border);
+        }
+    }
+
+    // F → 弃牌按钮
+    if keyboard.just_pressed(KeyCode::KeyF) {
+        if let Ok((entity, mut bg, mut border)) = queries.p2().single_mut() {
+            do_flash!(entity, bg, border);
+        }
+    }
+
+    // Z/X/C/V/B → 手牌按钮（index 0-4）
+    for (key, idx) in [
+        (KeyCode::KeyZ, 0usize),
+        (KeyCode::KeyX, 1),
+        (KeyCode::KeyC, 2),
+        (KeyCode::KeyV, 3),
+        (KeyCode::KeyB, 4),
+    ] {
+        if keyboard.just_pressed(key) {
+            for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
+                if btn.index == idx {
+                    do_flash!(entity, bg, border);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 5/6/7 → 队员切换按钮（index 0/1/2）
+    for (key, idx) in [
+        (KeyCode::Digit5, 0usize),
+        (KeyCode::Digit6, 1),
+        (KeyCode::Digit7, 2),
+    ] {
+        if keyboard.just_pressed(key) {
+            for (entity, btn, mut bg, mut border) in queries.p4().iter_mut() {
+                if btn.index == idx {
+                    do_flash!(entity, bg, border);
+                    break;
+                }
+            }
+        }
+    }
+}
+
