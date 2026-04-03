@@ -91,7 +91,7 @@
             element: None,
         ),
     ],
-    player: [
+    monsters: [
         (
             name: "水精灵",
             element: Water,
@@ -109,14 +109,6 @@
             element: Fire,
             stats: (hp: 100, atk: 18, def: 9, spd: 11),
             skills: (NormalAttack, ElementFireAttack, Guard, FirstAid),
-        )
-    ],
-    enemy: [
-        (
-            name: "火精灵",
-            element: Fire,
-            stats: (hp: 100, atk: 18, def: 9, spd: 11),
-            skills: (NormalAttack, ElementFireAttack, Guard, FirstAid),
         ),
         (
             name: "暗精灵",
@@ -125,11 +117,23 @@
             skills: (NormalAttack, ElementDarkAttack, Guard, FirstAid),
         ),
         (
-            name: "草精灵",
-            element: Grass,
-            stats: (hp: 80, atk: 14, def: 12, spd: 15),
-            skills: (NormalAttack, ElementGrassAttack, Guard, FirstAid),
-        )
+            name: "光精灵",
+            element: Light,
+            stats: (hp: 95, atk: 17, def: 11, spd: 13),
+            skills: (NormalAttack, ElementLightAttack, Guard, FirstAid),
+        ),
+        (
+            name: "雷精灵",
+            element: Thunder,
+            stats: (hp: 85, atk: 19, def: 9, spd: 16),
+            skills: (NormalAttack, ElementThunderAttack, Guard, FirstAid),
+        ),
+        (
+            name: "风精灵",
+            element: Wind,
+            stats: (hp: 75, atk: 15, def: 10, spd: 18),
+            skills: (NormalAttack, ElementWindAttack, Guard, FirstAid),
+        ),
     ],
     cards: [
         (

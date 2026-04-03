@@ -4,6 +4,7 @@ pub(crate) mod battle;
 use bevy::prelude::*;
 
 use battle::{
+    components::BattleUiRoot,
     layout::{load_cjk_font_system, setup_ui_system, spawn_camera},
     resources::UiFontHandle,
     systems::*,
@@ -25,6 +26,8 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        // Initialize theme globally so it's available to all UI systems
+        app.init_resource::<UiTheme>();
         battle::register(app);
     }
 }
@@ -33,8 +36,9 @@ impl Plugin for UiPlugin {
 ///
 /// 后续重构会逐步把实现迁移进 `src/ui/battle/`，此处保持行为不变。
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
-    app.init_resource::<UiTheme>()
-        .add_systems(Startup, (spawn_camera, load_cjk_font_system, setup_ui_system).chain())
+    app.add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
+        .add_systems(OnEnter(GameState::Battle), setup_ui_system)
+        .add_systems(OnExit(GameState::Battle), cleanup_battle_ui_system)
         .add_systems(
             Update,
             (
@@ -48,6 +52,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
             ),
         );
+
 
     app.add_systems(
         Update,
@@ -97,6 +102,15 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     );
 
     app.add_systems(Update, update_result_ui_system);
+}
+
+fn cleanup_battle_ui_system(
+    mut commands: Commands,
+    query: Query<Entity, With<BattleUiRoot>>,
+) {
+    for entity in &query {
+        commands.entity(entity).despawn();
+    }
 }
 
 #[allow(dead_code)]

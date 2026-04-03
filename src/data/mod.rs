@@ -214,8 +214,7 @@ struct BattleConfig {
     #[serde(default)]
     element_matrix: ElementMatrixConfig,
     skills: Vec<SkillDef>,
-    player: Vec<MonsterPrototype>,
-    enemy: Vec<MonsterPrototype>,
+    monsters: Vec<MonsterPrototype>,
     cards: Vec<CardDef>,
     deck: Vec<CardId>,
 }
@@ -230,9 +229,14 @@ pub struct BattleDbs {
 }
 
 #[derive(Resource, Debug, Clone)]
-pub struct TeamSetup {
-    pub player: Vec<MonsterPrototype>,
-    pub enemy: Vec<MonsterPrototype>,
+pub struct MonsterPool {
+    pub monsters: Vec<MonsterPrototype>,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct TeamSelections {
+    pub player_indices: Vec<usize>,
+    pub enemy_indices: Vec<usize>,
 }
 
 /// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。
@@ -261,7 +265,7 @@ fn load_battle_data(mut commands: Commands) {
                 cards: HashMap::new(),
                 elements: ElementDb::from_default_config(),
             });
-            commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+            commands.insert_resource(MonsterPool { monsters: vec![] });
             commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
@@ -277,7 +281,7 @@ fn load_battle_data(mut commands: Commands) {
                 cards: HashMap::new(),
                 elements: ElementDb::from_default_config(),
             });
-            commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+            commands.insert_resource(MonsterPool { monsters: vec![] });
             commands.insert_resource(CardDeck::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
@@ -292,7 +296,7 @@ fn load_battle_data(mut commands: Commands) {
             cards: HashMap::new(),
             elements: ElementDb::from_default_config(),
         });
-        commands.insert_resource(TeamSetup { player: vec![], enemy: vec![] });
+        commands.insert_resource(MonsterPool { monsters: vec![] });
         commands.insert_resource(CardDeck::default());
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
@@ -318,9 +322,8 @@ fn load_battle_data(mut commands: Commands) {
     };
 
     commands.insert_resource(BattleDbs { skills, cards, elements });
-    commands.insert_resource(TeamSetup {
-        player: config.player,
-        enemy: config.enemy,
+    commands.insert_resource(MonsterPool {
+        monsters: config.monsters,
     });
     commands.insert_resource(CardDeck(config.deck));
     commands.insert_resource(BattleDataStatus::default());
@@ -330,11 +333,8 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     if config.skills.is_empty() {
         return Err("skills 不能为空".to_string());
     }
-    if config.player.is_empty() {
-        return Err("player 队伍不能为空".to_string());
-    }
-    if config.enemy.is_empty() {
-        return Err("enemy 队伍不能为空".to_string());
+    if config.monsters.is_empty() {
+        return Err("monsters 不能为空".to_string());
     }
 
     let mut skill_ids = HashSet::new();
@@ -344,15 +344,13 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
         }
     }
 
-    for (team_name, team) in [("player", &config.player), ("enemy", &config.enemy)] {
-        for mon in team {
-            for sid in mon.skills {
-                if !skill_ids.contains(&sid) {
-                    return Err(format!(
-                        "{team_name} 队伍中的角色 {} 使用了未定义技能 {:?}",
-                        mon.name, sid
-                    ));
-                }
+    for mon in &config.monsters {
+        for sid in mon.skills {
+            if !skill_ids.contains(&sid) {
+                return Err(format!(
+                    "角色 {} 使用了未定义技能 {:?}",
+                    mon.name, sid
+                ));
             }
         }
     }

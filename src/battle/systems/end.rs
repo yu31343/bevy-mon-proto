@@ -135,11 +135,16 @@ pub fn check_end_system(
 
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
+    mut selection_state: ResMut<crate::team_selection::SelectionState>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
+        // Clear previous selection
+        selection_state.selected_indices.clear();
+
+        // Return to team selection instead of battle
         next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::Battle);
+        next_game_state.set(GameState::TeamSelection);
     }
 }

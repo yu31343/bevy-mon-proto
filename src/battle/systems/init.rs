@@ -6,13 +6,14 @@ use crate::{
         InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillList, Stats, TurnContext,
         TurnCount,
     },
-    data::{BattleDataStatus, BattleDbs, TeamSetup},
+    data::{BattleDataStatus, BattleDbs, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
 
 pub fn init_battle_system(
     mut commands: Commands,
-    setup: Res<TeamSetup>,
+    monster_pool: Res<MonsterPool>,
+    team_selections: Option<Res<TeamSelections>>,
     dbs: Res<BattleDbs>,
     data_status: Option<Res<BattleDataStatus>>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -23,6 +24,11 @@ pub fn init_battle_system(
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
+    // Wait for team selections to be made
+    let Some(team_selections) = team_selections else {
+        println!("等待队伍选择...");
+        return;
+    };
     for entity in &cleanup_query {
         commands.entity(entity).despawn();
     }
@@ -56,9 +62,9 @@ pub fn init_battle_system(
         }
     }
 
-    if setup.player.is_empty() || setup.enemy.is_empty() {
+    if team_selections.player_indices.len() != 3 || team_selections.enemy_indices.len() != 3 {
         abort_battle(
-            "战斗初始化失败：队伍配置不能为空。",
+            "战斗初始化失败：队伍选择不完整（需要各选择 3 个精灵）。",
             &mut battle_log,
             &mut result,
             &mut next_game_state,
@@ -76,7 +82,23 @@ pub fn init_battle_system(
         return;
     }
 
-    for mon in setup.player.iter().chain(setup.enemy.iter()) {
+    // Validate indices and skills
+    for &idx in team_selections
+        .player_indices
+        .iter()
+        .chain(&team_selections.enemy_indices)
+    {
+        if idx >= monster_pool.monsters.len() {
+            abort_battle(
+                &format!("战斗初始化失败：无效的精灵索引 {}。", idx),
+                &mut battle_log,
+                &mut result,
+                &mut next_game_state,
+            );
+            return;
+        }
+
+        let mon = &monster_pool.monsters[idx];
         for sid in mon.skills {
             if !dbs.skills.contains_key(&sid) {
                 abort_battle(
@@ -100,7 +122,8 @@ pub fn init_battle_system(
         active_index: 0,
     };
 
-    for combatant in &setup.player {
+    for &idx in &team_selections.player_indices {
+        let combatant = &monster_pool.monsters[idx];
         let entity = commands
             .spawn((
                 Name::new(combatant.name.clone()),
@@ -131,7 +154,8 @@ pub fn init_battle_system(
         player_team.combatants.push(entity);
     }
 
-    for combatant in &setup.enemy {
+    for &idx in &team_selections.enemy_indices {
+        let combatant = &monster_pool.monsters[idx];
         let entity = commands
             .spawn((
                 Name::new(combatant.name.clone()),

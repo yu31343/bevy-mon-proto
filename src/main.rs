@@ -2,6 +2,7 @@
 mod battle;
 mod data;
 mod game_state;
+mod team_selection;
 mod ui;
 
 use bevy::prelude::*;
@@ -13,6 +14,11 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .init_state::<GameState>()
         .init_state::<BattlePhase>()
-        .add_plugins((data::DataPlugin, battle::BattlePlugin, ui::UiPlugin))
+        .add_plugins((
+            data::DataPlugin,
+            ui::UiPlugin,
+            team_selection::TeamSelectionPlugin,
+            battle::BattlePlugin,
+        ))
         .run();
 }

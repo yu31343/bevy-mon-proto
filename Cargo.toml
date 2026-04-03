@@ -7,6 +7,7 @@ edition = "2024"
 bevy = {version = "0.18.1", features = ["dynamic_linking"]}
 ron = "0.11.0"
 serde = { version = "1.0", features = ["derive"] }
+rand = "0.8"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 
-/// 顶层游戏状态：战斗中或结算页。
+/// 顶层游戏状态：队伍选择、战斗中或结算页。
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum GameState {
     #[default]
+    TeamSelection,
     Battle,
     Result,
 }

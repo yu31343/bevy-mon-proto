@@ -310,7 +310,11 @@ pub(crate) fn setup_ui_system(
     mut commands: Commands,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
+    existing_ui: Query<(), With<BattleUiRoot>>,
 ) {
+    if !existing_ui.is_empty() {
+        return;
+    }
     let radius_panel = theme.radius_panel;
     let radius_button = theme.radius_button;
     let radius_hp = theme.radius_hp;
