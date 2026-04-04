@@ -136,12 +136,17 @@ pub fn check_end_system(
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut selection_state: ResMut<crate::team_selection::SelectionState>,
+    team_selections: Option<ResMut<crate::data::TeamSelections>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         // Clear previous selection
         selection_state.selected_indices.clear();
+        if let Some(mut team_selections) = team_selections {
+            team_selections.player_indices.clear();
+            team_selections.enemy_indices.clear();
+        }
 
         // Return to team selection instead of battle
         next_phase.set(BattlePhase::Init);

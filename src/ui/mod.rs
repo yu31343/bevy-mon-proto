@@ -38,7 +38,7 @@ impl Plugin for UiPlugin {
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
-        .add_systems(OnExit(GameState::Battle), cleanup_battle_ui_system)
+        .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
         .add_systems(
             Update,
             (
