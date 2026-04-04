@@ -88,8 +88,13 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p2() {
+        let exists = get_entity(meta.index).is_some();
         let active = meta.index == player_team.0.active_index;
-        node.display = if active { Display::None } else { Display::Flex };
+        node.display = if !exists || active {
+            Display::None
+        } else {
+            Display::Flex
+        };
         node.min_height = Val::Px(58.0);
         *bg = match *interaction {
             Interaction::Hovered => BackgroundColor(theme.button_hover),
@@ -112,6 +117,8 @@ pub(crate) fn update_player_roster_ui_system(
                     Visibility::Hidden
                 };
             }
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 }
@@ -204,8 +211,13 @@ pub(crate) fn update_enemy_roster_ui_system(
     }
 
     for (meta, mut node, mut bg, mut border) in &mut nodes.p2() {
+        let exists = get_entity(meta.index).is_some();
         let active = meta.index == enemy_team.0.active_index;
-        node.display = if active { Display::None } else { Display::Flex };
+        node.display = if !exists || active {
+            Display::None
+        } else {
+            Display::Flex
+        };
         node.min_height = Val::Px(58.0);
         if active {
             *bg = BackgroundColor(theme.button_hover);
@@ -225,6 +237,8 @@ pub(crate) fn update_enemy_roster_ui_system(
                     Visibility::Hidden
                 };
             }
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 }

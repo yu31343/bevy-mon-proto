@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::seq::SliceRandom;
 
 use crate::{
-    data::{MonsterPool, TeamSelections},
+    data::{BattleRules, MonsterPool, TeamSelections},
     game_state::GameState,
     team_selection::{
         ConfirmSelectionButton, MonsterCardButton, MonsterCardSelectionIndicator,
@@ -18,10 +18,11 @@ pub fn button_select_monster_system(
         (Changed<Interaction>, With<Button>),
     >,
     mut selection_state: ResMut<SelectionState>,
+    rules: Res<BattleRules>,
 ) {
     for (interaction, button) in &mut interaction_query {
         if *interaction == Interaction::Pressed {
-            selection_state.toggle(button.monster_index);
+            selection_state.toggle(button.monster_index, rules.max_team_size);
         }
     }
 }
@@ -34,13 +35,18 @@ pub fn button_confirm_selection_system(
     >,
     selection_state: Res<SelectionState>,
     monster_pool: Res<MonsterPool>,
+    rules: Res<BattleRules>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut interaction_query {
-        if *interaction == Interaction::Pressed && selection_state.is_complete() {
-            // Generate AI selection (random 3 monsters)
-            let enemy_indices = generate_ai_selection(monster_pool.monsters.len());
+        let selected_count = selection_state.selected_indices.len();
+        if *interaction == Interaction::Pressed
+            && selection_state.can_confirm()
+            && selected_count <= rules.max_team_size
+        {
+            // Generate AI selection (same count as player, without duplicates)
+            let enemy_indices = generate_ai_selection(monster_pool.monsters.len(), selected_count);
 
             // Log player selections
             println!("=== 队伍选择 ===");
@@ -79,6 +85,7 @@ pub fn button_confirm_selection_system(
 /// System to update selection UI based on current state.
 pub fn update_selection_ui_system(
     selection_state: Res<SelectionState>,
+    rules: Res<BattleRules>,
     theme: Res<UiTheme>,
     mut count_text_query: Query<&mut Text, With<SelectionCountText>>,
     mut indicator_query: Query<(&MonsterCardSelectionIndicator, &mut Visibility)>,
@@ -94,7 +101,11 @@ pub fn update_selection_ui_system(
 ) {
     // Update selection count text
     for mut text in &mut count_text_query {
-        **text = format!("已选择: {} / 3", selection_state.selected_indices.len());
+        **text = format!(
+            "已选择: {} / {}",
+            selection_state.selected_indices.len(),
+            rules.max_team_size
+        );
     }
 
     // Update selection indicators visibility and order numbers
@@ -141,7 +152,7 @@ pub fn update_selection_ui_system(
     // Update confirm button state
     for (interaction, mut bg, mut border) in &mut confirm_button_query {
         if *interaction == Interaction::None {
-            if selection_state.is_complete() {
+            if selection_state.can_confirm() && selection_state.selected_indices.len() <= rules.max_team_size {
                 *bg = BackgroundColor(theme.button_idle);
                 *border = BorderColor::all(theme.button_border_idle);
             } else {
@@ -152,11 +163,11 @@ pub fn update_selection_ui_system(
     }
 }
 
-/// Generate AI team selection (random 3 monsters, no duplicates within AI team).
-fn generate_ai_selection(pool_size: usize) -> Vec<usize> {
+/// Generate AI team selection (same count as player, no duplicates within AI team).
+fn generate_ai_selection(pool_size: usize, count: usize) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..pool_size).collect();
     indices.shuffle(&mut rand::thread_rng());
-    indices.into_iter().take(3).collect()
+    indices.into_iter().take(count).collect()
 }
 
 /// System to clear selection state when entering TeamSelection state.

@@ -66,6 +66,10 @@ pub struct Stats {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkillList(pub [SkillId; 4]);
 
+/// 技能栏实际可用槽位数量（1..=4）。
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SkillCount(pub usize);
+
 /// 护盾值：优先于生命值扣减。
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Shield(pub i32);
@@ -129,13 +133,7 @@ pub struct BattleResult {
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnCount(pub u32);
 
-/// 每回合抽取的技能卡数量（暂定 5）。
-pub const CARDS_PER_ROUND: usize = 5;
-
-/// 每回合给予的行动点（暂定 6），按“回合开始时叠加”规则生效。
-pub const AP_PER_ROUND: i32 = 6;
-
-/// 行动点池（可跨回合继承；回合开始时额外 +6）。
+/// 行动点池（可跨回合继承；回合开始时按 BattleRules 叠加）。
 #[derive(Resource, Debug, Clone)]
 pub struct ActionPoints {
     pub player: i32,

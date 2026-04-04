@@ -365,7 +365,7 @@ pub(crate) fn setup_ui_system(
                     BattlePhaseText,
                 ));
                 bar.spawn((
-                    Text::new("操作提示：按 1-4 使用精灵技能，按 5/6/7 切换我方队伍1/2/3，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
+                    Text::new("操作提示：按 1-4 使用精灵技能（未配置槽位无效），按 5/6/7 切换我方队伍，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
                     meta_font.clone(),
                     TextColor(Color::srgb(0.80, 0.90, 0.95)),
                     TextShadow {

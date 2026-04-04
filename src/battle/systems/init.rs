@@ -3,18 +3,29 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         push_battle_line, ActionPoints, BattleLog, BattleResult, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillList, Stats, TurnContext,
-        TurnCount,
+        InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillCount, SkillList, Stats,
+        TurnContext, TurnCount,
     },
-    data::{BattleDataStatus, BattleDbs, MonsterPool, TeamSelections},
+    data::{BattleDataStatus, BattleDbs, BattleRules, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
+
+fn normalize_skill_slots(skills: &[crate::data::SkillId]) -> ([crate::data::SkillId; 4], usize) {
+    let count = skills.len().clamp(1, 4);
+    let fallback = skills[0];
+    let mut slots = [fallback; 4];
+    for (i, sid) in skills.iter().take(4).enumerate() {
+        slots[i] = *sid;
+    }
+    (slots, count)
+}
 
 pub fn init_battle_system(
     mut commands: Commands,
     monster_pool: Res<MonsterPool>,
     team_selections: Option<Res<TeamSelections>>,
     dbs: Res<BattleDbs>,
+    battle_rules: Res<BattleRules>,
     data_status: Option<Res<BattleDataStatus>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut battle_log: ResMut<BattleLog>,
@@ -62,9 +73,26 @@ pub fn init_battle_system(
         }
     }
 
-    if team_selections.player_indices.len() != 3 || team_selections.enemy_indices.len() != 3 {
+    let player_count = team_selections.player_indices.len();
+    let enemy_count = team_selections.enemy_indices.len();
+    if !(1..=battle_rules.max_team_size).contains(&player_count) {
         abort_battle(
-            "战斗初始化失败：队伍选择不完整（需要各选择 3 个精灵）。",
+            &format!(
+                "战斗初始化失败：玩家队伍人数非法（需 1..={}，当前 {}）。",
+                battle_rules.max_team_size, player_count
+            ),
+            &mut battle_log,
+            &mut result,
+            &mut next_game_state,
+        );
+        return;
+    }
+    if enemy_count != player_count {
+        abort_battle(
+            &format!(
+                "战斗初始化失败：敌我队伍人数不一致（玩家 {}，敌方 {}）。",
+                player_count, enemy_count
+            ),
             &mut battle_log,
             &mut result,
             &mut next_game_state,
@@ -99,7 +127,21 @@ pub fn init_battle_system(
         }
 
         let mon = &monster_pool.monsters[idx];
-        for sid in mon.skills {
+        if mon.skills.is_empty() || mon.skills.len() > 4 {
+            abort_battle(
+                &format!(
+                    "战斗初始化失败：{} 技能数量非法（需 1..=4，当前 {}）。",
+                    mon.name,
+                    mon.skills.len()
+                ),
+                &mut battle_log,
+                &mut result,
+                &mut next_game_state,
+            );
+            return;
+        }
+
+        for &sid in &mon.skills {
             if !dbs.skills.contains_key(&sid) {
                 abort_battle(
                     &format!("战斗初始化失败：{} 存在未定义技能 {:?}。", mon.name, sid),
@@ -124,6 +166,7 @@ pub fn init_battle_system(
 
     for &idx in &team_selections.player_indices {
         let combatant = &monster_pool.monsters[idx];
+        let (skill_slots, skill_count) = normalize_skill_slots(&combatant.skills);
         let entity = commands
             .spawn((
                 Name::new(combatant.name.clone()),
@@ -139,7 +182,8 @@ pub fn init_battle_system(
                     def: combatant.stats.def,
                     spd: combatant.stats.spd,
                 },
-                SkillList(combatant.skills),
+                SkillList(skill_slots),
+                SkillCount(skill_count),
                 Shield::default(),
                 ElementAura {
                     attached: match combatant.element {
@@ -156,6 +200,7 @@ pub fn init_battle_system(
 
     for &idx in &team_selections.enemy_indices {
         let combatant = &monster_pool.monsters[idx];
+        let (skill_slots, skill_count) = normalize_skill_slots(&combatant.skills);
         let entity = commands
             .spawn((
                 Name::new(combatant.name.clone()),
@@ -171,7 +216,8 @@ pub fn init_battle_system(
                     def: combatant.stats.def,
                     spd: combatant.stats.spd,
                 },
-                SkillList(combatant.skills),
+                SkillList(skill_slots),
+                SkillCount(skill_count),
                 Shield::default(),
                 ElementAura {
                     attached: match combatant.element {

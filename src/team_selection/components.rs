@@ -42,15 +42,15 @@ impl SelectionState {
         self.selected_indices.contains(&index)
     }
 
-    pub fn toggle(&mut self, index: usize) {
+    pub fn toggle(&mut self, index: usize, max_team_size: usize) {
         if let Some(pos) = self.selected_indices.iter().position(|&i| i == index) {
             self.selected_indices.remove(pos);
-        } else if self.selected_indices.len() < 3 {
+        } else if self.selected_indices.len() < max_team_size {
             self.selected_indices.push(index);
         }
     }
 
-    pub fn is_complete(&self) -> bool {
-        self.selected_indices.len() == 3
+    pub fn can_confirm(&self) -> bool {
+        !self.selected_indices.is_empty()
     }
 }

@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillList, Stats, TurnAction,
-        TurnContext,
+        InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillCount, SkillList, Stats,
+        TurnAction, TurnContext,
     },
     data::{BattleDbs, CardEffect},
     game_state::{BattlePhase, GameState},
@@ -33,6 +33,7 @@ pub fn player_turn_input_system(
             &Combatant,
             &mut Stats,
             &SkillList,
+            &SkillCount,
             &mut Shield,
             &mut ElementAura,
             &Name,
@@ -89,7 +90,7 @@ pub fn player_turn_input_system(
             && target_index != player_team.0.active_index
         {
             let target_entity = player_team.0.combatants[target_index];
-            if let Ok((_, _, stats, _, _, _, name)) = query.get(target_entity) {
+            if let Ok((_, _, stats, _, _, _, _, name)) = query.get(target_entity) {
                 if stats.hp > 0 {
                     action_points.player -= 1;
                     player_team.0.active_index = target_index;
@@ -106,15 +107,19 @@ pub fn player_turn_input_system(
     // 1) 来自 UI 的按钮选择（若存在则优先执行）。
     if let Some(TurnAction::Skill(skill_id)) = turn_ctx.player_action {
         // 找到按钮对应的技能槽位（用于计算 AP 消耗与 UI 闪白）。
-        let Ok((_, _, _, skill_list, _, _, _)) = query.get(p_entity) else {
+        let Ok((_, _, _, skill_list, skill_count, _, _, _)) = query.get(p_entity) else {
             turn_ctx.player_action = None;
             return;
         };
-        let slot = skill_list
+        let Some(slot) = skill_list
             .0
             .iter()
+            .take(skill_count.0)
             .position(|&s| s == skill_id)
-            .unwrap_or(0);
+        else {
+            turn_ctx.player_action = None;
+            return;
+        };
         let cost = monster_skill_ap_cost(slot);
         let Some(skill) = dbs.skills.get(&skill_id) else {
             turn_ctx.player_action = None;
@@ -132,8 +137,8 @@ pub fn player_turn_input_system(
 
         let Ok(
             [
-                (_, _attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
-                (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
+                (_, _attacker_combatant, mut p_stats, _, _, mut p_shield, mut _p_aura, _),
+                (_, e_combatant, mut e_stats, _, _, mut e_shield, mut e_aura, _),
             ],
         ) = query.get_many_mut([p_entity, e_entity])
         else {
@@ -164,11 +169,11 @@ pub fn player_turn_input_system(
 
         let should_go_check_end = query
             .get(p_entity)
-            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
             .unwrap_or(false)
             || query
                 .get(e_entity)
-                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.player_ended = true;
@@ -280,11 +285,11 @@ pub fn player_turn_input_system(
 
                     let should_go_check_end = query
                         .get(p_entity)
-                        .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                        .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                         .unwrap_or(false)
                         || query
                             .get(e_entity)
-                            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                             .unwrap_or(false);
                     if should_go_check_end {
                         turn_ctx.player_ended = true;
@@ -313,9 +318,12 @@ pub fn player_turn_input_system(
     let Some(skill_slot) = skill_slot else { return };
 
     // 读取玩家技能栏（slot 与按钮一一对应）。
-    let Ok((_, _, _, skill_list, _, _, _)) = query.get(p_entity) else {
+    let Ok((_, _, _, skill_list, skill_count, _, _, _)) = query.get(p_entity) else {
         return;
     };
+    if skill_slot >= skill_count.0 {
+        return;
+    }
     let skill_id = skill_list.0[skill_slot];
     let cost = monster_skill_ap_cost(skill_slot);
     if action_points.player < cost {
@@ -331,8 +339,8 @@ pub fn player_turn_input_system(
     // 执行技能：玩家为攻击方/施术方。
     let Ok(
         [
-            (_, _attacker_combatant, mut p_stats, _, mut p_shield, mut _p_aura, _),
-            (_, e_combatant, mut e_stats, _, mut e_shield, mut e_aura, _),
+            (_, _attacker_combatant, mut p_stats, _, _, mut p_shield, mut _p_aura, _),
+            (_, e_combatant, mut e_stats, _, _, mut e_shield, mut e_aura, _),
         ],
     ) = query.get_many_mut([p_entity, e_entity])
     else {
@@ -364,11 +372,11 @@ pub fn player_turn_input_system(
 
     let should_go_check_end = query
         .get(p_entity)
-        .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+        .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
         .unwrap_or(false)
         || query
             .get(e_entity)
-            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
             .unwrap_or(false);
     if should_go_check_end {
         turn_ctx.player_ended = true;

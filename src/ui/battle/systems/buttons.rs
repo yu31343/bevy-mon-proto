@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SkillList, Side,
-        Stats, TurnContext,
+        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SkillCount,
+        SkillList, Side, Stats, TurnContext,
     },
     game_state::BattlePhase,
 };
@@ -16,18 +16,21 @@ pub(crate) fn button_select_skill_system(
     mut turn_ctx: ResMut<TurnContext>,
     action_points: Res<ActionPoints>,
     player_team: Option<Res<PlayerTeam>>,
-    query: Query<&SkillList, With<InBattle>>,
+    query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     if let Some(player_team) = player_team {
         if let Some(active_entity) = player_team.0.active_combatant() {
-            let Ok(skills) = query.get(active_entity) else {
+            let Ok((skills, skill_count)) = query.get(active_entity) else {
                 return;
             };
             let skills = skills.0;
 
             for (interaction, button) in &mut interaction_query {
                 if *interaction == Interaction::Pressed {
+                    if button.index >= skill_count.0 {
+                        continue;
+                    }
                     let cost = super::super::helpers::monster_skill_ap_cost_ui(button.index);
                     if action_points.player < cost {
                         continue;

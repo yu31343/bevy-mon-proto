@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    data::MonsterPool,
+    data::{BattleRules, MonsterPool},
     team_selection::{
         ConfirmSelectionButton, MonsterCardButton, MonsterCardSelectionIndicator,
         SelectionCountText, SelectionOrderText, SelectionUiRoot,
@@ -14,6 +14,7 @@ pub fn setup_selection_ui(
     mut commands: Commands,
     theme: Res<UiTheme>,
     monster_pool: Res<MonsterPool>,
+    rules: Res<BattleRules>,
     ui_font: Option<Res<UiFontHandle>>,
     existing_ui: Query<(), With<SelectionUiRoot>>,
 ) {
@@ -58,7 +59,7 @@ pub fn setup_selection_ui(
 
             // Instructions
             root.spawn((
-                Text::new("选择 3 个精灵组成你的队伍"),
+                Text::new(format!("选择 1-{} 个精灵组成你的队伍", rules.max_team_size)),
                 make_text_font(16.0, font_handle.as_ref()),
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 Node {
@@ -69,7 +70,7 @@ pub fn setup_selection_ui(
 
             // Selection count
             root.spawn((
-                Text::new("已选择: 0 / 3"),
+                Text::new(format!("已选择: 0 / {}", rules.max_team_size)),
                 make_text_font(20.0, font_handle.as_ref()),
                 TextColor(Color::srgb(0.9, 0.9, 0.9)),
                 Node {

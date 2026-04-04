@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        BattleEvent, Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, SkillList,
-        Stats, Team,
+        BattleEvent, Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, SkillCount,
+        SkillList, Stats, Team,
     },
     data::BattleDbs,
     game_state::BattlePhase,
@@ -66,7 +66,7 @@ pub(crate) fn update_battle_text_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
-    skill_query: Query<&SkillList, With<InBattle>>,
+    skill_query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     skill_db: Res<BattleDbs>,
     battle_phase: Res<State<BattlePhase>>,
 ) {
@@ -79,15 +79,15 @@ pub(crate) fn update_battle_text_system(
 
     let mut player_skills = None;
     if let Some(p_entity) = player_team.0.active_combatant() {
-        if let Ok(skills) = skill_query.get(p_entity) {
-            player_skills = Some(skills.0);
+        if let Ok((skills, count)) = skill_query.get(p_entity) {
+            player_skills = Some((skills.0, count.0));
         }
     }
 
     let mut enemy_skills = None;
     if let Some(e_entity) = enemy_team.0.active_combatant() {
-        if let Ok(skills) = skill_query.get(e_entity) {
-            enemy_skills = Some(skills.0);
+        if let Ok((skills, count)) = skill_query.get(e_entity) {
+            enemy_skills = Some((skills.0, count.0));
         }
     }
 
@@ -124,44 +124,68 @@ pub(crate) fn update_battle_text_system(
             text.0 = enemy_line.clone();
             continue;
         }
-        if let (Some(button), Some(skills)) = (skill_button_text, player_skills) {
-            let skill_id = skills[button.index];
-            text.0 = format!(
-                "{}号: {}",
-                button.index + 1,
-                super::super::helpers::skill_name(skill_id, &skill_db)
-            );
+        if let (Some(button), Some((skills, count))) = (skill_button_text, player_skills) {
+            if button.index >= count {
+                text.0 = format!("{}号: 未配置", button.index + 1);
+            } else {
+                let skill_id = skills[button.index];
+                text.0 = format!(
+                    "{}号: {}",
+                    button.index + 1,
+                    super::super::helpers::skill_name(skill_id, &skill_db)
+                );
+            }
             continue;
         }
-        if let (Some(meta), Some(skills)) = (skill_button_meta_text, player_skills) {
-            let skill_id = skills[meta.index];
-            text.0 = format!(
-                "{} AP消耗：{}",
-                super::super::helpers::skill_meta(skill_id, &skill_db),
-                super::super::helpers::monster_skill_ap_cost_ui(meta.index)
-            );
+        if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, player_skills) {
+            if meta.index >= count {
+                text.0 = "AP消耗：--".to_string();
+            } else {
+                let skill_id = skills[meta.index];
+                text.0 = format!(
+                    "{} AP消耗：{}",
+                    super::super::helpers::skill_meta(skill_id, &skill_db),
+                    super::super::helpers::monster_skill_ap_cost_ui(meta.index)
+                );
+            }
             continue;
         }
-        if let (Some(icon), Some(_skills)) = (skill_icon_text, player_skills) {
-            text.0 = (icon.index + 1).to_string();
+        if let (Some(icon), Some((_skills, count))) = (skill_icon_text, player_skills) {
+            text.0 = if icon.index >= count {
+                "-".to_string()
+            } else {
+                (icon.index + 1).to_string()
+            };
             continue;
         }
-        if let (Some(button), Some(skills)) = (enemy_skill_text, enemy_skills) {
-            let skill_id = skills[button.index];
-            text.0 = format!(
-                "{}号: {}",
-                button.index + 1,
-                super::super::helpers::skill_name(skill_id, &skill_db)
-            );
+        if let (Some(button), Some((skills, count))) = (enemy_skill_text, enemy_skills) {
+            if button.index >= count {
+                text.0 = format!("{}号: 未配置", button.index + 1);
+            } else {
+                let skill_id = skills[button.index];
+                text.0 = format!(
+                    "{}号: {}",
+                    button.index + 1,
+                    super::super::helpers::skill_name(skill_id, &skill_db)
+                );
+            }
             continue;
         }
-        if let (Some(meta), Some(skills)) = (enemy_skill_meta, enemy_skills) {
-            let skill_id = skills[meta.index];
-            text.0 = super::super::helpers::skill_meta(skill_id, &skill_db);
+        if let (Some(meta), Some((skills, count))) = (enemy_skill_meta, enemy_skills) {
+            if meta.index >= count {
+                text.0 = "类型：--".to_string();
+            } else {
+                let skill_id = skills[meta.index];
+                text.0 = super::super::helpers::skill_meta(skill_id, &skill_db);
+            }
             continue;
         }
-        if let (Some(icon), Some(_skills)) = (enemy_skill_icon, enemy_skills) {
-            text.0 = (icon.index + 1).to_string();
+        if let (Some(icon), Some((_skills, count))) = (enemy_skill_icon, enemy_skills) {
+            text.0 = if icon.index >= count {
+                "-".to_string()
+            } else {
+                (icon.index + 1).to_string()
+            };
         }
     }
 }

@@ -206,13 +206,70 @@ pub struct MonsterPrototype {
     pub name: String,
     pub element: ElementType,
     pub stats: StatsData,
-    pub skills: [SkillId; 4],
+    pub skills: Vec<SkillId>,
+}
+
+fn default_max_team_size() -> usize {
+    3
+}
+
+fn default_cards_per_round() -> usize {
+    5
+}
+
+fn default_ap_per_round() -> i32 {
+    6
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BattleRulesConfig {
+    #[serde(default = "default_max_team_size")]
+    pub max_team_size: usize,
+    #[serde(default = "default_cards_per_round")]
+    pub cards_per_round: usize,
+    #[serde(default = "default_ap_per_round")]
+    pub ap_per_round: i32,
+}
+
+impl Default for BattleRulesConfig {
+    fn default() -> Self {
+        Self {
+            max_team_size: default_max_team_size(),
+            cards_per_round: default_cards_per_round(),
+            ap_per_round: default_ap_per_round(),
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct BattleRules {
+    pub max_team_size: usize,
+    pub cards_per_round: usize,
+    pub ap_per_round: i32,
+}
+
+impl BattleRules {
+    pub fn from_config(config: &BattleRulesConfig) -> Self {
+        Self {
+            max_team_size: config.max_team_size,
+            cards_per_round: config.cards_per_round,
+            ap_per_round: config.ap_per_round,
+        }
+    }
+}
+
+impl Default for BattleRules {
+    fn default() -> Self {
+        Self::from_config(&BattleRulesConfig::default())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct BattleConfig {
     #[serde(default)]
     element_matrix: ElementMatrixConfig,
+    #[serde(default)]
+    rules: BattleRulesConfig,
     skills: Vec<SkillDef>,
     monsters: Vec<MonsterPrototype>,
     cards: Vec<CardDef>,
@@ -267,6 +324,7 @@ fn load_battle_data(mut commands: Commands) {
             });
             commands.insert_resource(MonsterPool { monsters: vec![] });
             commands.insert_resource(CardDeck::default());
+            commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
             });
@@ -283,6 +341,7 @@ fn load_battle_data(mut commands: Commands) {
             });
             commands.insert_resource(MonsterPool { monsters: vec![] });
             commands.insert_resource(CardDeck::default());
+            commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
             });
@@ -298,11 +357,14 @@ fn load_battle_data(mut commands: Commands) {
         });
         commands.insert_resource(MonsterPool { monsters: vec![] });
         commands.insert_resource(CardDeck::default());
+        commands.insert_resource(BattleRules::default());
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
         });
         return;
     }
+
+    let rules = BattleRules::from_config(&config.rules);
 
     let mut skills = HashMap::new();
     for skill in config.skills {
@@ -326,6 +388,7 @@ fn load_battle_data(mut commands: Commands) {
         monsters: config.monsters,
     });
     commands.insert_resource(CardDeck(config.deck));
+    commands.insert_resource(rules);
     commands.insert_resource(BattleDataStatus::default());
 }
 
@@ -337,6 +400,28 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
         return Err("monsters 不能为空".to_string());
     }
 
+    let rules = BattleRules::from_config(&config.rules);
+
+    if !(1..=3).contains(&rules.max_team_size) {
+        return Err(format!(
+            "rules.max_team_size 必须在 1..=3 之间，当前为 {}",
+            rules.max_team_size
+        ));
+    }
+    if rules.cards_per_round == 0 {
+        return Err("rules.cards_per_round 必须 >= 1".to_string());
+    }
+    if rules.ap_per_round < 0 {
+        return Err("rules.ap_per_round 必须 >= 0".to_string());
+    }
+
+    if config.monsters.len() < rules.max_team_size {
+        return Err(format!(
+            "monsters 数量不足：当前 {}，至少需要 {}（max_team_size）",
+            config.monsters.len(), rules.max_team_size
+        ));
+    }
+
     let mut skill_ids = HashSet::new();
     for skill in &config.skills {
         if !skill_ids.insert(skill.id) {
@@ -345,12 +430,17 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     }
 
     for mon in &config.monsters {
-        for sid in mon.skills {
+        if mon.skills.is_empty() || mon.skills.len() > 4 {
+            return Err(format!(
+                "角色 {} 技能数量必须在 1..=4，当前为 {}",
+                mon.name,
+                mon.skills.len()
+            ));
+        }
+
+        for &sid in &mon.skills {
             if !skill_ids.contains(&sid) {
-                return Err(format!(
-                    "角色 {} 使用了未定义技能 {:?}",
-                    mon.name, sid
-                ));
+                return Err(format!("角色 {} 使用了未定义技能 {:?}", mon.name, sid));
             }
         }
     }

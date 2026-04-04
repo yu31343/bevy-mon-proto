@@ -40,7 +40,7 @@ pub(crate) fn update_player_hand_ui_system(
 
     for (mut text, is_hint, hotkey, name, cost, desc) in &mut card_text_q {
         if is_hint.is_some() {
-            text.0 = "操作提示：按 1-4 使用精灵技能；按 5/6/7 切换我方队伍1/2/3；手牌热键 Z/X/C/V/B 首按选中/再按出牌；F 弃选中牌换 AP；点击与快捷键可交叉使用；按 E 结束回合；按 R 重新开始"
+            text.0 = "操作提示：按 1-4 使用精灵技能（未配置槽位无效）；按 5/6/7 切换我方队伍；手牌热键 Z/X/C/V/B 首按选中/再按出牌；F 弃选中牌换 AP；点击与快捷键可交叉使用；按 E 结束回合；按 R 重新开始"
                 .to_string();
             continue;
         }

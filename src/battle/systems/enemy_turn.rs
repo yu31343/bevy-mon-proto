@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, Shield, Side, SkillList, Stats, TurnContext,
+        InBattle, PendingBoosts, Shield, Side, SkillCount, SkillList, Stats, TurnContext,
     },
     data::{BattleDbs, CardEffect},
     game_state::{BattlePhase, GameState},
@@ -32,6 +32,7 @@ pub fn enemy_turn_ai_system(
             &Combatant,
             &mut Stats,
             &SkillList,
+            &SkillCount,
             &mut Shield,
             &mut ElementAura,
             &Name,
@@ -86,11 +87,11 @@ pub fn enemy_turn_ai_system(
     while action_points.enemy > 0 {
         let should_go_check_end = exec_query
             .get(p_entity)
-            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
             .unwrap_or(false)
             || exec_query
                 .get(e_entity)
-                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
@@ -102,8 +103,17 @@ pub fn enemy_turn_ai_system(
 
         let Ok(
             [
-                (_, _e_combatant, mut e_stats_m, e_skills_m, mut e_shield_m, _e_aura_m, _),
-                (_, p_combatant, mut p_stats_m, _, mut p_shield_m, mut p_aura_m, _),
+                (
+                    _,
+                    _e_combatant,
+                    mut e_stats_m,
+                    e_skills_m,
+                    e_skill_count_m,
+                    mut e_shield_m,
+                    _e_aura_m,
+                    _,
+                ),
+                (_, p_combatant, mut p_stats_m, _, _, mut p_shield_m, mut p_aura_m, _),
             ],
         ) = exec_query.get_many_mut([e_entity, p_entity])
         else {
@@ -115,6 +125,7 @@ pub fn enemy_turn_ai_system(
         let e_max_hp = e_stats_m.max_hp;
         let e_shield_value = e_shield_m.0;
         let e_skills_arr = e_skills_m.0;
+        let e_skill_count = e_skill_count_m.0;
 
         let enemy_hp_pct = if e_max_hp > 0 {
             (e_hp.max(0) * 100) / e_max_hp
@@ -125,8 +136,8 @@ pub fn enemy_turn_ai_system(
         // 先决定是否打牌：优先补“对接下一次技能”的 PendingBoost。
         let mut played_card = false;
         if pending_boosts.enemy.next_attack_bonus == 0 && action_points.enemy >= 2 {
-            let can_attack0 = action_points.enemy >= monster_skill_ap_cost(0);
-            let can_attack1 = action_points.enemy >= monster_skill_ap_cost(1);
+            let can_attack0 = e_skill_count > 0 && action_points.enemy >= monster_skill_ap_cost(0);
+            let can_attack1 = e_skill_count > 1 && action_points.enemy >= monster_skill_ap_cost(1);
             if can_attack0 || can_attack1 {
                 if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
                     dbs.cards.get(cid).is_some_and(|c| {
@@ -154,6 +165,7 @@ pub fn enemy_turn_ai_system(
             && pending_boosts.enemy.next_heal_bonus == 0
             && enemy_hp_pct < 40
             && action_points.enemy >= 2
+            && e_skill_count > 3
             && action_points.enemy >= monster_skill_ap_cost(3)
         {
             if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
@@ -180,6 +192,7 @@ pub fn enemy_turn_ai_system(
         if !played_card
             && pending_boosts.enemy.next_shield_bonus == 0
             && action_points.enemy >= 2
+            && e_skill_count > 2
             && action_points.enemy >= monster_skill_ap_cost(2)
         {
             if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
@@ -211,13 +224,16 @@ pub fn enemy_turn_ai_system(
         // 否则优先使用精灵技能（根据 HP 简单选择）。
         let mut chosen_slot: Option<usize> = None;
 
-        if enemy_hp_pct < 40 && action_points.enemy >= monster_skill_ap_cost(3) {
+        if e_skill_count > 3 && enemy_hp_pct < 40 && action_points.enemy >= monster_skill_ap_cost(3) {
             chosen_slot = Some(3);
-        } else if action_points.enemy >= monster_skill_ap_cost(2) && e_shield_value <= 0 {
+        } else if e_skill_count > 2
+            && action_points.enemy >= monster_skill_ap_cost(2)
+            && e_shield_value <= 0
+        {
             chosen_slot = Some(2);
-        } else if action_points.enemy >= monster_skill_ap_cost(1) {
+        } else if e_skill_count > 1 && action_points.enemy >= monster_skill_ap_cost(1) {
             chosen_slot = Some(1);
-        } else if action_points.enemy >= monster_skill_ap_cost(0) {
+        } else if e_skill_count > 0 && action_points.enemy >= monster_skill_ap_cost(0) {
             chosen_slot = Some(0);
         }
 
@@ -259,11 +275,11 @@ pub fn enemy_turn_ai_system(
 
             let should_go_check_end = exec_query
                 .get(p_entity)
-                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false)
                 || exec_query
                     .get(e_entity)
-                    .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                    .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                     .unwrap_or(false);
             if should_go_check_end {
                 turn_ctx.enemy_ended = true;
@@ -295,11 +311,11 @@ pub fn enemy_turn_ai_system(
 
         let should_go_check_end = exec_query
             .get(p_entity)
-            .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
             .unwrap_or(false)
             || exec_query
                 .get(e_entity)
-                .map(|(_, _, s, _, _, _, _)| s.hp <= 0)
+                .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
             turn_ctx.enemy_ended = true;
