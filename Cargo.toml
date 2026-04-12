@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = {version = "0.18.1", features = ["dynamic_linking"]}
-ron = "0.11.0"
+ron = "0.12.1"
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8"
 

@@ -353,7 +353,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "rand 0.8.5",
- "ron 0.11.0",
+ "ron",
  "serde",
 ]
 
@@ -403,7 +403,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "either",
  "petgraph",
- "ron 0.12.0",
+ "ron",
  "serde",
  "smallvec",
  "thiserror 2.0.18",
@@ -500,7 +500,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "js-sys",
- "ron 0.12.0",
+ "ron",
  "serde",
  "stackfuture",
  "thiserror 2.0.18",
@@ -1326,7 +1326,7 @@ dependencies = [
  "bevy_transform",
  "bevy_utils",
  "derive_more",
- "ron 0.12.0",
+ "ron",
  "serde",
  "thiserror 2.0.18",
  "uuid",
@@ -4217,22 +4217,9 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db09040cc89e461f1a265139777a2bde7f8d8c67c4936f700c63ce3e2904d468"
-dependencies = [
- "base64",
- "bitflags 2.11.0",
- "serde",
- "serde_derive",
- "unicode-ident",
-]
-
-[[package]]
-name = "ron"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd490c5b18261893f14449cbd28cb9c0b637aebf161cd77900bfdedaff21ec32"
+checksum = "4147b952f3f819eca0e99527022f7d6a8d05f111aeb0a62960c74eb283bec8fc"
 dependencies = [
  "bitflags 2.11.0",
  "once_cell",

@@ -5,8 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run (dev, with dynamic linking — exe is NOT standalone)
-cargo run
+# Fast compile check
+cargo check
+
+# Format code
+cargo fmt --all
+
+# Lint
+cargo clippy --all-targets -- -D warnings
 
 # Run tests
 cargo test
@@ -14,61 +20,73 @@ cargo test
 # Run a single test
 cargo test <test_name>
 
-# Build standalone release executable (remove dynamic_linking from Cargo.toml first)
+# Run the game in dev mode
+cargo run
+
+# Build a standalone release executable
 cargo build --release
 ```
 
-> `dynamic_linking` is enabled by default for fast iteration. The compiled exe depends on Bevy's shared library and cannot run standalone. Remove the feature from `Cargo.toml` before shipping.
+> `bevy` uses the `dynamic_linking` feature by default for faster iteration. `cargo run` works in that mode, but the built executable is not standalone. Before shipping a standalone release, remove `dynamic_linking` from `Cargo.toml`, then run `cargo build --release`.
 
 ## Architecture
 
-The app is assembled in `src/main.rs` from three plugins, with no logic in `main()` itself:
+`src/main.rs` only assembles the app: it initializes `GameState` and `BattlePhase`, then registers four plugins in order: `DataPlugin`, `UiPlugin`, `TeamSelectionPlugin`, and `BattlePlugin`.
 
-| Plugin | Location | Role |
-|---|---|---|
-| `DataPlugin` | `src/data/mod.rs` | Loads `assets/data/battle_data.ron` at startup, inserts `SkillDb`, `CardDb`, `CardDeck`, `TeamSetup` resources |
-| `BattlePlugin` | `src/battle/` | All battle logic, state transitions, AI |
-| `UiPlugin` | `src/ui/` | Rendering, visual effects |
+### State flow
 
-### State Machine
+The game loop is driven by one top-level state and one nested battle state:
 
-Two nested Bevy `States` drive the entire game loop:
-
-```
-GameState::Battle → BattlePhase::{Init → RoundStart → PlayerTurn → EnemyTurn → CheckEnd → RoundStart…}
-GameState::Result  (shows outcome, R key restarts)
+```text
+GameState::TeamSelection
+  -> GameState::Battle with BattlePhase::Init
+  -> RoundStart -> PlayerTurn -> EnemyTurn -> CheckEnd -> RoundStart ...
+  -> GameState::Result
 ```
 
-Each `BattlePhase` variant has a dedicated system in `src/battle/systems.rs` gated with `run_if(in_state(...))`.
+`R` on the result screen clears the previous team selection and returns to `GameState::TeamSelection`.
 
-### Battle Module (`src/battle/`)
+### Data and setup flow
 
-- **`components.rs`**: All ECS types — `Combatant`, `Stats` (hp/atk/def/spd), `SkillList` (4 fixed slots), `Shield`, `ElementAura`, `Side` (Player/Enemy), plus resources `TurnContext`, `ActionPoints`, `Hand`, `PendingBoosts`, `BattleLog`, `BattleResult`, `TurnCount`, `PlayerTeam`/`EnemyTeam`.
-- **`events.rs`**: `BattleEvent` message enum — emitted by logic systems, consumed by `consume_battle_events_system` for logging and UI.
-- **`systems.rs`**: One system per phase. `init_battle_system` despawns all `InBattle`-marked entities and rebuilds them from `TeamSetup`. Use the `InBattle` marker component on any entity that should be cleaned up on restart.
+- `src/data/mod.rs` loads and validates `assets/data/battle_data.ron` at startup.
+- That RON file is the gameplay source of truth: it defines battle rules, the element matrix, skills, monster prototypes, card definitions, and deck composition.
+- Startup inserts `BattleDbs`, `MonsterPool`, `CardDeck`, `BattleRules`, and `BattleDataStatus` resources. `BattleDbs` intentionally bundles skills/cards/elements into one resource to stay under Bevy's system-parameter limit.
+- `TeamSelectionPlugin` uses `MonsterPool` plus `BattleRules.max_team_size` to build the selection UI. Once confirmed, it writes a `TeamSelections` resource and transitions into battle.
+- `init_battle_system` waits for `TeamSelections`, despawns all `InBattle` entities from any prior run, resets per-battle resources, and spawns the selected monsters into `PlayerTeam` and `EnemyTeam`.
 
-### Data Layer (`src/data/mod.rs`)
+### Battle flow
 
-- Game data is defined in `assets/data/battle_data.ron` (skills, player/enemy teams, card definitions).
-- `ElementMatrix::get_effectiveness(attacker, defender) -> f32` encodes the 7-element type chart (2.0/1.0/0.5). The matrix is asymmetric — check both directions when adding new relations.
-- Card system: players draw from `CardDeck` each round, spend `ActionPoints` (AP) to play `CardEffect`s (AP gain, next-attack/shield/heal boost).
-- `BattleDataStatus` tracks load errors; `init_battle_system` aborts to `GameState::Result` if data is invalid.
+Battle systems are split across `src/battle/systems/` by phase rather than living in one file:
 
-### UI Module (`src/ui/`)
+- `init.rs`: battle bootstrap and failure handling.
+- `round.rs`: round-start bookkeeping.
+- `player_turn.rs`: keyboard-driven player actions plus execution of UI-written intents.
+- `enemy_turn.rs`: AI decisions and pacing.
+- `end.rs`: fainting, auto-switching, result transitions.
+- `events.rs`: converts `BattleEvent` messages into log lines.
+- `combat.rs`: shared combat resolution helpers.
 
-- Entry point is `src/ui/mod.rs`; battle UI lives under `src/ui/battle/`.
-- `layout.rs` spawns the entire UI tree once at startup. Component markers in `components.rs` (e.g. `PlayerHpBar`, `SkillButton`, `HandCardButton`) let update systems query specific nodes without re-traversal.
-- `fx.rs` handles all timed visual effects (damage numbers, screen flash, button flash, discard-armed amber) via their own marker components and despawn timers.
-- `theme.rs` centralises all colours and shadow values — edit there, not inline.
-- `src/ui/battle/systems/` contains one file per concern (buttons, hand, roster, bars, text, visuals) registered as `Update` systems.
-- Font loading tries five Windows CJK font paths in order (msyh → simhei → simsun → simkai) and falls back to Bevy's built-in font. Porting to non-Windows requires updating these paths in `layout.rs`.
+Important runtime rules:
 
-### Key Conventions
+- `round_start_system` redraws both hands every round from `CardDeck`, adds `BattleRules.ap_per_round` on top of any leftover AP, clears `PendingBoosts`, and returns control to the player first.
+- `TurnContext` and `SelectedCard` are the glue between UI interactions and battle resolution. UI button systems usually write intent first; `player_turn_input_system` performs the actual skill/card effects.
+- Skill AP costs are hard-coded by slot in `src/battle/systems/combat.rs`: slot 0 costs 2 AP, slot 1 costs 3 AP, slots 2-3 cost 1 AP. Team switch costs 1 AP, and discarding a card grants 1 AP.
+- `PendingBoosts` stores card-granted bonuses for the next matching attack/heal/shield action and is consumed on use.
+- `check_end_system` does not immediately declare defeat when the active combatant faints; it first auto-switches to the next living member, then only moves to `GameState::Result` if a side has no living members left.
+- Enemy AI uses a local timer inside `enemy_turn_ai_system` to create 1.5-2.5 second pauses between actions, so that system must keep running in `Update` rather than `OnEnter`.
 
-- All game data goes in `assets/data/battle_data.ron`. Card *type* definitions live in `src/data/cards.rs`; the deck composition (which cards, how many) is configured in the RON file.
-- `BattleDbs` is a combined resource (`SkillDb` + `CardDb` + `ElementDb`) that exists solely to stay under Bevy's 16-system-parameter limit — add new shared DB resources there rather than as separate parameters.
-- Battle events (`BattleEvent`) are the contract between logic and UI — add new event variants there rather than coupling systems directly.
-- `PendingBoosts` accumulates card-granted bonuses that apply to the next action; it resets each time a boost is consumed.
-- `SelectedCard` resource tracks the two-step card-play flow (select → confirm); clear it whenever a card play is cancelled or completed.
-- AP costs: skills cost 2 AP (slot 0), 3 AP (slot 1), or 1 AP (slots 2–3); cards cost 1–2 AP; discard grants +1 AP; team switch costs 1 AP.
-- Enemy AI uses real-time delays (1.5–2.5 s between actions via `Timer`) — keep `enemy_turn_ai_system` running in `Update` (not `OnEnter`) so the timer ticks.
+### Combat model
+
+- Battle entities are ordinary ECS entities marked with `InBattle` and composed from `Combatant`, `Stats`, `SkillList`, `SkillCount`, `Shield`, and `ElementAura` in `src/battle/components.rs`.
+- `BattleEvent` is the contract between battle logic and presentation. New combat feedback should generally become a new event rather than direct UI mutation from battle systems.
+- Element attacks first evaluate effectiveness against the target's current aura (`ElementAura`) or, if none is attached, the target's base element.
+- If a shield absorbs any amount of an elemental hit, the game recomputes damage against the target's base element only and does not apply a new aura. If the shield absorbs nothing, the incoming element replaces the target aura.
+- Some combatants start battle with an initial aura matching their element; that is assigned during `init_battle_system`, not in the data file.
+
+### UI structure
+
+- `src/ui/battle/layout.rs` spawns the full battle UI tree once. Update systems under `src/ui/battle/systems/` mutate specific nodes via marker components rather than rebuilding the tree.
+- `src/ui/battle/fx.rs` owns timed visual feedback such as flashes and other short-lived battle effects.
+- `src/ui/battle/plugin.rs` is currently a bridge: it still delegates registration to `crate::ui::register_legacy_battle_ui(app)`, so system ordering changes often need to be made in `src/ui/mod.rs` as well.
+- Team selection UI is separate from battle UI and lives under `src/team_selection/`.
+- Font loading in `src/ui/battle/layout.rs` tries several Windows CJK fonts before falling back to Bevy's default font; cross-platform font adjustments should start there.
