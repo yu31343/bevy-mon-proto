@@ -127,6 +127,7 @@
             effect: NextHealBoost(amount: 5),
         ),
     ],
+    //卡组
     deck: [
         GainAp,
         GainAp,

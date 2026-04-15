@@ -7,11 +7,14 @@ pub(crate) struct UiTheme {
     pub top_bar_start: Color,
     pub top_bar_end: Color,
     pub panel: Color,
+    pub panel_inner: Color,
     pub button_idle: Color,
     pub button_hover: Color,
     pub button_pressed: Color,
     pub enemy_card_bg: Color,
     pub enemy_card_border: Color,
+    pub card_bg: Color,
+    pub card_border: Color,
     pub hp_track: Color,
     pub hp_fill_player: Color,
     pub hp_fill_enemy: Color,
@@ -26,35 +29,52 @@ pub(crate) struct UiTheme {
     pub radius_panel: Val,
     pub radius_button: Val,
     pub radius_hp: Val,
+    pub radius_card: Val,
+    pub accent_player: Color,
+    pub accent_enemy: Color,
+    pub text_primary: Color,
+    pub text_secondary: Color,
+    pub text_muted: Color,
+    pub divider: Color,
 }
 
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            bg_top: Color::srgb(0.09, 0.12, 0.18),
-            bg_bottom: Color::srgb(0.05, 0.07, 0.11),
-            top_bar_start: Color::srgba(0.14, 0.26, 0.38, 0.92),
-            top_bar_end: Color::srgba(0.10, 0.18, 0.28, 0.88),
-            panel: Color::srgb(0.12, 0.16, 0.22),
-            button_idle: Color::srgb(0.18, 0.26, 0.34),
-            button_hover: Color::srgb(0.23, 0.33, 0.43),
-            button_pressed: Color::srgb(0.12, 0.22, 0.30),
-            enemy_card_bg: Color::srgb(0.14, 0.20, 0.28),
-            enemy_card_border: Color::srgba(0.5, 0.4, 0.45, 0.55),
-            hp_track: Color::srgb(0.16, 0.16, 0.19),
-            hp_fill_player: Color::srgb(0.17, 0.73, 0.45),
-            hp_fill_enemy: Color::srgb(0.89, 0.31, 0.33),
-            shield_track: Color::srgb(0.14, 0.18, 0.22),
-            shield_fill_player: Color::srgb(0.35, 0.75, 0.95),
-            shield_fill_enemy: Color::srgb(0.55, 0.45, 0.95),
-            border_panel: Color::srgba(0.42, 0.58, 0.72, 0.45),
-            border_top_bar: Color::srgba(0.55, 0.72, 0.88, 0.42),
-            button_border_idle: Color::srgba(0.45, 0.58, 0.70, 0.55),
-            button_border_hover: Color::srgba(0.58, 0.72, 0.88, 0.65),
-            button_border_pressed: Color::srgba(0.32, 0.44, 0.55, 0.55),
-            radius_panel: Val::Px(10.0),
-            radius_button: Val::Px(8.0),
-            radius_hp: Val::Px(7.0),
+            bg_top: Color::srgb(0.06, 0.08, 0.14),
+            bg_bottom: Color::srgb(0.02, 0.03, 0.08),
+            top_bar_start: Color::srgba(0.07, 0.14, 0.26, 0.96),
+            top_bar_end: Color::srgba(0.04, 0.08, 0.16, 0.92),
+            panel: Color::srgb(0.07, 0.10, 0.17),
+            panel_inner: Color::srgba(0.04, 0.06, 0.10, 0.60),
+            button_idle: Color::srgb(0.10, 0.17, 0.27),
+            button_hover: Color::srgb(0.15, 0.25, 0.38),
+            button_pressed: Color::srgb(0.07, 0.12, 0.20),
+            enemy_card_bg: Color::srgb(0.20, 0.09, 0.12),
+            enemy_card_border: Color::srgba(0.75, 0.28, 0.35, 0.70),
+            card_bg: Color::srgb(0.08, 0.14, 0.24),
+            card_border: Color::srgba(0.30, 0.55, 0.82, 0.60),
+            hp_track: Color::srgb(0.06, 0.08, 0.12),
+            hp_fill_player: Color::srgb(0.06, 0.78, 0.52),
+            hp_fill_enemy: Color::srgb(0.92, 0.18, 0.22),
+            shield_track: Color::srgb(0.05, 0.08, 0.12),
+            shield_fill_player: Color::srgb(0.16, 0.80, 0.96),
+            shield_fill_enemy: Color::srgb(0.64, 0.34, 0.96),
+            border_panel: Color::srgba(0.25, 0.48, 0.75, 0.50),
+            border_top_bar: Color::srgba(0.38, 0.65, 0.92, 0.45),
+            button_border_idle: Color::srgba(0.28, 0.50, 0.76, 0.60),
+            button_border_hover: Color::srgba(0.45, 0.72, 0.96, 0.80),
+            button_border_pressed: Color::srgba(0.18, 0.36, 0.55, 0.65),
+            radius_panel: Val::Px(18.0),
+            radius_button: Val::Px(12.0),
+            radius_hp: Val::Px(10.0),
+            radius_card: Val::Px(14.0),
+            accent_player: Color::srgb(0.30, 0.75, 1.0),
+            accent_enemy: Color::srgb(1.0, 0.45, 0.50),
+            text_primary: Color::srgb(0.95, 0.97, 1.0),
+            text_secondary: Color::srgb(0.72, 0.84, 0.95),
+            text_muted: Color::srgb(0.50, 0.62, 0.78),
+            divider: Color::srgba(0.25, 0.45, 0.70, 0.30),
         }
     }
 }
@@ -76,36 +96,45 @@ impl UiTheme {
 
     pub fn panel_shadow(&self) -> BoxShadow {
         BoxShadow::new(
-            Color::srgba(0.0, 0.0, 0.0, 0.48),
+            Color::srgba(0.0, 0.0, 0.0, 0.60),
             Val::Px(0.0),
-            Val::Px(5.0),
+            Val::Px(10.0),
             Val::Px(0.0),
-            Val::Px(14.0),
+            Val::Px(24.0),
         )
     }
 
     pub fn button_shadow(&self) -> BoxShadow {
         BoxShadow::new(
-            Color::srgba(0.0, 0.0, 0.0, 0.38),
+            Color::srgba(0.0, 0.0, 0.0, 0.40),
             Val::Px(0.0),
-            Val::Px(3.0),
+            Val::Px(4.0),
             Val::Px(0.0),
-            Val::Px(10.0),
+            Val::Px(12.0),
+        )
+    }
+
+    pub fn card_shadow(&self) -> BoxShadow {
+        BoxShadow::new(
+            Color::srgba(0.0, 0.0, 0.0, 0.55),
+            Val::Px(0.0),
+            Val::Px(6.0),
+            Val::Px(0.0),
+            Val::Px(18.0),
         )
     }
 
     pub fn title_text_shadow(&self) -> TextShadow {
         TextShadow {
             offset: Vec2::new(1.5, 1.5),
-            color: Color::srgba(0.0, 0.0, 0.0, 0.72),
+            color: Color::srgba(0.0, 0.0, 0.0, 0.75),
         }
     }
 
     pub fn result_text_shadow(&self) -> TextShadow {
         TextShadow {
-            offset: Vec2::new(2.0, 2.0),
-            color: Color::srgba(0.0, 0.0, 0.0, 0.78),
+            offset: Vec2::new(3.0, 3.0),
+            color: Color::srgba(0.0, 0.0, 0.0, 0.85),
         }
     }
 }
-

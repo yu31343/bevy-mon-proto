@@ -2,11 +2,9 @@ use bevy::prelude::*;
 
 use crate::battle::Side;
 
-/// 根画布（飘字与闪屏的父节点）。
 #[derive(Component)]
 pub(crate) struct BattleUiRoot;
 
-/// 技能格所属阵营与槽位（玩家按钮与敌方卡共用）。
 #[derive(Component, Clone, Copy)]
 pub(crate) struct SkillSlotId {
     pub side: Side,
@@ -61,6 +59,12 @@ pub(crate) struct DiscardButton;
 
 #[derive(Component)]
 pub(crate) struct EndTurnButton;
+
+#[derive(Component)]
+pub(crate) struct SwitchMonsterButton;
+
+#[derive(Component)]
+pub(crate) struct SwitchCancelButton;
 
 #[derive(Component)]
 pub(crate) struct TeamMemberButton {
@@ -167,3 +171,23 @@ pub(crate) struct PlayerShieldBarFill;
 #[derive(Component)]
 pub(crate) struct EnemyShieldBarFill;
 
+#[derive(Component)]
+pub(crate) struct SwitchOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct SkillPanelRoot;
+
+#[derive(Component)]
+pub(crate) struct HandCardsRoot;
+
+#[derive(Component)]
+pub(crate) struct PlayerInfoPanel;
+
+#[derive(Component)]
+pub(crate) struct EnemyInfoPanel;
+
+#[derive(Component)]
+pub(crate) struct PlayerNameText;
+
+#[derive(Component)]
+pub(crate) struct EnemyNameText;
