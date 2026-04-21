@@ -1,3 +1,5 @@
+//注意发布最终独立exe时要将读取到的数据嵌入可执行文件中
+
 (
     // 元素克制矩阵：定义各元素之间的伤害倍率
     // 克制=2.0，微弱=0.5，未定义的组合默认为1.0
@@ -150,19 +152,19 @@
         ),
         (
             id: NextAttackBoost,
-            name: "猛攻许可",
+            name: "火力全开",
             cost_ap: 2,
             effect: NextAttackBoost(amount: 5),
         ),
         (
             id: NextShieldBoost,
-            name: "守备许可",
+            name: "坚如磐石",
             cost_ap: 2,
             effect: NextShieldBoost(amount: 5),
         ),
         (
             id: NextHealBoost,
-            name: "治疗许可",
+            name: "良药苦口",
             cost_ap: 2,
             effect: NextHealBoost(amount: 5),
         ),
