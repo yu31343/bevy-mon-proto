@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use std::fs;
 
 use super::{
     components::*,
@@ -14,25 +13,12 @@ pub(crate) fn spawn_camera(mut commands: Commands) {
 }
 
 pub(crate) fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-    let candidates = [
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/msyh.ttf",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc",
-        "C:/Windows/Fonts/simkai.ttf",
-    ];
+    static EMBEDDED_UI_FONT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded_ui_font.bin"));
 
-    for path in candidates {
-        let Ok(bytes) = fs::read(path) else {
-            continue;
-        };
-        let Ok(font) = Font::try_from_bytes(bytes) else {
-            continue;
-        };
-        let handle = fonts.add(font);
-        commands.insert_resource(UiFontHandle(handle));
-        return;
-    }
+    let font = Font::try_from_bytes(EMBEDDED_UI_FONT.to_vec())
+        .expect("embedded UI font should be valid and loadable");
+    let handle = fonts.add(font);
+    commands.insert_resource(UiFontHandle(handle));
 }
 
 fn spawn_hp_bar(

@@ -2,6 +2,7 @@
 name = "bevy-mon-proto"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 bevy = {version = "0.18.1", features = ["dynamic_linking"]}
