@@ -2,10 +2,10 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SkillCount,
-        SkillList, Side, Stats, TurnContext,
+        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SelectedCard,
+        SkillCount, SkillList, Side, Stats, TurnContext,
     },
-    game_state::BattlePhase,
+    game_state::{BattlePhase, GameState},
 };
 
 use super::super::components::*;
@@ -13,71 +13,124 @@ use super::super::components::*;
 #[derive(Resource, Default)]
 pub(crate) struct SwitchOverlayOpen(pub bool);
 
+#[derive(Resource)]
+pub(crate) struct PendingSwitchOverlayToggle {
+    pub target: Option<bool>,
+    pub timer: Timer,
+}
+
+impl Default for PendingSwitchOverlayToggle {
+    fn default() -> Self {
+        let mut timer = Timer::from_seconds(0.0, TimerMode::Once);
+        timer.pause();
+        Self {
+            target: None,
+            timer,
+        }
+    }
+}
+
+fn queue_switch_overlay_toggle(
+    pending_toggle: &mut ResMut<PendingSwitchOverlayToggle>,
+    visible: bool,
+) {
+    pending_toggle.target = Some(visible);
+    pending_toggle.timer = Timer::from_seconds(0.12, TimerMode::Once);
+}
+
 pub(crate) fn button_toggle_switch_overlay_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    game_state: Res<State<GameState>>,
+    battle_phase: Res<State<BattlePhase>>,
     mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SwitchMonsterButton>)>,
     mut cancel_query: Query<&Interaction, (Changed<Interaction>, With<SwitchCancelButton>)>,
-    mut overlay_q: Query<&mut Visibility, With<SwitchOverlayRoot>>,
-    mut skill_panel_q: Query<&mut Visibility, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
-    mut hand_q: Query<&mut Visibility, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
-    mut open: ResMut<SwitchOverlayOpen>,
+    open: Res<SwitchOverlayOpen>,
+    mut pending_toggle: ResMut<PendingSwitchOverlayToggle>,
 ) {
     for interaction in &mut interaction_query {
         if *interaction == Interaction::Pressed {
-            open.0 = true;
-            for mut vis in &mut overlay_q {
-                *vis = Visibility::Visible;
-            }
-            for mut vis in &mut skill_panel_q {
-                *vis = Visibility::Hidden;
-            }
-            for mut vis in &mut hand_q {
-                *vis = Visibility::Hidden;
-            }
+            queue_switch_overlay_toggle(&mut pending_toggle, true);
             return;
         }
     }
 
     for interaction in &mut cancel_query {
         if *interaction == Interaction::Pressed {
-            open.0 = false;
-            for mut vis in &mut overlay_q {
-                *vis = Visibility::Hidden;
-            }
-            for mut vis in &mut skill_panel_q {
-                *vis = Visibility::Visible;
-            }
-            for mut vis in &mut hand_q {
-                *vis = Visibility::Visible;
-            }
+            queue_switch_overlay_toggle(&mut pending_toggle, false);
+            return;
+        }
+    }
+
+    if *game_state.get() == GameState::Battle
+        && *battle_phase.get() == BattlePhase::PlayerTurn
+        && keyboard.just_pressed(KeyCode::KeyQ)
+    {
+        queue_switch_overlay_toggle(&mut pending_toggle, !open.0);
+    }
+}
+
+pub(crate) fn close_switch_overlay_on_switch_system(
+    mut switch_events: Query<&Interaction, (Changed<Interaction>, With<TeamMemberButton>)>,
+    mut pending_toggle: ResMut<PendingSwitchOverlayToggle>,
+) {
+    for interaction in &mut switch_events {
+        if *interaction == Interaction::Pressed {
+            queue_switch_overlay_toggle(&mut pending_toggle, false);
             return;
         }
     }
 }
 
-pub(crate) fn close_switch_overlay_on_switch_system(
-    mut overlay_q: Query<&mut Visibility, With<SwitchOverlayRoot>>,
-    mut skill_panel_q: Query<&mut Visibility, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
-    mut hand_q: Query<&mut Visibility, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
+pub(crate) fn apply_pending_switch_overlay_toggle_system(
+    time: Res<Time>,
+    mut nodes: ParamSet<(
+        Query<&mut Node, With<SwitchOverlayRoot>>,
+        Query<&mut Node, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
+        Query<&mut Node, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
+    )>,
+    mut shield_tracks: Query<&mut Visibility, With<TeamMemberShieldBarTrack>>,
     mut open: ResMut<SwitchOverlayOpen>,
-    mut switch_events: Query<&Interaction, (Changed<Interaction>, With<TeamMemberButton>)>,
+    mut pending_toggle: ResMut<PendingSwitchOverlayToggle>,
 ) {
-    for interaction in &mut switch_events {
-        if *interaction == Interaction::Pressed {
-            open.0 = false;
-            for mut vis in &mut overlay_q {
-                *vis = Visibility::Hidden;
-            }
-            for mut vis in &mut skill_panel_q {
-                *vis = Visibility::Visible;
-            }
-            for mut vis in &mut hand_q {
-                *vis = Visibility::Visible;
-            }
-            return;
+    let Some(visible) = pending_toggle.target else {
+        return;
+    };
+
+    pending_toggle.timer.tick(time.delta());
+    if !pending_toggle.timer.just_finished() {
+        return;
+    }
+
+    pending_toggle.target = None;
+    open.0 = visible;
+
+    for mut node in &mut nodes.p0() {
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut node in &mut nodes.p1() {
+        node.display = if visible {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    for mut node in &mut nodes.p2() {
+        node.display = if visible {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if !visible {
+        for mut track_visibility in &mut shield_tracks {
+            *track_visibility = Visibility::Hidden;
         }
     }
 }
-use crate::battle::SelectedCard;
 
 pub(crate) fn button_select_skill_system(
     mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,

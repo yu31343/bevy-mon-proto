@@ -123,7 +123,7 @@ pub(crate) fn update_battle_text_system(
         if is_player_name.is_some() {
             if let Some(entity) = player_team.0.active_combatant() {
                 if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
-                    text.0 = format!("⚔ {}", name);
+                    text.0 = format!("我方：{}", name);
                 }
             }
             continue;
@@ -131,7 +131,7 @@ pub(crate) fn update_battle_text_system(
         if is_enemy_name.is_some() {
             if let Some(entity) = enemy_team.0.active_combatant() {
                 if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
-                    text.0 = format!("💀 {}", name);
+                    text.0 = format!("敌方：{}", name);
                 }
             }
             continue;

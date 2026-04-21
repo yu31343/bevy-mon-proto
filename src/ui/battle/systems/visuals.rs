@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use super::super::components::{DiscardButton, EndTurnButton, PlayerCardButton, SkillButton};
+use super::super::components::{
+    DiscardButton, EndTurnButton, PlayerCardButton, SkillButton, SwitchCancelButton,
+    SwitchMonsterButton, TeamMemberButton,
+};
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
 use crate::battle::SelectedCard;
@@ -20,6 +23,9 @@ pub(crate) fn button_visual_state_system(
             Without<EndTurnButton>,
             Without<DiscardButton>,
             Without<PlayerCardButton>,
+            Without<SwitchMonsterButton>,
+            Without<SwitchCancelButton>,
+            Without<TeamMemberButton>,
         ),
     >,
     mut action_buttons: Query<
@@ -30,6 +36,9 @@ pub(crate) fn button_visual_state_system(
             Without<ButtonClickFlash>,
             Without<SkillButton>,
             Without<PlayerCardButton>,
+            Without<SwitchMonsterButton>,
+            Without<SwitchCancelButton>,
+            Without<TeamMemberButton>,
         ),
     >,
     mut card_buttons: Query<
@@ -41,6 +50,25 @@ pub(crate) fn button_visual_state_system(
             Without<SkillButton>,
             Without<EndTurnButton>,
             Without<DiscardButton>,
+            Without<SwitchMonsterButton>,
+            Without<SwitchCancelButton>,
+            Without<TeamMemberButton>,
+        ),
+    >,
+    mut switch_buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            Or<(
+                With<SwitchMonsterButton>,
+                With<SwitchCancelButton>,
+                With<TeamMemberButton>,
+            )>,
+            Without<ButtonClickFlash>,
+            Without<SkillButton>,
+            Without<EndTurnButton>,
+            Without<DiscardButton>,
+            Without<PlayerCardButton>,
         ),
     >,
     theme: Res<UiTheme>,
@@ -64,6 +92,9 @@ pub(crate) fn button_visual_state_system(
         apply(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut card_buttons {
+        apply(interaction, &mut bg, &mut border, &theme);
+    }
+    for (interaction, mut bg, mut border) in &mut switch_buttons {
         apply(interaction, &mut bg, &mut border, &theme);
     }
 }

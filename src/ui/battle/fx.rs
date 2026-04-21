@@ -8,8 +8,9 @@
 use bevy::prelude::*;
 
 use crate::battle::{BattleEvent, Side};
+use crate::ui::battle::systems::SwitchOverlayOpen;
 
-use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId}, resources::UiFontHandle, theme::UiTheme};
+use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton}, resources::UiFontHandle, theme::UiTheme};
 
 /// 技能格闪白计时器组件
 /// - 与 `SkillSlotId` 组件附加在同一实体上
@@ -290,6 +291,9 @@ pub fn spawn_button_click_flash(
             Or<(
                 With<SkillButton>,
                 With<EndTurnButton>,
+                With<SwitchMonsterButton>,
+                With<SwitchCancelButton>,
+                With<TeamMemberButton>,
             )>,
         ),
     >,
@@ -309,15 +313,30 @@ pub fn spawn_button_click_flash(
 pub fn tick_button_click_flash(
     mut commands: Commands,
     time: Res<Time>,
-    mut q: Query<(Entity, &mut ButtonClickFlash, &mut BackgroundColor, &mut BorderColor)>,
+    mut q: Query<(
+        Entity,
+        &mut ButtonClickFlash,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        Option<&Interaction>,
+    )>,
     theme: Res<UiTheme>,
 ) {
-    for (entity, mut flash, mut bg, mut border) in &mut q {
+    for (entity, mut flash, mut bg, mut border, interaction) in &mut q {
         flash.0.tick(time.delta());
         if flash.0.just_finished() {
             commands.entity(entity).remove::<ButtonClickFlash>();
-            *bg = BackgroundColor(theme.button_idle);
-            *border = BorderColor::all(theme.button_border_idle);
+            let interaction = interaction.copied().unwrap_or(Interaction::None);
+            *bg = match interaction {
+                Interaction::Pressed => BackgroundColor(theme.button_pressed),
+                Interaction::Hovered => BackgroundColor(theme.button_hover),
+                Interaction::None => BackgroundColor(theme.button_idle),
+            };
+            *border = match interaction {
+                Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+                Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+                Interaction::None => BorderColor::all(theme.button_border_idle),
+            };
         }
     }
 }
@@ -333,6 +352,7 @@ pub fn tick_button_click_flash(
 /// 注意：弃牌按钮（F 键）不在此列，其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn keyboard_button_flash_system(
     keyboard: Res<ButtonInput<KeyCode>>,
+    open: Res<SwitchOverlayOpen>,
     mut commands: Commands,
     mut queries: ParamSet<(
         // p0: 技能按钮（1/2/3/4）
@@ -343,6 +363,10 @@ pub fn keyboard_button_flash_system(
         Query<(Entity, &super::components::PlayerCardButton, &mut BackgroundColor, &mut BorderColor)>,
         // p3: 队员切换按钮（5/6/7）
         Query<(Entity, &super::components::TeamMemberButton, &mut BackgroundColor, &mut BorderColor)>,
+        // p4: 换精灵按钮（Q）
+        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::SwitchMonsterButton>>,
+        // p5: 取消按钮（Q 关闭时也闪）
+        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::SwitchCancelButton>>,
     )>,
 ) {
     // 辅助宏：写颜色并 insert 计时器
@@ -414,6 +438,17 @@ pub fn keyboard_button_flash_system(
                     break;
                 }
             }
+        }
+    }
+
+    // Q → 打开/关闭换人面板
+    if keyboard.just_pressed(KeyCode::KeyQ) {
+        if open.0 {
+            if let Ok((entity, mut bg, mut border)) = queries.p5().single_mut() {
+                do_flash!(entity, bg, border);
+            }
+        } else if let Ok((entity, mut bg, mut border)) = queries.p4().single_mut() {
+            do_flash!(entity, bg, border);
         }
     }
 }

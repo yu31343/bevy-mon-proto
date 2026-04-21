@@ -134,6 +134,219 @@ fn spawn_shield_bar(
         });
 }
 
+fn spawn_small_bench_card(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    border_1: UiRect,
+    radius_button: Val,
+    title_font: TextFont,
+    meta_font: TextFont,
+    hotkey_font: TextFont,
+    index: usize,
+    side: Side,
+) {
+    let header_text = if matches!(side, Side::Player) {
+        format!("键位 {}", index + 5)
+    } else {
+        "键位 -".to_string()
+    };
+
+    let card_node = Node {
+        flex_grow: 1.0,
+        min_width: Val::Px(104.0),
+        min_height: Val::Px(82.0),
+        padding: UiRect::all(Val::Px(8.0)),
+        border: border_1,
+        border_radius: BorderRadius::all(radius_button),
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(5.0),
+        ..default()
+    };
+
+    match side {
+        Side::Player => {
+            parent
+                .spawn((
+                    card_node,
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    PlayerBenchCard { index },
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|header| {
+                        header.spawn((
+                            Text::new("待机位"),
+                            title_font.clone(),
+                            TextColor(theme.text_primary),
+                        ));
+                        header.spawn((
+                            Text::new(header_text),
+                            hotkey_font.clone(),
+                            TextColor(theme.accent_player),
+                        ));
+                    });
+                    card.spawn((
+                        Text::new("队伍"),
+                        title_font.clone(),
+                        TextColor(theme.text_secondary),
+                        PlayerBenchNameText { index },
+                    ));
+                    card.spawn((
+                        Text::new("附着: 无"),
+                        meta_font.clone(),
+                        TextColor(theme.text_muted),
+                        PlayerBenchAuraText { index },
+                    ));
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(8.0),
+                            overflow: Overflow::clip(),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(theme.hp_track),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(4.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme.hp_fill_player),
+                            PlayerBenchHpBarFill { index },
+                        ));
+                    });
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(6.0),
+                            overflow: Overflow::clip(),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            ..default()
+                        },
+                        BackgroundColor(theme.shield_track),
+                        Visibility::Hidden,
+                        PlayerBenchShieldBarTrack { index },
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme.shield_fill_player),
+                            PlayerBenchShieldBarFill { index },
+                        ));
+                    });
+                });
+        }
+        Side::Enemy => {
+            parent
+                .spawn((
+                    card_node,
+                    BackgroundColor(theme.enemy_card_bg),
+                    BorderColor::all(theme.enemy_card_border),
+                    theme.button_shadow(),
+                    EnemyBenchCard { index },
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|header| {
+                        header.spawn((
+                            Text::new("待机位"),
+                            title_font.clone(),
+                            TextColor(theme.text_primary),
+                        ));
+                        header.spawn((
+                            Text::new(header_text),
+                            hotkey_font.clone(),
+                            TextColor(theme.accent_enemy),
+                        ));
+                    });
+                    card.spawn((
+                        Text::new("队伍"),
+                        title_font.clone(),
+                        TextColor(theme.text_secondary),
+                        EnemyBenchNameText { index },
+                    ));
+                    card.spawn((
+                        Text::new("附着: 无"),
+                        meta_font.clone(),
+                        TextColor(theme.text_muted),
+                        EnemyBenchAuraText { index },
+                    ));
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(8.0),
+                            overflow: Overflow::clip(),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(theme.hp_track),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(4.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme.hp_fill_enemy),
+                            EnemyBenchHpBarFill { index },
+                        ));
+                    });
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(6.0),
+                            overflow: Overflow::clip(),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            ..default()
+                        },
+                        BackgroundColor(theme.shield_track),
+                        Visibility::Hidden,
+                        EnemyBenchShieldBarTrack { index },
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme.shield_fill_enemy),
+                            EnemyBenchShieldBarFill { index },
+                        ));
+                    });
+                });
+        }
+    }
+}
+
 fn spawn_skill_row_player(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -373,6 +586,33 @@ pub(crate) fn setup_ui_system(
                 );
             });
 
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(236.0),
+                    left: Val::Px(20.0),
+                    width: Val::Px(320.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                for idx in 0..3 {
+                    spawn_small_bench_card(
+                        row,
+                        &theme,
+                        border_1,
+                        radius_button,
+                        meta_font.clone(),
+                        small_font.clone(),
+                        small_font.clone(),
+                        idx,
+                        Side::Player,
+                    );
+                }
+            });
+
             // === Enemy Info: Top-Right (only name + HP + shield, no skills/team) ===
             root.spawn((
                 Node {
@@ -387,8 +627,8 @@ pub(crate) fn setup_ui_system(
                     border_radius: BorderRadius::all(radius_panel),
                     ..default()
                 },
-                BackgroundColor(theme.panel),
-                BorderColor::all(theme.border_panel),
+                BackgroundColor(theme.enemy_card_bg),
+                BorderColor::all(theme.enemy_card_border),
                 theme.panel_shadow(),
                 EnemyInfoPanel,
             ))
@@ -437,6 +677,33 @@ pub(crate) fn setup_ui_system(
                 );
             });
 
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(236.0),
+                    right: Val::Px(20.0),
+                    width: Val::Px(320.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                for idx in 0..3 {
+                    spawn_small_bench_card(
+                        row,
+                        &theme,
+                        border_1,
+                        radius_button,
+                        meta_font.clone(),
+                        small_font.clone(),
+                        small_font.clone(),
+                        idx,
+                        Side::Enemy,
+                    );
+                }
+            });
+
             // === Hint Text: Center ===
             root.spawn((
                 Node {
@@ -452,7 +719,7 @@ pub(crate) fn setup_ui_system(
             ))
             .with_children(|hint_area| {
                 hint_area.spawn((
-                    Text::new("操作提示：按 1-4 使用精灵技能，按 5/6/7 切换我方队伍1/2/3，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
+                    Text::new("操作提示：按 1-4 使用精灵技能，按 Q 打开/关闭换人面板，按 5/6/7 切换我方队伍1/2/3，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
                     small_font.clone(),
                     TextColor(theme.text_muted),
                     TextShadow {
@@ -669,7 +936,7 @@ pub(crate) fn setup_ui_system(
                 ))
                 .with_children(|btn| {
                     btn.spawn((
-                        Text::new("🔄 换精灵"),
+                        Text::new("换精灵（Q）"),
                         body_font.clone(),
                         TextColor(theme.accent_player),
                     ));
@@ -702,7 +969,7 @@ pub(crate) fn setup_ui_system(
                     ))
                     .with_children(|header| {
                         header.spawn((
-                            Text::new("✦ 技能"),
+                            Text::new("技能"),
                             title_font.clone(),
                             TextColor(theme.accent_player),
                             theme.title_text_shadow(),
@@ -728,6 +995,7 @@ pub(crate) fn setup_ui_system(
                     left: Val::Px(0.0),
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::FlexEnd,
                     align_items: AlignItems::Center,
@@ -735,7 +1003,6 @@ pub(crate) fn setup_ui_system(
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
-                Visibility::Hidden,
                 SwitchOverlayRoot,
             ))
             .with_children(|overlay| {
@@ -767,7 +1034,7 @@ pub(crate) fn setup_ui_system(
                     ))
                     .with_children(|header| {
                         header.spawn((
-                            Text::new("🔄 选择精灵"),
+                            Text::new("选择精灵"),
                             title_font.clone(),
                             TextColor(theme.accent_player),
                             theme.title_text_shadow(),

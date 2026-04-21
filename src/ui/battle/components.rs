@@ -97,6 +97,66 @@ pub(crate) struct TeamMemberShieldBarFill {
 }
 
 #[derive(Component)]
+pub(crate) struct PlayerBenchCard {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchNameText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchAuraText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchHpBarFill {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchShieldBarTrack {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchShieldBarFill {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchCard {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchNameText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchAuraText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchHpBarFill {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchShieldBarTrack {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchShieldBarFill {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct EnemyTeamMemberButton {
     pub index: usize,
 }
