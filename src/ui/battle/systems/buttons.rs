@@ -9,6 +9,74 @@ use crate::{
 };
 
 use super::super::components::*;
+
+#[derive(Resource, Default)]
+pub(crate) struct SwitchOverlayOpen(pub bool);
+
+pub(crate) fn button_toggle_switch_overlay_system(
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SwitchMonsterButton>)>,
+    mut cancel_query: Query<&Interaction, (Changed<Interaction>, With<SwitchCancelButton>)>,
+    mut overlay_q: Query<&mut Visibility, With<SwitchOverlayRoot>>,
+    mut skill_panel_q: Query<&mut Visibility, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
+    mut hand_q: Query<&mut Visibility, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
+    mut open: ResMut<SwitchOverlayOpen>,
+) {
+    for interaction in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            open.0 = true;
+            for mut vis in &mut overlay_q {
+                *vis = Visibility::Visible;
+            }
+            for mut vis in &mut skill_panel_q {
+                *vis = Visibility::Hidden;
+            }
+            for mut vis in &mut hand_q {
+                *vis = Visibility::Hidden;
+            }
+            return;
+        }
+    }
+
+    for interaction in &mut cancel_query {
+        if *interaction == Interaction::Pressed {
+            open.0 = false;
+            for mut vis in &mut overlay_q {
+                *vis = Visibility::Hidden;
+            }
+            for mut vis in &mut skill_panel_q {
+                *vis = Visibility::Visible;
+            }
+            for mut vis in &mut hand_q {
+                *vis = Visibility::Visible;
+            }
+            return;
+        }
+    }
+}
+
+pub(crate) fn close_switch_overlay_on_switch_system(
+    mut overlay_q: Query<&mut Visibility, With<SwitchOverlayRoot>>,
+    mut skill_panel_q: Query<&mut Visibility, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
+    mut hand_q: Query<&mut Visibility, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
+    mut open: ResMut<SwitchOverlayOpen>,
+    mut switch_events: Query<&Interaction, (Changed<Interaction>, With<TeamMemberButton>)>,
+) {
+    for interaction in &mut switch_events {
+        if *interaction == Interaction::Pressed {
+            open.0 = false;
+            for mut vis in &mut overlay_q {
+                *vis = Visibility::Hidden;
+            }
+            for mut vis in &mut skill_panel_q {
+                *vis = Visibility::Visible;
+            }
+            for mut vis in &mut hand_q {
+                *vis = Visibility::Visible;
+            }
+            return;
+        }
+    }
+}
 use crate::battle::SelectedCard;
 
 pub(crate) fn button_select_skill_system(

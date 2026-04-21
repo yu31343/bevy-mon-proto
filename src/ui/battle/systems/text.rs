@@ -50,6 +50,8 @@ pub(crate) fn update_battle_text_system(
             Option<&EnemySkillText>,
             Option<&EnemySkillMetaText>,
             Option<&EnemySkillIconText>,
+            Option<&PlayerNameText>,
+            Option<&EnemyNameText>,
         ),
         (
             Without<ActionPointsText>,
@@ -103,6 +105,8 @@ pub(crate) fn update_battle_text_system(
         enemy_skill_text,
         enemy_skill_meta,
         enemy_skill_icon,
+        is_player_name,
+        is_enemy_name,
     ) in &mut text_q
     {
         if is_result.is_some() {
@@ -114,6 +118,22 @@ pub(crate) fn update_battle_text_system(
                 "战斗阶段：{}",
                 super::super::helpers::phase_label(*battle_phase.get())
             );
+            continue;
+        }
+        if is_player_name.is_some() {
+            if let Some(entity) = player_team.0.active_combatant() {
+                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
+                    text.0 = format!("⚔ {}", name);
+                }
+            }
+            continue;
+        }
+        if is_enemy_name.is_some() {
+            if let Some(entity) = enemy_team.0.active_combatant() {
+                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
+                    text.0 = format!("💀 {}", name);
+                }
+            }
             continue;
         }
         if is_player.is_some() {

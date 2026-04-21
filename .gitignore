@@ -46,4 +46,7 @@ desktop.ini
 # 忽略日志
 *.log
 
-
+# claude plan md
+findings.md
+progress.md
+task_plan.md

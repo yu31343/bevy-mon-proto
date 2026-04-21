@@ -22,6 +22,8 @@ use battle::fx::{
     tick_button_click_flash, tick_fx_lifetimes, tick_screen_flashes, tick_skill_flash_timer,
 };
 
+use battle::systems::SwitchOverlayOpen;
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -36,7 +38,8 @@ impl Plugin for UiPlugin {
 ///
 /// 后续重构会逐步把实现迁移进 `src/ui/battle/`，此处保持行为不变。
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
-    app.add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
+    app.init_resource::<SwitchOverlayOpen>()
+        .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
         .add_systems(
@@ -49,6 +52,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 button_switch_member_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
                 button_play_card_two_step_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                button_toggle_switch_overlay_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                close_switch_overlay_on_switch_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
             ),
         );

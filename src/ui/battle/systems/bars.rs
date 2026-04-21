@@ -11,10 +11,6 @@ pub(crate) fn update_battle_bars_system(
         Query<&mut Node, With<PlayerShieldBarFill>>,
         Query<&mut Node, With<EnemyShieldBarFill>>,
     )>,
-    mut tracks: ParamSet<(
-        Query<&mut Visibility, With<PlayerShieldBarTrack>>,
-        Query<&mut Visibility, With<EnemyShieldBarTrack>>,
-    )>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
@@ -41,24 +37,6 @@ pub(crate) fn update_battle_bars_system(
     }
     if let Ok(mut node) = fills.p3().single_mut() {
         node.width = Val::Percent(enemy_shield_pct);
-    }
-
-    let player_has_shield = super::super::helpers::active_shield(&player_team.0, &combat_query) > 0;
-    let enemy_has_shield = super::super::helpers::active_shield(&enemy_team.0, &combat_query) > 0;
-
-    if let Ok(mut vis) = tracks.p0().single_mut() {
-        *vis = if player_has_shield {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-    if let Ok(mut vis) = tracks.p1().single_mut() {
-        *vis = if enemy_has_shield {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
     }
 }
 
