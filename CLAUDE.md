@@ -28,6 +28,8 @@ cargo build --release
 ```
 
 > `bevy` uses the `dynamic_linking` feature by default for faster iteration. `cargo run` works in that mode, but the built executable is not standalone. Before shipping a standalone release, remove `dynamic_linking` from `Cargo.toml`, then run `cargo build --release`.
+>
+> UI text now depends on the build script finding at least one `.ttf`, `.otf`, or `.ttc` file under `assets/fonts/`. Builds fail fast if that directory has no usable font, and the build log prints which font file was embedded.
 
 ## Architecture
 
@@ -89,4 +91,4 @@ Important runtime rules:
 - `src/ui/battle/fx.rs` owns timed visual feedback such as flashes and other short-lived battle effects.
 - `src/ui/battle/plugin.rs` is currently a bridge: it still delegates registration to `crate::ui::register_legacy_battle_ui(app)`, so system ordering changes often need to be made in `src/ui/mod.rs` as well.
 - Team selection UI is separate from battle UI and lives under `src/team_selection/`.
-- Font loading in `src/ui/battle/layout.rs` tries several Windows CJK fonts before falling back to Bevy's default font; cross-platform font adjustments should start there.
+- Battle UI font selection is no longer environment-dependent: `build.rs` scans `assets/fonts/`, picks the first supported font file in sorted order, copies it into `OUT_DIR`, and `src/ui/battle/layout.rs` loads that embedded byte blob with `include_bytes!`. If you need to change the distributed font, replace the files in `assets/fonts/` rather than editing runtime fallback logic.
