@@ -1,16 +1,90 @@
+//注意发布最终独立exe时要将读取到的数据嵌入可执行文件中
+
 (
+    // 元素克制矩阵：定义各元素之间的伤害倍率
+    // 克制=2.0，微弱=0.5，未定义的组合默认为1.0
+    element_matrix: (
+        relations: [
+            // 光/暗互克
+            (attacker: Light, defender: Dark, multiplier: 2.0),
+            (attacker: Dark, defender: Light, multiplier: 0.5),
+
+            // 水/火/草循环
+            (attacker: Water, defender: Fire, multiplier: 2.0),
+            (attacker: Fire, defender: Grass, multiplier: 2.0),
+            (attacker: Grass, defender: Water, multiplier: 2.0),
+            (attacker: Water, defender: Grass, multiplier: 0.5),
+            (attacker: Fire, defender: Water, multiplier: 0.5),
+            (attacker: Grass, defender: Fire, multiplier: 0.5),
+
+            // 雷/水/风关系
+            (attacker: Thunder, defender: Water, multiplier: 2.0),
+            (attacker: Water, defender: Thunder, multiplier: 0.5),
+            (attacker: Thunder, defender: Wind, multiplier: 2.0),
+            (attacker: Wind, defender: Thunder, multiplier: 0.5),
+            (attacker: Thunder, defender: Grass, multiplier: 0.5),
+
+            // 风/草/火关系
+            (attacker: Wind, defender: Grass, multiplier: 2.0),
+            (attacker: Fire, defender: Wind, multiplier: 2.0),
+            (attacker: Wind, defender: Fire, multiplier: 0.5),
+        ],
+    ),
+
+    rules: (
+        max_team_size: 3,   //这里暂时不能超过3
+        cards_per_round: 4,
+        ap_per_round: 6,
+    ),
+
     skills: [
         (
-            id: Slash,
+            id: NormalAttack,
+            name: "普通攻击",
+            effect: Attack(power: 10),
+            element: None,
+        ),
+        (
+            id: ElementWaterAttack,
             name: "水刃",
             effect: Attack(power: 10),
             element: Some(Water),
         ),
         (
-            id: HeavyStrike,
+            id: ElementFireAttack,
             name: "火焰冲击",
             effect: Attack(power: 16),
             element: Some(Fire),
+        ),
+        (
+            id: ElementGrassAttack,
+            name: "草叶斩击",
+            effect: Attack(power: 12),
+            element: Some(Grass),
+        ),
+        (
+            id: ElementLightAttack,
+            name: "光辉之刃",
+            effect: Attack(power: 14),
+            element: Some(Light),
+        ),
+        (
+            id: ElementDarkAttack,
+            name: "暗影切割",
+            effect: Attack(power: 14),
+            element: Some(Dark),
+        ),
+        (
+            id: ElementThunderAttack,
+            name: "雷霆打击",
+            effect: Attack(power: 14),
+            element: Some(Thunder),
+        ),
+        (
+            id: ElementWindAttack,
+            name: "风刃疾袭",
+            effect: Attack(power: 14),
+            element: Some(Wind),
         ),
         (
             id: FirstAid,
@@ -25,44 +99,87 @@
             element: None,
         ),
     ],
-    player: [
+    monsters: [
         (
             name: "水精灵",
             element: Water,
             stats: (hp: 100, atk: 16, def: 10, spd: 12),
-            skills: (Slash, HeavyStrike, FirstAid, Guard),
+            skills: [NormalAttack, ElementWaterAttack, Guard],
         ),
         (
             name: "草精灵",
             element: Grass,
             stats: (hp: 80, atk: 14, def: 12, spd: 15),
-            skills: (FirstAid, Guard, Slash, HeavyStrike),
+            skills: [NormalAttack, ElementGrassAttack, Guard, FirstAid],
         ),
         (
             name: "火精灵",
             element: Fire,
             stats: (hp: 100, atk: 18, def: 9, spd: 11),
-            skills: (HeavyStrike, Slash, FirstAid, Guard),
-        )
-    ],
-    enemy: [
-        (
-            name: "火精灵",
-            element: Fire,
-            stats: (hp: 100, atk: 18, def: 9, spd: 11),
-            skills: (HeavyStrike, Slash, FirstAid, Guard),
+            skills: [NormalAttack, ElementFireAttack, FirstAid],
         ),
         (
             name: "暗精灵",
-            element: Fire,
+            element: Dark,
             stats: (hp: 90, atk: 20, def: 8, spd: 14),
-            skills: (HeavyStrike, Slash, Guard, FirstAid),
+            skills: [NormalAttack, ElementDarkAttack, Guard, FirstAid],
         ),
         (
-            name: "草精灵",
-            element: Grass,
-            stats: (hp: 80, atk: 14, def: 12, spd: 15),
-            skills: (FirstAid, Guard, Slash, HeavyStrike),
-        )
+            name: "光精灵",
+            element: Light,
+            stats: (hp: 95, atk: 17, def: 11, spd: 13),
+            skills: [NormalAttack, ElementLightAttack, Guard, FirstAid],
+        ),
+        (
+            name: "雷精灵",
+            element: Thunder,
+            stats: (hp: 85, atk: 19, def: 9, spd: 16),
+            skills: [NormalAttack, ElementThunderAttack, Guard, FirstAid],
+        ),
+        (
+            name: "风精灵",
+            element: Wind,
+            stats: (hp: 75, atk: 15, def: 10, spd: 18),
+            skills: [NormalAttack, ElementWindAttack, Guard, FirstAid],
+        ),
+    ],
+    cards: [
+        (
+            id: GainAp,
+            name: "行动充能",
+            cost_ap: 1,
+            effect: GainAp(amount: 2),
+        ),
+        (
+            id: NextAttackBoost,
+            name: "火力全开",
+            cost_ap: 2,
+            effect: NextAttackBoost(amount: 5),
+        ),
+        (
+            id: NextShieldBoost,
+            name: "坚如磐石",
+            cost_ap: 2,
+            effect: NextShieldBoost(amount: 5),
+        ),
+        (
+            id: NextHealBoost,
+            name: "良药苦口",
+            cost_ap: 2,
+            effect: NextHealBoost(amount: 5),
+        ),
+    ],
+    //卡组
+    deck: [
+        GainAp,
+        GainAp,
+        NextAttackBoost,
+        NextShieldBoost,
+        GainAp,
+        NextHealBoost,
+        NextAttackBoost,
+        GainAp,
+        NextShieldBoost,
+        NextHealBoost,
     ],
 )

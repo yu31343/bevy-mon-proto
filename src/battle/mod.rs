@@ -18,22 +18,41 @@ impl Plugin for BattlePlugin {
             .init_resource::<BattleLog>()
             .init_resource::<BattleResult>()
             .init_resource::<TurnCount>()
+            .init_resource::<ActionPoints>()
+            .init_resource::<Hand>()
+            .init_resource::<PendingBoosts>()
+            .init_resource::<SelectedCard>()
             .add_message::<BattleEvent>()
             .add_systems(
                 Update,
-                (
-                    systems::init_battle_system.run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Init))),
-                    systems::player_input_system
-                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerCommand))),
-                    systems::enemy_choose_skill_system
-                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyCommand))),
-                    systems::resolve_turn_system
-                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Resolve))),
-                    systems::check_end_system
-                        .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::CheckEnd))),
-                    systems::restart_from_result_system.run_if(in_state(GameState::Result)),
-                    systems::consume_battle_events_system,
-                ),
+                systems::init_battle_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Init))),
+            )
+            .add_systems(
+                Update,
+                systems::round_start_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::RoundStart))),
+            )
+            .add_systems(
+                Update,
+                systems::player_turn_input_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
             );
+        app.add_systems(
+            Update,
+            systems::enemy_turn_ai_system
+                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+        );
+
+        app.add_systems(
+            Update,
+            systems::check_end_system
+                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::CheckEnd))),
+        )
+        .add_systems(
+            Update,
+            systems::restart_from_result_system.run_if(in_state(GameState::Result)),
+        )
+        .add_systems(Update, systems::consume_battle_events_system);
     }
 }

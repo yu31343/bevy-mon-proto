@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 
-/// 顶层游戏状态：战斗中或结算页。
+/// 顶层游戏状态：队伍选择、战斗中或结算页。
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum GameState {
     #[default]
+    TeamSelection,
     Battle,
     Result,
 }
@@ -13,8 +14,12 @@ pub enum GameState {
 pub enum BattlePhase {
     #[default]
     Init,
-    PlayerCommand,
-    EnemyCommand,
-    Resolve,
+    /// 每回合开始：抽牌、叠加 AP、重置出牌权标记。
+    RoundStart,
+    /// 玩家出牌/出招阶段（可多次连续行动，直到 AP 为 0 或手动结束）。
+    PlayerTurn,
+    /// 敌方行动阶段（AI 连续行动直到 AP 为 0）。
+    EnemyTurn,
+    /// 本回合结束判定与换人/胜负切换。
     CheckEnd,
 }
