@@ -1,0 +1,348 @@
+[1mdiff --git a/assets/nibbit/nibbit.atlas b/assets/nibbit/nibbit.atlas[m
+[1mdeleted file mode 100644[m
+[1mindex a955fa3..0000000[m
+[1m--- a/assets/nibbit/nibbit.atlas[m
+[1m+++ /dev/null[m
+[36m@@ -1,52 +0,0 @@[m
+[31m-nibbit.png[m
+[31m-size:832,141[m
+[31m-filter:Linear,Linear[m
+[31m-scale:0.372[m
+[31m-bod[m
+[31m-bounds:2,2,266,137[m
+[31m-bottom front foot[m
+[31m-bounds:437,7,40,31[m
+[31m-bottom front leg[m
+[31m-bounds:479,3,41,61[m
+[31m-rotate:90[m
+[31m-ear bacl[m
+[31m-bounds:756,16,80,74[m
+[31m-offsets:7,0,87,74[m
+[31m-rotate:90[m
+[31m-eye[m
+[31m-bounds:645,16,30,29[m
+[31m-rotate:90[m
+[31m-eye_red[m
+[31m-bounds:656,66,30,29[m
+[31m-rotate:90[m
+[31m-head[m
+[31m-bounds:270,40,194,99[m
+[31m-mouth back[m
+[31m-bounds:270,9,90,29[m
+[31m-shadow[m
+[31m-bounds:466,98,313,41[m
+[31m-offsets:3,0,317,41[m
+[31m-tail shade patch[m
+[31m-bounds:676,3,61,78[m
+[31m-offsets:1,0,62,78[m
+[31m-rotate:90[m
+[31m-teeth[m
+[31m-bounds:362,16,73,22[m
+[31m-tongue[m
+[31m-bounds:687,79,45,17[m
+[31m-top back foot[m
+[31m-bounds:611,14,32,32[m
+[31m-top back foot copy[m
+[31m-bounds:577,12,32,32[m
+[31m-top back leg[m
+[31m-bounds:530,46,50,62[m
+[31m-rotate:90[m
+[31m-top back leg copy[m
+[31m-bounds:466,46,50,62[m
+[31m-rotate:90[m
+[31m-top front foot[m
+[31m-bounds:542,8,36,33[m
+[31m-rotate:90[m
+[31m-top front leg[m
+[31m-bounds:594,48,48,60[m
+[31m-rotate:90[m
+[1mdiff --git a/assets/nibbit/nibbit.atlas.import b/assets/nibbit/nibbit.atlas.import[m
+[1mdeleted file mode 100644[m
+[1mindex 4f4215f..0000000[m
+[1m--- a/assets/nibbit/nibbit.atlas.import[m
+[1m+++ /dev/null[m
+[36m@@ -1,16 +0,0 @@[m
+[31m-[remap][m
+[31m-[m
+[31m-importer="spine.atlas"[m
+[31m-type="SpineAtlasResource"[m
+[31m-uid="uid://beoc5ksn1so8q"[m
+[31m-path="res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"[m
+[31m-[m
+[31m-[deps][m
+[31m-[m
+[31m-source_file="res://animations/monsters/nibbit/nibbit.atlas"[m
+[31m-dest_files=["res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"][m
+[31m-[m
+[31m-[params][m
+[31m-[m
+[31m-normal_map_prefix="n"[m
+[31m-specular_map_prefix="s"[m
+[1mdiff --git a/assets/nibbit/nibbit.png b/assets/nibbit/nibbit.png[m
+[1mdeleted file mode 100644[m
+[1mindex 91a90af..0000000[m
+Binary files a/assets/nibbit/nibbit.png and /dev/null differ
+[1mdiff --git a/assets/nibbit/nibbit.png.import b/assets/nibbit/nibbit.png.import[m
+[1mdeleted file mode 100644[m
+[1mindex f3b06fd..0000000[m
+[1m--- a/assets/nibbit/nibbit.png.import[m
+[1m+++ /dev/null[m
+[36m@@ -1,36 +0,0 @@[m
+[31m-[remap][m
+[31m-[m
+[31m-importer="texture"[m
+[31m-type="CompressedTexture2D"[m
+[31m-uid="uid://16gpavr3q35b"[m
+[31m-path="res://.godot/imported/nibbit.png-d45ecdef822d31e376a4e59ba4d2d88d.ctex"[m
+[31m-metadata={[m
+[31m-"vram_texture": false[m
+[31m-}[m
+[31m-[m
+[31m-[deps][m
+[31m-[m
+[31m-source_file="res://animations/monsters/nibbit/nibbit.png"[m
+[31m-dest_files=["res://.godot/imported/nibbit.png-d45ecdef822d31e376a4e59ba4d2d88d.ctex"][m
+[31m-[m
+[31m-[params][m
+[31m-[m
+[31m-compress/mode=0[m
+[31m-compress/high_quality=false[m
+[31m-compress/lossy_quality=1.0[m
+[31m-compress/uastc_level=2[m
+[31m-compress/rdo_quality_loss=0[m
+[31m-compress/hdr_compression=0[m
+[31m-compress/normal_map=0[m
+[31m-compress/channel_pack=0[m
+[31m-mipmaps/generate=false[m
+[31m-mipmaps/limit=-1[m
+[31m-roughness/mode=0[m
+[31m-roughness/src_normal=""[m
+[31m-process/fix_alpha_border=false[m
+[31m-process/premult_alpha=false[m
+[31m-process/normal_map_invert_y=false[m
+[31m-process/hdr_as_srgb=false[m
+[31m-process/hdr_clamp_exposure=false[m
+[31m-process/size_limit=0[m
+[31m-detect_3d/compress_to=0[m
+[1mdiff --git a/assets/nibbit/nibbit.skel b/assets/nibbit/nibbit.skel[m
+[1mdeleted file mode 100644[m
+[1mindex ed40c49..0000000[m
+Binary files a/assets/nibbit/nibbit.skel and /dev/null differ
+[1mdiff --git a/assets/nibbit/nibbit.skel.import b/assets/nibbit/nibbit.skel.import[m
+[1mdeleted file mode 100644[m
+[1mindex 6ddfc29..0000000[m
+[1m--- a/assets/nibbit/nibbit.skel.import[m
+[1m+++ /dev/null[m
+[36m@@ -1,14 +0,0 @@[m
+[31m-[remap][m
+[31m-[m
+[31m-importer="spine.skel"[m
+[31m-type="SpineSkeletonFileResource"[m
+[31m-uid="uid://coi4r5bv4daor"[m
+[31m-path="res://.godot/imported/nibbit.skel-ddc5039554708a8040777fb0d60b580f.spskel"[m
+[31m-[m
+[31m-[deps][m
+[31m-[m
+[31m-source_file="res://animations/monsters/nibbit/nibbit.skel"[m
+[31m-dest_files=["res://.godot/imported/nibbit.skel-ddc5039554708a8040777fb0d60b580f.spskel"][m
+[31m-[m
+[31m-[params][m
+[31m-[m
+[1mdiff --git a/assets/nibbit/nibbit_skel_data.tres b/assets/nibbit/nibbit_skel_data.tres[m
+[1mdeleted file mode 100644[m
+[1mindex adb0ef9..0000000[m
+[1m--- a/assets/nibbit/nibbit_skel_data.tres[m
+[1m+++ /dev/null[m
+[36m@@ -1,33 +0,0 @@[m
+[31m-[gd_resource type="SpineSkeletonDataResource" load_steps=8 format=3 uid="uid://nsykb6vjitkj"][m
+[31m-[m
+[31m-[ext_resource type="SpineAtlasResource" uid="uid://beoc5ksn1so8q" path="res://animations/monsters/nibbit/nibbit.atlas" id="1_hirho"][m
+[31m-[ext_resource type="SpineSkeletonFileResource" uid="uid://coi4r5bv4daor" path="res://animations/monsters/nibbit/nibbit.skel" id="2_nesn6"][m
+[31m-[m
+[31m-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_fbivn"][m
+[31m-from = "attack"[m
+[31m-to = "idle_loop"[m
+[31m-mix = 0.1[m
+[31m-[m
+[31m-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_neman"][m
+[31m-from = "idle_loop"[m
+[31m-to = "hurt"[m
+[31m-mix = 0.05[m
+[31m-[m
+[31m-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_jeikm"][m
+[31m-from = "idle_loop"[m
+[31m-to = "attack"[m
+[31m-mix = 0.1[m
+[31m-[m
+[31m-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_j1t7w"][m
+[31m-from = "hurt"[m
+[31m-to = "hurt"[m
+[31m-[m
+[31m-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_4uvv5"][m
+[31m-from = "hurt"[m
+[31m-to = "die"[m
+[31m-[m
+[31m-[resource][m
+[31m-atlas_res = ExtResource("1_hirho")[m
+[31m-skeleton_file_res = ExtResource("2_nesn6")[m
+[31m-default_mix = 0.05[m
+[31m-animation_mixes = [SubResource("SpineAnimationMix_fbivn"), SubResource("SpineAnimationMix_neman"), SubResource("SpineAnimationMix_jeikm"), SubResource("SpineAnimationMix_j1t7w"), SubResource("SpineAnimationMix_4uvv5")][m
+[1mdiff --git a/nibbit/images/bod.png b/nibbit/images/bod.png[m
+[1mdeleted file mode 100644[m
+[1mindex 72534a2..0000000[m
+Binary files a/nibbit/images/bod.png and /dev/null differ
+[1mdiff --git a/nibbit/images/bottom front foot.png b/nibbit/images/bottom front foot.png[m
+[1mdeleted file mode 100644[m
+[1mindex 515871d..0000000[m
+Binary files a/nibbit/images/bottom front foot.png and /dev/null differ
+[1mdiff --git a/nibbit/images/bottom front leg.png b/nibbit/images/bottom front leg.png[m
+[1mdeleted file mode 100644[m
+[1mindex d5584d3..0000000[m
+Binary files a/nibbit/images/bottom front leg.png and /dev/null differ
+[1mdiff --git a/nibbit/images/ear bacl.png b/nibbit/images/ear bacl.png[m
+[1mdeleted file mode 100644[m
+[1mindex beecbea..0000000[m
+Binary files a/nibbit/images/ear bacl.png and /dev/null differ
+[1mdiff --git a/nibbit/images/eye.png b/nibbit/images/eye.png[m
+[1mdeleted file mode 100644[m
+[1mindex 8b293ce..0000000[m
+Binary files a/nibbit/images/eye.png and /dev/null differ
+[1mdiff --git a/nibbit/images/eye_red.png b/nibbit/images/eye_red.png[m
+[1mdeleted file mode 100644[m
+[1mindex ea65d1f..0000000[m
+Binary files a/nibbit/images/eye_red.png and /dev/null differ
+[1mdiff --git a/nibbit/images/head.png b/nibbit/images/head.png[m
+[1mdeleted file mode 100644[m
+[1mindex 1fc44fb..0000000[m
+Binary files a/nibbit/images/head.png and /dev/null differ
+[1mdiff --git a/nibbit/images/mouth back.png b/nibbit/images/mouth back.png[m
+[1mdeleted file mode 100644[m
+[1mindex 2c97f76..0000000[m
+Binary files a/nibbit/images/mouth back.png and /dev/null differ
+[1mdiff --git a/nibbit/images/shadow.png b/nibbit/images/shadow.png[m
+[1mdeleted file mode 100644[m
+[1mindex eb5e5f4..0000000[m
+Binary files a/nibbit/images/shadow.png and /dev/null differ
+[1mdiff --git a/nibbit/images/tail shade patch.png b/nibbit/images/tail shade patch.png[m
+[1mdeleted file mode 100644[m
+[1mindex 77e0fa3..0000000[m
+Binary files a/nibbit/images/tail shade patch.png and /dev/null differ
+[1mdiff --git a/nibbit/images/teeth.png b/nibbit/images/teeth.png[m
+[1mdeleted file mode 100644[m
+[1mindex 9dc4885..0000000[m
+Binary files a/nibbit/images/teeth.png and /dev/null differ
+[1mdiff --git a/nibbit/images/tongue.png b/nibbit/images/tongue.png[m
+[1mdeleted file mode 100644[m
+[1mindex bbc2f69..0000000[m
+Binary files a/nibbit/images/tongue.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top back foot copy.png b/nibbit/images/top back foot copy.png[m
+[1mdeleted file mode 100644[m
+[1mindex 1010c0a..0000000[m
+Binary files a/nibbit/images/top back foot copy.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top back foot.png b/nibbit/images/top back foot.png[m
+[1mdeleted file mode 100644[m
+[1mindex e0eb4ce..0000000[m
+Binary files a/nibbit/images/top back foot.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top back leg copy.png b/nibbit/images/top back leg copy.png[m
+[1mdeleted file mode 100644[m
+[1mindex 69deb20..0000000[m
+Binary files a/nibbit/images/top back leg copy.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top back leg.png b/nibbit/images/top back leg.png[m
+[1mdeleted file mode 100644[m
+[1mindex 45754b0..0000000[m
+Binary files a/nibbit/images/top back leg.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top front foot.png b/nibbit/images/top front foot.png[m
+[1mdeleted file mode 100644[m
+[1mindex cc6e4d1..0000000[m
+Binary files a/nibbit/images/top front foot.png and /dev/null differ
+[1mdiff --git a/nibbit/images/top front leg.png b/nibbit/images/top front leg.png[m
+[1mdeleted file mode 100644[m
+[1mindex ad9b3b7..0000000[m
+Binary files a/nibbit/images/top front leg.png and /dev/null differ
+[1mdiff --git a/nibbit/nibbit.atlas b/nibbit/nibbit.atlas[m
+[1mdeleted file mode 100644[m
+[1mindex a955fa3..0000000[m
+[1m--- a/nibbit/nibbit.atlas[m
+[1m+++ /dev/null[m
+[36m@@ -1,52 +0,0 @@[m
+[31m-nibbit.png[m
+[31m-size:832,141[m
+[31m-filter:Linear,Linear[m
+[31m-scale:0.372[m
+[31m-bod[m
+[31m-bounds:2,2,266,137[m
+[31m-bottom front foot[m
+[31m-bounds:437,7,40,31[m
+[31m-bottom front leg[m
+[31m-bounds:479,3,41,61[m
+[31m-rotate:90[m
+[31m-ear bacl[m
+[31m-bounds:756,16,80,74[m
+[31m-offsets:7,0,87,74[m
+[31m-rotate:90[m
+[31m-eye[m
+[31m-bounds:645,16,30,29[m
+[31m-rotate:90[m
+[31m-eye_red[m
+[31m-bounds:656,66,30,29[m
+[31m-rotate:90[m
+[31m-head[m
+[31m-bounds:270,40,194,99[m
+[31m-mouth back[m
+[31m-bounds:270,9,90,29[m
+[31m-shadow[m
+[31m-bounds:466,98,313,41[m
+[31m-offsets:3,0,317,41[m
+[31m-tail shade patch[m
+[31m-bounds:676,3,61,78[m
+[31m-offsets:1,0,62,78[m
+[31m-rotate:90[m
+[31m-teeth[m
+[31m-bounds:362,16,73,22[m
+[31m-tongue[m
+[31m-bounds:687,79,45,17[m
+[31m-top back foot[m
+[31m-bounds:611,14,32,32[m
+[31m-top back foot copy[m
+[31m-bounds:577,12,32,32[m
+[31m-top back leg[m
+[31m-bounds:530,46,50,62[m
+[31m-rotate:90[m
+[31m-top back leg copy[m
+[31m-bounds:466,46,50,62[m
+[31m-rotate:90[m
+[31m-top front foot[m
+[31m-bounds:542,8,36,33[m
+[31m-rotate:90[m
+[31m-top front leg[m
+[31m-bounds:594,48,48,60[m
+[31m-rotate:90[m
+[1mdiff --git a/nibbit/nibbit.atlas.import b/nibbit/nibbit.atlas.import[m
+[1mdeleted file mode 100644[m
+[1mindex 4f4215f..0000000[m
+[1m--- a/nibbit/nibbit.atlas.import[m
+[1m+++ /dev/null[m
+[36m@@ -1,16 +0,0 @@[m
+[31m-[remap][m
+[31m-[m
+[31m-importer="spine.atlas"[m
+[31m-type="SpineAtlasResource"[m
+[31m-uid="uid://beoc5ksn1so8q"[m
+[31m-path="res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"[m
+[31m-[m
+[31m-[deps][m
+[31m-[m
+[31m-source_file="res://animations/monsters/nibbit/nibbit.atlas"[m
+[31m-dest_files=["res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"][m
+[31m-[m
+[31m-[params][m
+[31m-[m
+[31m-normal_map_prefix="n"[m
+[31m-specular_map_prefix="s"[m
+[1mdiff --git a/nibbit/nibbit.json b/nibbit/nibbit.json[m
+[1mdeleted file mode 100644[m
+[1mindex e26f3f2..0000000[m
+[1m--- a/nibbit/nibbit.json[m
+[1m+++ /dev/null[m
+[36m@@ -1 +0,0 @@[m
+[31m-{"skeleton":{"hash":"oDBHNa/RDzI","spine":"3.8.75","x":-444.50,"y":-42,"width":885.50,"height":439.82,"images":"./images/","audio":""},"bones":[{"name":"root","color":"abe323ff"},{"name":"root_adjust","parent":"root","color":"ffb800ff"},{"name":"vert_adjust","parent":"root_adjust","x":3.29,"y":-96.68,"color":"abe323ff"},{"name":"COG","parent":"vert_adjust","x":15.58,"y":316.31,"color":"ffb800ff"},{"name":"shadow","parent":"root_adjust","x":32.36,"y":0.81769,"color":"7900ffff"},{"name":"bod_aft","parent":"COG","length":136.89,"x":0.22660,"y":-0.17952,"rotation":1.46,"color":"ffb800ff"},{"name":"bod_fore","parent":"COG","length":145.23,"x":-0.08119,"y":-0.13361,"rotation":-174.00,"color":"ffb800ff"},{"name":"tail","parent":"bod_aft","length":91.32,"x":136.68,"y":-0.15492,"rotation":-10.69,"color":"ffb800ff"},{"name":"tail2","parent":"tail","length":70.31,"x":91.32,"y":1.5E-05,"rotation":-24.33,"color":"ffb800ff"},{"name":"tail3","parent":"tail2","length":65.33,"x":69.84,"y":-0.31143,"rotation":-12.14,"color":"ffb800ff"},{"name":"tail4","parent":"tail3","length":58.51,"x":65.33,"rotation":-5.56,"color":"ffb800ff"},{"name":"tail5","parent":"tail4","length":57.02,"x":58.51,"rotation":-0.97025,"color":"ffb800ff"},{"name":"hips_aft","parent":"bod_aft","x":70.97,"y":-29.48,"rotation":-1.46,"color":"ffb800ff"},{"name":"hips_fore_const","parent":"bod_fore","x":183.47,"y":25.50,"rotation":-4.82,"color":"ffb800ff"},{"name":"neck","parent":"bod_fore","length":72.61,"x":145.23,"color":"ffb800ff"},{"name":"head_scale_buffer","parent":"neck","x":70.25,"y":-0.41493,"color":"c2c2c256"},{"name":"head","parent":"head_scale_buffer","length":101.92,"x":0.03635,"y":-0.11082,"rotation":6.75,"color":"ffb800ff"},{"name":"head_twist","parent":"head","x":36.62,"y":-15.15,"color":"ff004fff"},{"name":"jaw_adjust","parent":"head_twist","x":-20.32,"y":86.59,"rotation":167.25,"color":"ff0067ff"},{"name":"jaw","parent":"jaw_adjust","length":80.68,"rotation":-153.18,"color":"ffb800ff"},{"name":"horn_f1","parent":"head_twist","length":69.24,"x":-55.74,"y":-1.59,"rotation":-178.38,"color":"ab82feff"},{"name":"horn_f2","parent":"horn_f1","length":69.24,"x":69.24,"color":"ab82feff"},{"name":"horn_f3","parent":"horn_f2","length":59.86,"x":69.24,"rotation":13.49,"color":"ab82feff"},{"name":"horn_f4","parent":"horn_f3","length":59.86,"x":59.86,"color":"ab82feff"},{"name":"head_twist_offset","parent":"head","x":57.85,"y":-15.01,"color":"ff50923d"},{"name":"horn_b1","parent":"head_twist_offset","length":55.85,"x":38.68,"y":-46.94,"rotation":-142.48,"color":"ff76f6ff"},{"name":"horn_b2","parent":"horn_b1","length":55.85,"x":55.85,"color":"ff76f6ff"},{"name":"horn_b3","parent":"horn_b2","length":54.22,"x":55.85,"rotation":-10.42,"color":"ff76f6ff"},{"name":"horn_b4","parent":"horn_b3","length":54.22,"x":54.22,"rotation":-7.02,"color":"ff76f6ff"},{"name":"hip_aft_b","parent":"hips_aft","x":76.78,"y":-21.87,"color":"ff9f9fff"},{"name":"leg_aft_upper_f","parent":"hip_aft_b","length":84.10,"rotation":-80.75,"color":"ff0000ff"},{"name":"leg_aft_lower_f","parent":"leg_aft_upper_f","length":68.50,"x":83.16,"y":0.11743,"rotation":45.95,"color":"ff0000ff"},{"name":"foot_aft_f","parent":"leg_aft_lower_f","length":24.67,"x":68.50,"rotation":-89.66,"color":"ff0000ff"},{"name":"leg_aft_upper_b","parent":"hips_aft","length":86.95,"x":-74.40,"y":2.25,"rotation":-77.61,"color":"0095ffff"},{"name":"leg_aft_lower_b","parent":"leg_aft_upper_b","length":50.63,"x":87.40,"y":0.29023,"rotation":32.00,"color":"0095ffff"},{"name":"foot_aft_b","parent":"leg_aft_lower_b","length":18.39,"x":50.63,"y":-7.6E-06,"rotation":-71.49,"color":"0095ffff"},{"name":"leg_fore_upper_f","parent":"hips_fore_const","length":78.89,"x":-37.66,"y":8.59,"rotation":110.62,"c
