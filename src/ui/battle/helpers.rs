@@ -57,6 +57,7 @@ pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
         BattlePhase::PlayerTurn => "玩家回合",
         BattlePhase::EnemyTurn => "敌方回合",
         BattlePhase::CheckEnd => "胜负判定",
+        BattlePhase::DeathResolve => "死亡结算",
     }
 }
 
@@ -169,4 +170,5 @@ pub(crate) fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextF
     }
     text_font
 }
+
 

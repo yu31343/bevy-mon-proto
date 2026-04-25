@@ -266,7 +266,7 @@ pub(crate) fn update_battle_action_text_system(
                 };
                 format!("行为：{}换上{}", owner, name)
             }
-            BattleEvent::CombatantFainted { side, name } => {
+            BattleEvent::CombatantFainted { side, name, .. } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
@@ -288,4 +288,5 @@ pub(crate) fn update_result_ui_system(
         result_text.0 = battle_result.message.clone();
     }
 }
+
 

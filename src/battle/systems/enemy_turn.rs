@@ -5,11 +5,232 @@ use crate::{
         ActionPoints, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, Hand,
         InBattle, PendingBoosts, Shield, Side, SkillCount, SkillList, Stats, TurnContext,
     },
-    data::{BattleDbs, CardEffect},
+    data::{BattleDbs, CardEffect, SkillDef, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
 };
 
 use super::{abort_battle, apply_effect, monster_skill_ap_cost};
+
+const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
+const ENEMY_AI_ACTION_DELAY: f32 = 0.55;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnemyAiSkillKind {
+    Attack,
+    Heal,
+    Shield,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EnemyAiContext {
+    enemy_hp: i32,
+    enemy_max_hp: i32,
+    enemy_shield: i32,
+    enemy_atk: i32,
+    player_def: i32,
+    player_hp: i32,
+    player_shield: i32,
+    target_element: crate::data::ElementType,
+    target_attached_aura: Option<crate::data::ElementType>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScoredEnemySkill {
+    slot: usize,
+    skill_id: SkillId,
+    score: f32,
+    kind: EnemyAiSkillKind,
+}
+
+fn enemy_hp_ratio(ctx: &EnemyAiContext) -> f32 {
+    if ctx.enemy_max_hp <= 0 {
+        0.0
+    } else {
+        ctx.enemy_hp.max(0) as f32 / ctx.enemy_max_hp as f32
+    }
+}
+
+fn estimate_attack_value(skill: &SkillDef, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
+    let SkillEffect::Attack { power } = skill.effect else {
+        return 0.0;
+    };
+
+    let raw = (power + ctx.enemy_atk - ctx.player_def).max(1) as f32;
+    let effectiveness = if let Some(skill_element) = skill.element {
+        let defender_element = if ctx.player_shield > 0 {
+            ctx.target_element
+        } else {
+            ctx.target_attached_aura.unwrap_or(ctx.target_element)
+        };
+        dbs.elements.get_effectiveness(skill_element, defender_element)
+    } else {
+        1.0
+    };
+
+    let theoretical_damage = (raw * effectiveness).max(1.0);
+    let hp_damage = (theoretical_damage - ctx.player_shield.max(0) as f32).max(0.0);
+    let mut score = hp_damage;
+
+    if effectiveness > 1.0 {
+        score += 18.0 + (effectiveness - 1.0) * 22.0;
+    } else if effectiveness < 1.0 {
+        score -= 16.0 + (1.0 - effectiveness) * 24.0;
+    }
+
+    if hp_damage >= ctx.player_hp.max(0) as f32 {
+        score += 28.0;
+    }
+
+    score
+}
+
+fn score_enemy_skill(
+    slot: usize,
+    skill_id: SkillId,
+    skill: &SkillDef,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+) -> ScoredEnemySkill {
+    let hp_ratio = enemy_hp_ratio(ctx);
+
+    match skill.effect {
+        SkillEffect::Attack { .. } => {
+            let mut score = estimate_attack_value(skill, ctx, dbs);
+            score += 10.0;
+            if hp_ratio >= 0.7 {
+                score += 12.0;
+            } else if hp_ratio <= 0.35 {
+                score -= 2.0;
+            }
+            ScoredEnemySkill {
+                slot,
+                skill_id,
+                score,
+                kind: EnemyAiSkillKind::Attack,
+            }
+        }
+        SkillEffect::Heal { amount } => {
+            let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0) as f32;
+            let effective_heal = (amount as f32).min(missing_hp);
+            let urgency = 1.0 - hp_ratio;
+            let mut score = effective_heal * (0.5 + urgency * 1.8);
+
+            if hp_ratio <= 0.25 {
+                score += 35.0;
+            } else if hp_ratio <= 0.4 {
+                score += 18.0;
+            } else if hp_ratio >= 0.8 {
+                score -= 24.0;
+            }
+
+            ScoredEnemySkill {
+                slot,
+                skill_id,
+                score,
+                kind: EnemyAiSkillKind::Heal,
+            }
+        }
+        SkillEffect::Shield { amount } => {
+            let mut score = amount as f32 + 5.0;
+            if ctx.enemy_shield <= 0 {
+                score += 2.0;
+            }
+            if hp_ratio <= 0.35 {
+                score += 3.0;
+            }
+            ScoredEnemySkill {
+                slot,
+                skill_id,
+                score,
+                kind: EnemyAiSkillKind::Shield,
+            }
+        }
+    }
+}
+
+fn choose_enemy_skill(
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    current_ap: i32,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+) -> Option<ScoredEnemySkill> {
+    let mut best: Option<ScoredEnemySkill> = None;
+
+    for (slot, skill_id) in skill_ids.iter().copied().take(skill_count).enumerate() {
+        let cost = monster_skill_ap_cost(slot);
+        if current_ap < cost {
+            continue;
+        }
+        let Some(skill) = dbs.skills.get(&skill_id) else {
+            continue;
+        };
+
+        let scored = score_enemy_skill(slot, skill_id, skill, ctx, dbs);
+        match best {
+            Some(current_best)
+                if scored.score < current_best.score
+                    || (scored.score == current_best.score && scored.slot >= current_best.slot) => {}
+            _ => best = Some(scored),
+        }
+    }
+
+    best
+}
+
+fn try_play_boost_card_for_skill(
+    chosen_skill: ScoredEnemySkill,
+    hand: &mut Hand,
+    action_points: &mut ActionPoints,
+    pending_boosts: &mut PendingBoosts,
+    dbs: &BattleDbs,
+    event_writer: &mut MessageWriter<BattleEvent>,
+) -> bool {
+    let skill_cost = monster_skill_ap_cost(chosen_skill.slot);
+    let desired_card = match chosen_skill.kind {
+        EnemyAiSkillKind::Attack if pending_boosts.enemy.next_attack_bonus == 0 => {
+            Some(CardEffect::NextAttackBoost { amount: 0 })
+        }
+        EnemyAiSkillKind::Heal if pending_boosts.enemy.next_heal_bonus == 0 => {
+            Some(CardEffect::NextHealBoost { amount: 0 })
+        }
+        EnemyAiSkillKind::Shield if pending_boosts.enemy.next_shield_bonus == 0 => {
+            Some(CardEffect::NextShieldBoost { amount: 0 })
+        }
+        _ => None,
+    };
+
+    let Some(desired_card) = desired_card else {
+        return false;
+    };
+
+    let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
+        dbs.cards.get(cid).is_some_and(|card| {
+            std::mem::discriminant(&card.effect) == std::mem::discriminant(&desired_card)
+                && card.cost_ap <= action_points.enemy - skill_cost
+        })
+    }) else {
+        return false;
+    };
+
+    let card_id = hand.enemy.remove(idx);
+    let Some(card) = dbs.cards.get(&card_id) else {
+        return false;
+    };
+
+    action_points.enemy -= card.cost_ap;
+    match card.effect {
+        CardEffect::NextAttackBoost { amount } => pending_boosts.enemy.next_attack_bonus += amount,
+        CardEffect::NextHealBoost { amount } => pending_boosts.enemy.next_heal_bonus += amount,
+        CardEffect::NextShieldBoost { amount } => pending_boosts.enemy.next_shield_bonus += amount,
+        CardEffect::GainAp { amount } => action_points.enemy += amount,
+    }
+    event_writer.write(BattleEvent::CardUsed {
+        side: Side::Enemy,
+        card_name: card.name.to_string(),
+    });
+    true
+}
 
 pub fn enemy_turn_ai_system(
     time: Res<Time>,
@@ -53,7 +274,7 @@ pub fn enemy_turn_ai_system(
 
     if !ai_state.1 {
         ai_state.1 = true;
-        ai_state.0 = 1.55;
+        ai_state.0 = ENEMY_AI_INITIAL_DELAY;
         return;
     }
     if action_points.enemy <= 0 {
@@ -124,96 +345,38 @@ pub fn enemy_turn_ai_system(
         let e_hp = e_stats_m.hp;
         let e_max_hp = e_stats_m.max_hp;
         let e_shield_value = e_shield_m.0;
+        let e_atk = e_stats_m.atk;
         let e_skills_arr = e_skills_m.0;
         let e_skill_count = e_skill_count_m.0;
+        let p_hp = p_stats_m.hp;
+        let p_def = p_stats_m.def;
+        let p_shield_value = p_shield_m.0;
+        let p_attached_aura = p_aura_m.attached;
 
-        let enemy_hp_pct = if e_max_hp > 0 {
-            (e_hp.max(0) * 100) / e_max_hp
-        } else {
-            0
+        let ai_ctx = EnemyAiContext {
+            enemy_hp: e_hp,
+            enemy_max_hp: e_max_hp,
+            enemy_shield: e_shield_value,
+            enemy_atk: e_atk,
+            player_def: p_def,
+            player_hp: p_hp,
+            player_shield: p_shield_value,
+            target_element: p_element,
+            target_attached_aura: p_attached_aura,
         };
 
-        // 先决定是否打牌：优先补“对接下一次技能”的 PendingBoost。
+        let chosen_skill = choose_enemy_skill(&e_skills_arr, e_skill_count, action_points.enemy, &dbs, &ai_ctx);
+
         let mut played_card = false;
-        if pending_boosts.enemy.next_attack_bonus == 0 && action_points.enemy >= 2 {
-            let can_attack0 = e_skill_count > 0 && action_points.enemy >= monster_skill_ap_cost(0);
-            let can_attack1 = e_skill_count > 1 && action_points.enemy >= monster_skill_ap_cost(1);
-            if can_attack0 || can_attack1 {
-                if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                    dbs.cards.get(cid).is_some_and(|c| {
-                        matches!(c.effect, CardEffect::NextAttackBoost { .. })
-                            && c.cost_ap <= action_points.enemy
-                    })
-                }) {
-                    let card_id = hand.enemy.remove(idx);
-                    if let Some(card) = dbs.cards.get(&card_id) {
-                        action_points.enemy -= card.cost_ap;
-                        if let CardEffect::NextAttackBoost { amount } = card.effect {
-                            pending_boosts.enemy.next_attack_bonus += amount;
-                            event_writer.write(BattleEvent::CardUsed {
-                                side: Side::Enemy,
-                                card_name: card.name.to_string(),
-                            });
-                            played_card = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if !played_card
-            && pending_boosts.enemy.next_heal_bonus == 0
-            && enemy_hp_pct < 40
-            && action_points.enemy >= 2
-            && e_skill_count > 3
-            && action_points.enemy >= monster_skill_ap_cost(3)
-        {
-            if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                dbs.cards.get(cid).is_some_and(|c| {
-                    matches!(c.effect, CardEffect::NextHealBoost { .. })
-                        && c.cost_ap <= action_points.enemy
-                })
-            }) {
-                let card_id = hand.enemy.remove(idx);
-                if let Some(card) = dbs.cards.get(&card_id) {
-                    action_points.enemy -= card.cost_ap;
-                    if let CardEffect::NextHealBoost { amount } = card.effect {
-                        pending_boosts.enemy.next_heal_bonus += amount;
-                        event_writer.write(BattleEvent::CardUsed {
-                            side: Side::Enemy,
-                            card_name: card.name.to_string(),
-                        });
-                        played_card = true;
-                    }
-                }
-            }
-        }
-
-        if !played_card
-            && pending_boosts.enemy.next_shield_bonus == 0
-            && action_points.enemy >= 2
-            && e_skill_count > 2
-            && action_points.enemy >= monster_skill_ap_cost(2)
-        {
-            if let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-                dbs.cards.get(cid).is_some_and(|c| {
-                    matches!(c.effect, CardEffect::NextShieldBoost { .. })
-                        && c.cost_ap <= action_points.enemy
-                })
-            }) {
-                let card_id = hand.enemy.remove(idx);
-                if let Some(card) = dbs.cards.get(&card_id) {
-                    action_points.enemy -= card.cost_ap;
-                    if let CardEffect::NextShieldBoost { amount } = card.effect {
-                        pending_boosts.enemy.next_shield_bonus += amount;
-                        event_writer.write(BattleEvent::CardUsed {
-                            side: Side::Enemy,
-                            card_name: card.name.to_string(),
-                        });
-                        played_card = true;
-                    }
-                }
-            }
+        if let Some(chosen_skill) = chosen_skill {
+            played_card = try_play_boost_card_for_skill(
+                chosen_skill,
+                &mut hand,
+                &mut action_points,
+                &mut pending_boosts,
+                &dbs,
+                &mut event_writer,
+            );
         }
 
         if played_card {
@@ -221,24 +384,15 @@ pub fn enemy_turn_ai_system(
             break;
         }
 
-        // 否则优先使用精灵技能（根据 HP 简单选择）。
-        let mut chosen_slot: Option<usize> = None;
-
-        if e_skill_count > 3 && enemy_hp_pct < 40 && action_points.enemy >= monster_skill_ap_cost(3) {
-            chosen_slot = Some(3);
-        } else if e_skill_count > 2
-            && action_points.enemy >= monster_skill_ap_cost(2)
-            && e_shield_value <= 0
-        {
-            chosen_slot = Some(2);
-        } else if e_skill_count > 1 && action_points.enemy >= monster_skill_ap_cost(1) {
-            chosen_slot = Some(1);
-        } else if e_skill_count > 0 && action_points.enemy >= monster_skill_ap_cost(0) {
-            chosen_slot = Some(0);
-        }
-
-        if let Some(slot) = chosen_slot {
-            let skill_id = e_skills_arr[slot];
+        if let Some(chosen_skill) = choose_enemy_skill(
+            &e_skills_arr,
+            e_skill_count,
+            action_points.enemy,
+            &dbs,
+            &ai_ctx,
+        ) {
+            let slot = chosen_skill.slot;
+            let skill_id = chosen_skill.skill_id;
             let Some(skill) = dbs.skills.get(&skill_id) else {
                 // 没技能直接跳过
                 break;
@@ -331,7 +485,7 @@ pub fn enemy_turn_ai_system(
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        ai_state.0 = 2.55; //AI 每次行动后冷却约 2.5 秒，给玩家反应时间（UI 更新、动画等）。
+        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 缩短敌方思考/行动间隔，保持节奏更紧凑。
         return;
     }
 

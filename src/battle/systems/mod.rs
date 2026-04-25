@@ -8,7 +8,7 @@ mod player_turn;
 mod round;
 mod text;
 
-pub use end::{check_end_system, restart_from_result_system};
+pub use end::{check_end_system, resolve_ko_system, restart_from_result_system};
 pub use enemy_turn::enemy_turn_ai_system;
 pub use events::consume_battle_events_system;
 pub use init::init_battle_system;

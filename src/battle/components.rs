@@ -193,6 +193,28 @@ pub struct BattleResult {
     pub message: String,
 }
 
+/// 死亡结算：等待动画播放完成后再换人/出结果。
+#[derive(Resource, Debug, Clone)]
+pub struct PendingKoResolution {
+    pub timer: Timer,
+    pub player_switch_index: Option<usize>,
+    pub enemy_switch_index: Option<usize>,
+    pub player_defeated: bool,
+    pub enemy_defeated: bool,
+}
+
+impl Default for PendingKoResolution {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: None,
+            enemy_switch_index: None,
+            player_defeated: false,
+            enemy_defeated: false,
+        }
+    }
+}
+
 /// 回合计数器资源：记录战斗的回合数
 /// 
 /// 用于游戏逻辑和UI显示

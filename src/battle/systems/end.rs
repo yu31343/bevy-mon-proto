@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    battle::{push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle, Side, Stats},
+    battle::{
+        push_battle_line, BattleEvent, BattleLog, BattleResult, Combatant, InBattle,
+        PendingKoResolution, Side, Stats,
+    },
     game_state::{BattlePhase, GameState},
 };
 
@@ -11,6 +14,7 @@ pub fn check_end_system(
     query: Query<(&Combatant, &Stats, &Name), With<InBattle>>,
     mut player_team: ResMut<crate::battle::PlayerTeam>,
     mut enemy_team: ResMut<crate::battle::EnemyTeam>,
+    mut pending_ko: ResMut<PendingKoResolution>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -40,6 +44,7 @@ pub fn check_end_system(
     if p_stats.hp <= 0 {
         p_dead = true;
         event_writer.write(BattleEvent::CombatantFainted {
+            owner: p_entity,
             side: Side::Player,
             name: p_name.to_string(),
         });
@@ -54,18 +59,8 @@ pub fn check_end_system(
             }
         }
 
-        if let Some(idx) = next_idx {
-            player_team.0.active_index = idx;
-            p_dead = false;
-            let new_e = player_team.0.combatants[idx];
-            if let Ok((_, _, new_n)) = query.get(new_e) {
-                event_writer.write(BattleEvent::Switched {
-                    side: Side::Player,
-                    name: new_n.to_string(),
-                });
-                push_battle_line(&mut battle_log, format!("玩家换上了 {}！", new_n));
-            }
-        }
+        pending_ko.player_switch_index = next_idx;
+        p_dead = next_idx.is_none();
     }
 
     let Some(e_entity) = enemy_team.0.active_combatant() else {
@@ -91,6 +86,7 @@ pub fn check_end_system(
     if e_stats.hp <= 0 {
         e_dead = true;
         event_writer.write(BattleEvent::CombatantFainted {
+            owner: e_entity,
             side: Side::Enemy,
             name: e_name.to_string(),
         });
@@ -105,11 +101,60 @@ pub fn check_end_system(
             }
         }
 
-        if let Some(idx) = next_idx {
-            enemy_team.0.active_index = idx;
-            e_dead = false;
-            let new_e = enemy_team.0.combatants[idx];
-            if let Ok((_, _, new_n)) = query.get(new_e) {
+        pending_ko.enemy_switch_index = next_idx;
+        e_dead = next_idx.is_none();
+    }
+
+    if pending_ko.player_switch_index.is_some()
+        || pending_ko.enemy_switch_index.is_some()
+        || p_dead
+        || e_dead
+    {
+        pending_ko.player_defeated = p_dead;
+        pending_ko.enemy_defeated = e_dead;
+        pending_ko.timer = Timer::from_seconds(1.0, TimerMode::Once);
+        next_phase.set(BattlePhase::DeathResolve);
+    } else {
+        next_phase.set(BattlePhase::RoundStart);
+    }
+}
+
+pub fn resolve_ko_system(
+    time: Res<Time>,
+    query: Query<(&Combatant, &Stats, &Name), With<InBattle>>,
+    mut player_team: ResMut<crate::battle::PlayerTeam>,
+    mut enemy_team: ResMut<crate::battle::EnemyTeam>,
+    mut pending_ko: ResMut<PendingKoResolution>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut next_game_state: ResMut<NextState<GameState>>,
+    mut battle_result: ResMut<BattleResult>,
+    mut battle_log: ResMut<BattleLog>,
+) {
+    pending_ko.timer.tick(time.delta());
+    if !pending_ko.timer.is_finished() {
+        return;
+    }
+
+    if let Some(idx) = pending_ko.player_switch_index.take() {
+        player_team.0.active_index = idx;
+        let new_e = player_team.0.combatants[idx];
+        if let Ok((_, stats, new_n)) = query.get(new_e) {
+            if stats.hp > 0 {
+                event_writer.write(BattleEvent::Switched {
+                    side: Side::Player,
+                    name: new_n.to_string(),
+                });
+                push_battle_line(&mut battle_log, format!("玩家换上了 {}！", new_n));
+            }
+        }
+    }
+
+    if let Some(idx) = pending_ko.enemy_switch_index.take() {
+        enemy_team.0.active_index = idx;
+        let new_e = enemy_team.0.combatants[idx];
+        if let Ok((_, stats, new_n)) = query.get(new_e) {
+            if stats.hp > 0 {
                 event_writer.write(BattleEvent::Switched {
                     side: Side::Enemy,
                     name: new_n.to_string(),
@@ -119,14 +164,16 @@ pub fn check_end_system(
         }
     }
 
-    if p_dead || e_dead {
-        battle_result.message = if p_dead && e_dead {
+    if pending_ko.player_defeated || pending_ko.enemy_defeated {
+        battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
             "平局！按 R 重新开始。".to_string()
-        } else if e_dead {
+        } else if pending_ko.enemy_defeated {
             "胜利！全歼敌方。按 R 重新开始。".to_string()
         } else {
             "失败！队伍全灭。按 R 重新开始。".to_string()
         };
+        pending_ko.player_defeated = false;
+        pending_ko.enemy_defeated = false;
         next_game_state.set(GameState::Result);
     } else {
         next_phase.set(BattlePhase::RoundStart);

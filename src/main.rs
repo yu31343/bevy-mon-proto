@@ -2,6 +2,7 @@
 mod battle;
 mod data;
 mod game_state;
+mod spine_anim;
 mod team_selection;
 mod ui;
 
@@ -19,6 +20,7 @@ fn main() {
             ui::UiPlugin,
             team_selection::TeamSelectionPlugin,
             battle::BattlePlugin,
+            spine_anim::SpineAnimPlugin,
         ))
         .run();
 }

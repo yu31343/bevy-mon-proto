@@ -17,6 +17,7 @@ impl Plugin for BattlePlugin {
         app.init_resource::<TurnContext>()
             .init_resource::<BattleLog>()
             .init_resource::<BattleResult>()
+            .init_resource::<PendingKoResolution>()
             .init_resource::<TurnCount>()
             .init_resource::<ActionPoints>()
             .init_resource::<Hand>()
@@ -48,6 +49,11 @@ impl Plugin for BattlePlugin {
             Update,
             systems::check_end_system
                 .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::CheckEnd))),
+        )
+        .add_systems(
+            Update,
+            systems::resolve_ko_system
+                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::DeathResolve))),
         )
         .add_systems(
             Update,

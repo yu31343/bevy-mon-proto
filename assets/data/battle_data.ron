@@ -95,7 +95,7 @@
         (
             id: Guard,
             name: "防御",
-            effect: Shield(amount: 10),
+            effect: Shield(amount: 5),
             element: None,
         ),
     ],
