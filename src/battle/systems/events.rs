@@ -62,7 +62,7 @@ pub fn consume_battle_events_system(
             BattleEvent::ShieldGained { side, amount } => {
                 format!("{} 获得了 {} 点护盾。", side_text(*side), amount)
             }
-            BattleEvent::CombatantFainted { side, name } => {
+            BattleEvent::CombatantFainted { side, name, .. } => {
                 format!("【{}】{} 倒下了。", side_text(*side), name)
             }
             BattleEvent::Switched { side, name } => {

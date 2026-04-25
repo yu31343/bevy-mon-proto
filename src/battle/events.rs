@@ -46,6 +46,7 @@ pub enum BattleEvent {
         effectiveness: f32,
     },
     CombatantFainted {
+        owner: Entity,
         side: Side,
         name: String,
     },

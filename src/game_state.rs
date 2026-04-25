@@ -22,4 +22,6 @@ pub enum BattlePhase {
     EnemyTurn,
     /// 本回合结束判定与换人/胜负切换。
     CheckEnd,
+    /// 等待死亡动画播放完成，再执行换人或进入结算。
+    DeathResolve,
 }
