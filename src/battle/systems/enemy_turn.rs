@@ -12,7 +12,7 @@ use crate::{
 use super::{abort_battle, apply_effect, monster_skill_ap_cost};
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 0.55;
+const ENEMY_AI_ACTION_DELAY: f32 = 0.75;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnemyAiSkillKind {
@@ -443,6 +443,7 @@ pub fn enemy_turn_ai_system(
                 return;
             }
             acted_this_update = true;
+            break;
         } else {
             // 没有可用技能：弃牌换 AP（或直接结束）
             if !hand.enemy.is_empty() {
@@ -458,34 +459,16 @@ pub fn enemy_turn_ai_system(
                     card_name,
                 });
                 acted_this_update = true;
+                break;
             } else {
                 break;
             }
         }
 
-        let should_go_check_end = exec_query
-            .get(p_entity)
-            .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
-            .unwrap_or(false)
-            || exec_query
-                .get(e_entity)
-                .map(|(_, _, s, _, _, _, _, _)| s.hp <= 0)
-                .unwrap_or(false);
-        if should_go_check_end {
-            turn_ctx.enemy_ended = true;
-            ai_state.0 = 0.0;
-            ai_state.1 = false;
-            next_phase.set(BattlePhase::CheckEnd);
-            return;
-        }
-
-        if action_points.enemy <= 0 {
-            break;
-        }
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 缩短敌方思考/行动间隔，保持节奏更紧凑。
+        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 敌方每两个操作之间间隔 0.75 秒。
         return;
     }
 
