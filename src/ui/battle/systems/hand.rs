@@ -25,7 +25,11 @@ pub(crate) fn update_player_hand_ui_system(
 ) {
     for (meta, mut node) in &mut card_nodes {
         let has_card = meta.index < hand.player.len();
-        node.display = if has_card { Display::Flex } else { Display::None };
+        node.display = if has_card {
+            Display::Flex
+        } else {
+            Display::None
+        };
         let is_selected = selected.index == Some(meta.index);
         if is_selected {
             node.width = Val::Px(140.0);
@@ -90,4 +94,3 @@ pub(crate) fn update_player_hand_ui_system(
         };
     }
 }
-

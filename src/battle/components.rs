@@ -1,28 +1,23 @@
 //! 战斗系统组件定义
-//! 
-//! 定义游戏中与战斗相关的所有组件、资源和辅助结构
-//! 采用 Bevy 的 ECS 架构，将游戏对象分解为可组合的组件
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt};
 
 use bevy::prelude::*;
+use serde::Serialize;
 
-use crate::data::{CardId, ElementType, SkillId};
+use crate::{
+    data::{
+        AttributeType, CardId, ElementType, SkillId, StatusCategory, StatusDef, StatusTickTiming,
+    },
+    game_state::BattlePhase,
+};
 
-/// 阵营标记：区分玩家和敌方
-/// 
-/// 用于标记实体的阵营归属，在战斗逻辑和UI显示中使用
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 pub enum Side {
-    /// 玩家阵营
     Player,
-    /// 敌方阵营
     Enemy,
 }
 
-use std::fmt;
-
-/// 为 Side 实现 Display trait，便于打印和日志输出
 impl fmt::Display for Side {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let side_str = match self {
@@ -33,167 +28,339 @@ impl fmt::Display for Side {
     }
 }
 
-/// 队伍信息结构体
-/// 
-/// 管理一个队伍的精灵实体和当前活跃精灵
 #[derive(Debug, Clone)]
 pub struct Team {
-    /// 队伍中的精灵实体列表
     pub combatants: Vec<Entity>,
-    /// 当前活跃精灵的索引
     pub active_index: usize,
 }
 
 impl Team {
-    /// 获取当前活跃的精灵实体
-    /// 
-    /// # Returns
-    /// - `Some(Entity)`: 如果有活跃精灵
-    /// - `None`: 如果队伍为空或索引无效
     pub fn active_combatant(&self) -> Option<Entity> {
         self.combatants.get(self.active_index).copied()
     }
 }
 
-/// 玩家队伍资源
-/// 
-/// 作为全局资源存储玩家的队伍信息
 #[derive(Resource, Debug, Clone)]
 pub struct PlayerTeam(pub Team);
 
-/// 敌方队伍资源
-/// 
-/// 作为全局资源存储敌方的队伍信息
 #[derive(Resource, Debug, Clone)]
 pub struct EnemyTeam(pub Team);
 
-/// 战斗体组件：标记战斗实体并存储阵营和元素类型
-/// 
-/// 用于识别战斗中的精灵，处理元素克制关系
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Combatant {
-    /// 所属阵营
     pub side: Side,
-    /// 元素类型
     pub element: ElementType,
 }
 
-/// 战斗属性组件：存储精灵的基本属性
-/// 
-/// 包含生命值、攻击力、防御力和速度等核心属性
 #[derive(Component, Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Stats {
-    /// 当前生命值
     pub hp: i32,
-    /// 最大生命值
     pub max_hp: i32,
-    /// 攻击力
     pub atk: i32,
-    /// 防御力
     pub def: i32,
-    /// 速度（影响行动顺序）
     pub spd: i32,
+    pub acc: i32,
+    pub atk_stage: i32,
+    pub def_stage: i32,
+    pub spd_stage: i32,
+    pub acc_stage: i32,
 }
 
-/// 技能栏组件：存储精灵的技能列表
-/// 
-/// 固定4个技能槽位，对应键盘1-4键，便于输入映射
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkillList(pub [SkillId; 4]);
 
-/// 技能栏实际可用槽位数量（1..=4）。
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkillCount(pub usize);
 
-/// 护盾值：优先于生命值扣减。
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Shield(pub i32);
 
-/// 元素附着组件：存储精灵的元素附着状态
-/// 
-/// 用于“元素附着/克制反应”与“盾免疫元素”的规则结算
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ElementAura {
-    /// 当前附着的元素类型
-    pub attached: Option<ElementType>,
+    pub slots: [Option<ElementType>; 2],
 }
 
-/// 战斗内实体标签组件
-/// 
-/// 标记战斗中的实体，方便战斗结束时统一清理
-#[derive(Component, Debug, Clone, Copy)]
-pub struct InBattle;
+impl ElementAura {
+    pub fn elements(&self) -> Vec<ElementType> {
+        self.slots.iter().flatten().copied().collect()
+    }
 
-/// 行动类型枚举：表示一次战斗行动
-/// 
-/// 用于记录和处理战斗中的行动选择
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum TurnAction {
-    /// 使用技能（包含技能ID）
-    Skill(SkillId),
-    /// 切换精灵
-    Switch,
-}
+    pub fn primary(&self) -> Option<ElementType> {
+        self.slots.iter().flatten().copied().next()
+    }
 
-/// 回合上下文资源：存储当前回合的出牌权状态
-/// 
-/// 跟踪双方的行动状态和已选行动
-#[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct TurnContext {
-    /// 玩家是否已结束行动
-    pub player_ended: bool,
-    /// 敌方是否已结束行动
-    pub enemy_ended: bool,
-    /// 兼容旧原型：存储本回合玩家已选的“单次行动”（出招/换人）
-    /// 新原型不会再依赖此字段，但保留以减少一次性重构成本
-    pub player_action: Option<TurnAction>,
-    /// 兼容旧原型：存储本回合敌方已选的“单次行动”（出招/换人）
-    /// 新原型不会再依赖此字段，但保留以减少一次性重构成本
-    pub enemy_action: Option<TurnAction>,
-}
+    pub fn contains(&self, element: ElementType) -> bool {
+        self.slots.contains(&Some(element))
+    }
 
-/// 战斗日志资源：存储战斗过程中的日志信息
-/// 
-/// 用于控制台输出和UI展示，限制最大条数以保持性能
-#[derive(Resource, Debug, Default)]
-pub struct BattleLog(pub VecDeque<String>);
+    pub fn set_elements(&mut self, elements: &[ElementType]) {
+        self.slots = [None, None];
+        let mut next = 0;
+        for element in elements {
+            if next >= 2 || self.contains(*element) {
+                continue;
+            }
+            self.slots[next] = Some(*element);
+            next += 1;
+        }
+    }
 
-/// 战斗日志最大条数
-/// 
-/// 与 `push_battle_line` 函数配合使用，确保日志数量不超过限制
-pub const BATTLE_LOG_LIMIT: usize = 10;
+    pub fn remove(&mut self, element: ElementType) -> bool {
+        let before = self.elements();
+        let after: Vec<_> = before
+            .into_iter()
+            .filter(|entry| *entry != element)
+            .collect();
+        let removed = after.len() < self.elements().len();
+        if removed {
+            self.set_elements(&after);
+        }
+        removed
+    }
 
-/// 写入一条战斗日志
-/// 
-/// 将日志打印到终端并加入 `BattleLog` 资源，自动保持日志数量不超过限制
-/// 
-/// # Parameters
-/// - `log`: 战斗日志资源的可变引用
-/// - `line`: 要添加的日志内容
-pub fn push_battle_line(log: &mut BattleLog, line: impl Into<String>) {
-    let line = line.into();
-    // 打印到终端
-    println!("{line}");
-    // 添加到日志队列
-    log.0.push_back(line);
-    // 保持日志数量不超过限制
-    while log.0.len() > BATTLE_LOG_LIMIT {
-        log.0.pop_front();
+    pub fn apply_attachment(&mut self, element: ElementType) {
+        let mut current: Vec<_> = self
+            .elements()
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    ElementType::Fire
+                        | ElementType::Water
+                        | ElementType::Grass
+                        | ElementType::Thunder
+                )
+            })
+            .collect();
+        if current.contains(&element) {
+            self.set_elements(&current);
+            return;
+        }
+        if current.len() >= 2 {
+            current.remove(0);
+        }
+        current.push(element);
+        self.set_elements(&current);
     }
 }
 
-/// 战斗结果资源：存储战斗结束后的结果信息
-/// 
-/// 用于在结算页面显示战斗结果
-#[derive(Resource, Debug, Default)]
-pub struct BattleResult {
-    /// 结果消息文本
-    pub message: String,
+#[derive(Debug, Clone)]
+pub struct StatusStageModifier {
+    pub attribute: AttributeType,
+    pub amount: i32,
 }
 
-/// 死亡结算：等待动画播放完成后再换人/出结果。
+#[derive(Debug, Clone)]
+pub struct StatusInstance {
+    pub id: String,
+    pub name: String,
+    pub category: StatusCategory,
+    pub remaining_turns: i32,
+    pub source_side: Option<Side>,
+    pub tick_timing: Option<StatusTickTiming>,
+    pub stage_modifiers: Vec<StatusStageModifier>,
+    pub fixed_damage_on_tick: i32,
+    pub heal_on_tick: i32,
+    pub heal_taken_multiplier: Option<f32>,
+    pub evade_charges: i32,
+}
+
+#[derive(Component, Debug, Clone, Default)]
+pub struct StatusBoard {
+    pub entries: Vec<StatusInstance>,
+}
+
+impl StatusBoard {
+    pub fn heal_taken_multiplier(&self) -> f32 {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.heal_taken_multiplier)
+            .fold(1.0, |acc, multiplier| acc * multiplier)
+    }
+
+    pub fn try_consume_evade_charge(&mut self) -> Option<String> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.evade_charges > 0)?;
+        entry.evade_charges -= 1;
+        let status_id = entry.id.clone();
+        if entry.evade_charges <= 0 {
+            self.entries.retain(|other| other.id != status_id);
+        }
+        Some(status_id)
+    }
+}
+
+impl StatusInstance {
+    pub fn from_def(def: &StatusDef, source_side: Option<Side>) -> Self {
+        Self {
+            id: def.id.clone(),
+            name: def.name.clone(),
+            category: def.category,
+            remaining_turns: def.duration_turns,
+            source_side,
+            tick_timing: def.tick_timing,
+            stage_modifiers: def
+                .stage_modifiers
+                .iter()
+                .map(|modifier| StatusStageModifier {
+                    attribute: modifier.attribute,
+                    amount: modifier.amount,
+                })
+                .collect(),
+            fixed_damage_on_tick: def.fixed_damage_on_tick,
+            heal_on_tick: def.heal_on_tick,
+            heal_taken_multiplier: def.heal_taken_multiplier,
+            evade_charges: def.evade_charges,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusTickOutcome {
+    pub status_id: String,
+    pub status_name: String,
+    pub fixed_damage: i32,
+    pub heal_amount: i32,
+    pub expired: bool,
+    pub remaining_turns: i32,
+}
+
+pub fn recalculate_stage_modifiers(stats: &mut Stats, status_board: &StatusBoard) {
+    stats.atk_stage = 0;
+    stats.def_stage = 0;
+    stats.spd_stage = 0;
+    stats.acc_stage = 0;
+
+    for entry in &status_board.entries {
+        for modifier in &entry.stage_modifiers {
+            match modifier.attribute {
+                AttributeType::Atk => stats.atk_stage += modifier.amount,
+                AttributeType::Def => stats.def_stage += modifier.amount,
+                AttributeType::Spd => stats.spd_stage += modifier.amount,
+                AttributeType::Acc => stats.acc_stage += modifier.amount,
+            }
+        }
+    }
+}
+
+pub fn upsert_status_instance(
+    status_board: &mut StatusBoard,
+    status: StatusInstance,
+    stats: &mut Stats,
+) -> bool {
+    let mut refreshed = false;
+    if let Some(existing) = status_board
+        .entries
+        .iter_mut()
+        .find(|entry| entry.id == status.id)
+    {
+        existing.name = status.name;
+        existing.category = status.category;
+        existing.remaining_turns = status.remaining_turns;
+        existing.source_side = status.source_side;
+        existing.tick_timing = status.tick_timing;
+        existing.stage_modifiers = status.stage_modifiers;
+        existing.fixed_damage_on_tick = status.fixed_damage_on_tick;
+        existing.heal_on_tick = status.heal_on_tick;
+        existing.heal_taken_multiplier = status.heal_taken_multiplier;
+        existing.evade_charges = status.evade_charges;
+        refreshed = true;
+    } else {
+        status_board.entries.push(status);
+    }
+    recalculate_stage_modifiers(stats, status_board);
+    refreshed
+}
+
+pub fn apply_status_from_def(
+    status_board: &mut StatusBoard,
+    stats: &mut Stats,
+    def: &StatusDef,
+    source_side: Option<Side>,
+) -> bool {
+    upsert_status_instance(
+        status_board,
+        StatusInstance::from_def(def, source_side),
+        stats,
+    )
+}
+
+pub fn remove_status_by_id(
+    status_board: &mut StatusBoard,
+    stats: &mut Stats,
+    status_id: &str,
+) -> bool {
+    let original_len = status_board.entries.len();
+    status_board.entries.retain(|entry| entry.id != status_id);
+    let removed = status_board.entries.len() != original_len;
+    if removed {
+        recalculate_stage_modifiers(stats, status_board);
+    }
+    removed
+}
+
+pub fn tick_statuses_for_timing(
+    status_board: &mut StatusBoard,
+    stats: &mut Stats,
+    timing: StatusTickTiming,
+) -> Vec<StatusTickOutcome> {
+    let mut outcomes = Vec::with_capacity(status_board.entries.len());
+
+    for entry in &mut status_board.entries {
+        if entry.tick_timing != Some(timing) {
+            continue;
+        }
+        let fixed_damage = entry.fixed_damage_on_tick.max(0);
+        let heal_amount = entry.heal_on_tick.max(0);
+        if entry.remaining_turns > 0 {
+            entry.remaining_turns -= 1;
+        }
+        outcomes.push(StatusTickOutcome {
+            status_id: entry.id.clone(),
+            status_name: entry.name.clone(),
+            fixed_damage,
+            heal_amount,
+            expired: entry.remaining_turns <= 0,
+            remaining_turns: entry.remaining_turns.max(0),
+        });
+    }
+
+    status_board
+        .entries
+        .retain(|entry| entry.tick_timing != Some(timing) || entry.remaining_turns > 0);
+    recalculate_stage_modifiers(stats, status_board);
+    outcomes
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct InBattle;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnAction {
+    Skill(SkillId),
+    Switch,
+}
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct TurnContext {
+    pub player_ended: bool,
+    pub enemy_ended: bool,
+    pub player_end_requested: bool,
+    pub player_action: Option<TurnAction>,
+    pub enemy_action: Option<TurnAction>,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct BattleLog(pub VecDeque<String>);
+
+#[derive(Resource, Debug, Default)]
+pub struct BattleResult {
+    pub message: String,
+    pub export_status: Option<String>,
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct PendingKoResolution {
     pub timer: Timer,
@@ -215,74 +382,372 @@ impl Default for PendingKoResolution {
     }
 }
 
-/// 回合计数器资源：记录战斗的回合数
-/// 
-/// 用于游戏逻辑和UI显示
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnCount(pub u32);
 
-/// 行动点池（可跨回合继承；回合开始时按 BattleRules 叠加）。
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct ActionPoints {
-    /// 玩家的行动点
     pub player: i32,
-    /// 敌方的行动点
     pub enemy: i32,
 }
 
-/// 为 ActionPoints 实现 Default trait
-impl Default for ActionPoints {
-    /// 创建默认的行动点池（初始为0）
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct RoundOrder {
+    pub first: Side,
+    pub second: Side,
+    pub previous_first: Option<Side>,
+}
+
+impl Default for RoundOrder {
     fn default() -> Self {
         Self {
-            player: 0,
-            enemy: 0,
+            first: Side::Player,
+            second: Side::Enemy,
+            previous_first: None,
         }
     }
 }
 
-/// 手牌资源：存储双方的手牌
-/// 
-/// 每回合从卡组抽取固定数量，出牌/弃牌会减少手牌
+impl RoundOrder {
+    pub fn set_first(&mut self, side: Side) {
+        self.first = side;
+        self.second = opposite_side(side);
+        self.previous_first = Some(side);
+    }
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct AccuracyRng {
+    state: u64,
+}
+
+impl Default for AccuracyRng {
+    fn default() -> Self {
+        Self {
+            state: 0xA5A5_1F2D_D3C4_B7E9,
+        }
+    }
+}
+
+impl AccuracyRng {
+    pub fn reset(&mut self, seed: u64) {
+        self.state = seed;
+    }
+
+    pub fn next_unit_f32(&mut self) -> f32 {
+        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let value = (self.state >> 32) as u32;
+        value as f32 / u32::MAX as f32
+    }
+}
+
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Hand {
-    /// 玩家的手牌
     pub player: Vec<CardId>,
-    /// 敌方的手牌
     pub enemy: Vec<CardId>,
 }
 
-/// 待命增益结构体：存储下次技能的增益效果
-/// 
-/// 在下一次对应类型的精灵技能结算时生效并清空
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PendingBoost {
-    /// 下次攻击的伤害增益
     pub next_attack_bonus: i32,
-    /// 下次护盾的效果增益
     pub next_shield_bonus: i32,
-    /// 下次治疗的效果增益
     pub next_heal_bonus: i32,
 }
 
-/// 双方的待命增益资源
-/// 
-/// 存储玩家和敌方的待命增益效果
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PendingBoosts {
-    /// 玩家的待命增益
     pub player: PendingBoost,
-    /// 敌方的待命增益
     pub enemy: PendingBoost,
 }
 
-/// 当前选中的手牌索引资源
-/// 
-/// 用于两步式出牌/弃牌逻辑，键鼠共享状态
 #[derive(Resource, Default, Clone, Copy)]
 pub struct SelectedCard {
-    /// 当前选中的手牌索引
     pub index: Option<usize>,
-    /// 是否处于弃牌模式
     pub discard_armed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructuredLogEntry {
+    pub phase: String,
+    pub summary: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplayLogEntry {
+    pub seq: u64,
+    pub phase: String,
+    pub summary: String,
+    pub detail: String,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct StructuredBattleLog(pub VecDeque<StructuredLogEntry>);
+
+#[derive(Resource, Debug, Default)]
+pub struct ReplayEventLog(pub Vec<ReplayLogEntry>);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActionTraceEntry {
+    pub seq: u64,
+    pub round: u32,
+    pub side: Side,
+    pub action: String,
+    pub detail: String,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct ActionTrace(pub Vec<ActionTraceEntry>);
+
+pub const BATTLE_LOG_LIMIT: usize = 30;
+
+pub fn push_battle_line(log: &mut BattleLog, line: impl Into<String>) {
+    let line = line.into();
+    println!("{line}");
+    log.0.push_back(line);
+    while log.0.len() > BATTLE_LOG_LIMIT {
+        log.0.pop_front();
+    }
+}
+
+pub fn push_structured_battle_line(
+    log: &mut StructuredBattleLog,
+    phase: impl Into<String>,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    log.0.push_back(StructuredLogEntry {
+        phase: phase.into(),
+        summary: summary.into(),
+        detail: detail.into(),
+    });
+    while log.0.len() > BATTLE_LOG_LIMIT {
+        log.0.pop_front();
+    }
+}
+
+pub fn push_replay_log_entry(
+    log: &mut ReplayEventLog,
+    phase: impl Into<String>,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    let seq = log.0.len() as u64 + 1;
+    log.0.push(ReplayLogEntry {
+        seq,
+        phase: phase.into(),
+        summary: summary.into(),
+        detail: detail.into(),
+    });
+}
+
+pub fn record_action_trace(trace: &mut ActionTrace, mut entry: ActionTraceEntry) {
+    entry.seq = trace.0.len() as u64 + 1;
+    trace.0.push(entry);
+}
+
+pub fn clear_runtime_battle_logs(
+    battle_log: &mut BattleLog,
+    structured_log: &mut StructuredBattleLog,
+    replay_log: &mut ReplayEventLog,
+    action_trace: &mut ActionTrace,
+) {
+    battle_log.0.clear();
+    structured_log.0.clear();
+    replay_log.0.clear();
+    action_trace.0.clear();
+}
+
+pub fn side_phase_label(side: Side) -> &'static str {
+    match side {
+        Side::Player => "player",
+        Side::Enemy => "enemy",
+    }
+}
+
+pub fn opposite_side(side: Side) -> Side {
+    match side {
+        Side::Player => Side::Enemy,
+        Side::Enemy => Side::Player,
+    }
+}
+
+pub fn battle_phase_for_side(side: Side) -> BattlePhase {
+    match side {
+        Side::Player => BattlePhase::PlayerTurn,
+        Side::Enemy => BattlePhase::EnemyTurn,
+    }
+}
+
+pub fn next_phase_after_side_end(order: &RoundOrder, side: Side) -> BattlePhase {
+    if side == order.first {
+        battle_phase_for_side(order.second)
+    } else {
+        BattlePhase::CheckEnd
+    }
+}
+
+pub fn action_text(action: &TurnAction) -> String {
+    match action {
+        TurnAction::Skill(skill_id) => format!("skill:{skill_id:?}"),
+        TurnAction::Switch => "switch".to_string(),
+    }
+}
+
+pub fn push_turn_action_trace(
+    trace: &mut ActionTrace,
+    round: u32,
+    side: Side,
+    action: TurnAction,
+    detail: impl Into<String>,
+) {
+    record_action_trace(
+        trace,
+        ActionTraceEntry {
+            seq: 0,
+            round,
+            side,
+            action: action_text(&action),
+            detail: detail.into(),
+        },
+    );
+}
+
+pub fn push_named_action_trace(
+    trace: &mut ActionTrace,
+    round: u32,
+    side: Side,
+    action: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    record_action_trace(
+        trace,
+        ActionTraceEntry {
+            seq: 0,
+            round,
+            side,
+            action: action.into(),
+            detail: detail.into(),
+        },
+    );
+}
+
+pub fn clear_turn_context(turn_ctx: &mut TurnContext) {
+    turn_ctx.player_action = None;
+    turn_ctx.enemy_action = None;
+    turn_ctx.player_ended = false;
+    turn_ctx.enemy_ended = false;
+    turn_ctx.player_end_requested = false;
+}
+
+pub fn reset_round_end_flags(turn_ctx: &mut TurnContext) {
+    turn_ctx.player_ended = false;
+    turn_ctx.enemy_ended = false;
+    turn_ctx.player_end_requested = false;
+}
+
+pub fn note_structured_phase(
+    log: &mut StructuredBattleLog,
+    phase: &str,
+    summary: &str,
+    detail: impl Into<String>,
+) {
+    push_structured_battle_line(log, phase, summary, detail);
+}
+
+pub fn note_action_phase(
+    log: &mut StructuredBattleLog,
+    round: u32,
+    side: Side,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    push_structured_battle_line(
+        log,
+        format!("round-{round}-{}", side_phase_label(side)),
+        summary,
+        detail,
+    );
+}
+
+pub fn note_round_phase(log: &mut StructuredBattleLog, round: u32, detail: impl Into<String>) {
+    push_structured_battle_line(log, format!("round-{round}"), "回合开始", detail);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::SkillId;
+
+    #[test]
+    fn replay_log_assigns_monotonic_sequence_numbers() {
+        let mut replay_log = ReplayEventLog::default();
+        push_replay_log_entry(&mut replay_log, "battle-event", "BattleEvent", "first");
+        push_replay_log_entry(
+            &mut replay_log,
+            "status-r1",
+            "burning_aura:applied",
+            "second",
+        );
+
+        assert_eq!(replay_log.0.len(), 2);
+        assert_eq!(replay_log.0[0].seq, 1);
+        assert_eq!(replay_log.0[1].seq, 2);
+        assert_eq!(replay_log.0[0].phase, "battle-event");
+        assert_eq!(replay_log.0[1].summary, "burning_aura:applied");
+    }
+
+    #[test]
+    fn action_trace_assigns_monotonic_sequence_numbers() {
+        let mut trace = ActionTrace::default();
+        push_turn_action_trace(
+            &mut trace,
+            3,
+            Side::Enemy,
+            TurnAction::Skill(SkillId::ShadowWingAssassinate),
+            "first action",
+        );
+        push_named_action_trace(&mut trace, 3, Side::Enemy, "end_turn", "second action");
+
+        assert_eq!(trace.0.len(), 2);
+        assert_eq!(trace.0[0].seq, 1);
+        assert_eq!(trace.0[1].seq, 2);
+        assert_eq!(trace.0[0].action, "skill:ShadowWingAssassinate");
+        assert_eq!(trace.0[1].action, "end_turn");
+    }
+
+    #[test]
+    fn clear_runtime_battle_logs_clears_all_runtime_logs() {
+        let mut battle_log = BattleLog(VecDeque::from(["a".to_string()]));
+        let mut structured_log = StructuredBattleLog(VecDeque::from([StructuredLogEntry {
+            phase: "phase".to_string(),
+            summary: "summary".to_string(),
+            detail: "detail".to_string(),
+        }]));
+        let mut replay_log = ReplayEventLog(vec![ReplayLogEntry {
+            seq: 1,
+            phase: "battle-event".to_string(),
+            summary: "BattleEvent".to_string(),
+            detail: "detail".to_string(),
+        }]);
+        let mut action_trace = ActionTrace(vec![ActionTraceEntry {
+            seq: 1,
+            round: 1,
+            side: Side::Player,
+            action: "skill:FirePunch".to_string(),
+            detail: "detail".to_string(),
+        }]);
+
+        clear_runtime_battle_logs(
+            &mut battle_log,
+            &mut structured_log,
+            &mut replay_log,
+            &mut action_trace,
+        );
+
+        assert!(battle_log.0.is_empty());
+        assert!(structured_log.0.is_empty());
+        assert!(replay_log.0.is_empty());
+        assert!(action_trace.0.is_empty());
+    }
 }

@@ -30,7 +30,6 @@ pub struct ConfirmSelectionButton;
 #[derive(Component)]
 pub struct SelectionCountText;
 
-
 /// Resource tracking the current selection state.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct SelectionState {

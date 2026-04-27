@@ -23,7 +23,10 @@ pub fn setup_selection_ui(
         return;
     }
 
-    println!("正在创建队伍选择界面... 可选精灵数: {}", monster_pool.monsters.len());
+    println!(
+        "正在创建队伍选择界面... 可选精灵数: {}",
+        monster_pool.monsters.len()
+    );
 
     let font_handle = ui_font.as_ref().map(|f| f.0.clone());
     // Root container

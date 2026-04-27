@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::battle::{Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, Stats};
+use crate::battle::{Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Stats};
 
 use super::super::components::*;
 
@@ -33,8 +33,10 @@ pub(crate) fn update_battle_bars_system(
         node.width = Val::Percent(enemy_hp_pct);
     }
 
-    let player_shield_pct = super::super::helpers::active_shield_percent(&player_team.0, &combat_query);
-    let enemy_shield_pct = super::super::helpers::active_shield_percent(&enemy_team.0, &combat_query);
+    let player_shield_pct =
+        super::super::helpers::active_shield_percent(&player_team.0, &combat_query);
+    let enemy_shield_pct =
+        super::super::helpers::active_shield_percent(&enemy_team.0, &combat_query);
     let player_shield = super::super::helpers::active_shield(&player_team.0, &combat_query);
     let enemy_shield = super::super::helpers::active_shield(&enemy_team.0, &combat_query);
 
@@ -60,4 +62,3 @@ pub(crate) fn update_battle_bars_system(
         };
     }
 }
-
