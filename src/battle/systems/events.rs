@@ -222,7 +222,6 @@ pub fn consume_battle_events_system(
             }
         };
 
-        println!("{}", line);
         push_replay_log_entry(&mut replay_log, "battle-event", "BattleEvent", line.clone());
         push_battle_line(&mut log, line);
 
