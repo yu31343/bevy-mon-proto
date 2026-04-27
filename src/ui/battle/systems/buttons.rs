@@ -2,9 +2,10 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SelectedCard,
-        SkillCount, SkillList, Side, Stats, TurnContext,
+        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SelectedCard, Side,
+        SkillCount, SkillList, Stats, TurnContext,
     },
+    data::BattleDbs,
     game_state::{BattlePhase, GameState},
 };
 
@@ -86,7 +87,14 @@ pub(crate) fn apply_pending_switch_overlay_toggle_system(
     mut nodes: ParamSet<(
         Query<&mut Node, With<SwitchOverlayRoot>>,
         Query<&mut Node, (With<SkillPanelRoot>, Without<SwitchOverlayRoot>)>,
-        Query<&mut Node, (With<HandCardsRoot>, Without<SwitchOverlayRoot>, Without<SkillPanelRoot>)>,
+        Query<
+            &mut Node,
+            (
+                With<HandCardsRoot>,
+                Without<SwitchOverlayRoot>,
+                Without<SkillPanelRoot>,
+            ),
+        >,
     )>,
     mut shield_tracks: Query<&mut Visibility, With<TeamMemberShieldBarTrack>>,
     mut open: ResMut<SwitchOverlayOpen>,
@@ -133,11 +141,15 @@ pub(crate) fn apply_pending_switch_overlay_toggle_system(
 }
 
 pub(crate) fn button_select_skill_system(
-    mut interaction_query: Query<(&Interaction, &SkillButton), (Changed<Interaction>, With<Button>)>,
+    mut interaction_query: Query<
+        (&Interaction, &SkillButton),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut turn_ctx: ResMut<TurnContext>,
     action_points: Res<ActionPoints>,
     player_team: Option<Res<PlayerTeam>>,
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
+    battle_dbs: Res<BattleDbs>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     if let Some(player_team) = player_team {
@@ -152,7 +164,9 @@ pub(crate) fn button_select_skill_system(
                     if button.index >= skill_count.0 {
                         continue;
                     }
-                    let cost = super::super::helpers::monster_skill_ap_cost_ui(button.index);
+                    let skill_id = skills[button.index];
+                    let cost =
+                        super::super::helpers::monster_skill_ap_cost_ui(skill_id, &battle_dbs);
                     if action_points.player < cost {
                         continue;
                     }
@@ -184,7 +198,8 @@ pub(crate) fn button_switch_member_system(
         if action_points.player < 1 {
             continue;
         }
-        if target_index >= player_team.0.combatants.len() || target_index == player_team.0.active_index
+        if target_index >= player_team.0.combatants.len()
+            || target_index == player_team.0.active_index
         {
             continue;
         }
@@ -218,7 +233,6 @@ pub(crate) fn button_play_card_two_step_system(
     mut pending_boosts: ResMut<PendingBoosts>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
-    mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -291,15 +305,17 @@ pub(crate) fn button_play_card_two_step_system(
         selected.discard_armed = false;
 
         if action_points.player <= 0 {
-            turn_ctx.player_ended = true;
-            next_phase.set(BattlePhase::EnemyTurn);
+            turn_ctx.player_end_requested = true;
         }
         break;
     }
 }
 
 pub(crate) fn button_discard_system(
-    mut interaction_query: Query<(&Interaction, &DiscardButton), (Changed<Interaction>, With<Button>)>,
+    mut interaction_query: Query<
+        (&Interaction, &DiscardButton),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut turn_ctx: ResMut<TurnContext>,
     mut selected: ResMut<SelectedCard>,
     mut action_points: ResMut<ActionPoints>,
@@ -347,17 +363,17 @@ pub(crate) fn button_discard_system(
 }
 
 pub(crate) fn button_end_turn_system(
-    mut interaction_query: Query<(&Interaction, &EndTurnButton), (Changed<Interaction>, With<Button>)>,
+    mut interaction_query: Query<
+        (&Interaction, &EndTurnButton),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut turn_ctx: ResMut<TurnContext>,
-    mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     for (interaction, _) in &mut interaction_query {
         if *interaction == Interaction::Pressed {
-            turn_ctx.player_ended = true;
             turn_ctx.player_action = None;
-            next_phase.set(BattlePhase::EnemyTurn);
+            turn_ctx.player_end_requested = true;
             break;
         }
     }
 }
-

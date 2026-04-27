@@ -1,26 +1,67 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, Hand, PendingBoosts, SelectedCard, TurnContext, TurnCount,
+        ActionPoints, ActionTrace, BattleEvent, Hand, PendingBoosts, PlayerTeam, RoundOrder,
+        SelectedCard, Side, Stats, StructuredBattleLog, TurnContext, TurnCount, note_round_phase,
+        opposite_side, push_named_action_trace,
     },
-    data::{BattleDbs, BattleRules, CardDeck},
+    data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
 };
 
+fn hand_names(hand: &[crate::data::CardId], dbs: &BattleDbs) -> String {
+    hand.iter()
+        .map(|cid| {
+            dbs.cards
+                .get(cid)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+#[derive(SystemParam)]
+pub(crate) struct RoundStartResources<'w> {
+    dbs: Res<'w, BattleDbs>,
+    rules: Res<'w, BattleRules>,
+    formula_rules: Res<'w, BattleFormulaRules>,
+    player_team: Res<'w, PlayerTeam>,
+    enemy_team: Res<'w, crate::battle::EnemyTeam>,
+    action_points: ResMut<'w, ActionPoints>,
+    hand: ResMut<'w, Hand>,
+    turn_ctx: ResMut<'w, TurnContext>,
+    turn_count: ResMut<'w, TurnCount>,
+    round_order: ResMut<'w, RoundOrder>,
+    pending_boosts: ResMut<'w, PendingBoosts>,
+    selected: ResMut<'w, SelectedCard>,
+    structured_log: ResMut<'w, StructuredBattleLog>,
+    action_trace: ResMut<'w, ActionTrace>,
+}
+
 pub fn round_start_system(
     card_deck: Res<CardDeck>,
-    dbs: Res<BattleDbs>,
-    rules: Res<BattleRules>,
-    mut action_points: ResMut<ActionPoints>,
-    mut hand: ResMut<Hand>,
-    mut turn_ctx: ResMut<TurnContext>,
-    mut turn_count: ResMut<TurnCount>,
-    mut pending_boosts: ResMut<PendingBoosts>,
-    mut selected: ResMut<SelectedCard>,
+    query: Query<&Stats>,
+    mut runtime: RoundStartResources,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
+    let dbs = &runtime.dbs;
+    let rules = &runtime.rules;
+    let formula_rules = &runtime.formula_rules;
+    let player_team = &runtime.player_team;
+    let enemy_team = &runtime.enemy_team;
+    let action_points = &mut runtime.action_points;
+    let hand = &mut runtime.hand;
+    let turn_ctx = &mut runtime.turn_ctx;
+    let turn_count = &mut runtime.turn_count;
+    let round_order = &mut runtime.round_order;
+    let pending_boosts = &mut runtime.pending_boosts;
+    let selected = &mut runtime.selected;
+    let structured_log = &mut runtime.structured_log;
+    let action_trace = &mut runtime.action_trace;
+
     if card_deck.0.is_empty() {
         return;
     }
@@ -28,7 +69,6 @@ pub fn round_start_system(
     turn_count.0 += 1;
     event_writer.write(BattleEvent::TurnStarted(turn_count.0));
 
-    // 每回合开始抽取手牌（重置本回合手牌）。
     hand.player.clear();
     hand.enemy.clear();
     let deck_len = card_deck.0.len();
@@ -42,41 +82,75 @@ pub fn round_start_system(
         hand.enemy.push(card_deck.0[idx]);
     }
 
-    let player_cards: Vec<String> = hand
-        .player
-        .iter()
-        .map(|cid| {
-            dbs.cards
-                .get(cid)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| format!("{cid:?}"))
-        })
-        .collect();
-    let enemy_cards: Vec<String> = hand
-        .enemy
-        .iter()
-        .map(|cid| {
-            dbs.cards
-                .get(cid)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| format!("{cid:?}"))
-        })
-        .collect();
-    println!("玩家抽到: {}", player_cards.join(" / "));
-    println!("敌方抽到: {}", enemy_cards.join(" / "));
+    let player_cards = hand_names(&hand.player, &dbs);
+    let enemy_cards = hand_names(&hand.enemy, &dbs);
+    println!("玩家抽到: {}", player_cards);
+    println!("敌方抽到: {}", enemy_cards);
 
-    // “回合开始时额外 +6”，并保留继承的剩余 AP。
     action_points.player += rules.ap_per_round;
     action_points.enemy += rules.ap_per_round;
 
-    // 重置本回合出牌权标记。
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
+    **pending_boosts = PendingBoosts::default();
+    **selected = SelectedCard::default();
 
-    // 每回合开始清空增益，增益仅本回合有效。
-    *pending_boosts = PendingBoosts::default();
-    // 清除上回合残留的卡牌选择状态。
-    *selected = SelectedCard::default();
+    let Some(player_entity) = player_team.0.active_combatant() else {
+        return;
+    };
+    let Some(enemy_entity) = enemy_team.0.active_combatant() else {
+        return;
+    };
+    let Ok(player_stats) = query.get(player_entity) else {
+        return;
+    };
+    let Ok(enemy_stats) = query.get(enemy_entity) else {
+        return;
+    };
 
-    next_phase.set(BattlePhase::PlayerTurn);
+    let player_spd = super::combat::effective_spd(player_stats, &formula_rules);
+    let enemy_spd = super::combat::effective_spd(enemy_stats, &formula_rules);
+    let first_side = if player_spd > enemy_spd {
+        Side::Player
+    } else if enemy_spd > player_spd {
+        Side::Enemy
+    } else {
+        round_order
+            .previous_first
+            .map(opposite_side)
+            .unwrap_or(Side::Player)
+    };
+    round_order.set_first(first_side);
+
+    let ap_snapshot = format!(
+        "玩家AP={}, 敌方AP={}",
+        action_points.player, action_points.enemy
+    );
+    note_round_phase(
+        structured_log,
+        turn_count.0,
+        format!(
+            "玩家手牌 [{}]；敌方手牌 [{}]；{}；先手={:?}；玩家Spd={}；敌方Spd={}",
+            player_cards, enemy_cards, ap_snapshot, round_order.first, player_spd, enemy_spd
+        ),
+    );
+    push_named_action_trace(
+        action_trace,
+        turn_count.0,
+        Side::Player,
+        "round_draw",
+        format!("玩家抽牌 [{}]；{}", player_cards, ap_snapshot),
+    );
+    push_named_action_trace(
+        action_trace,
+        turn_count.0,
+        Side::Enemy,
+        "round_draw",
+        format!("敌方抽牌 [{}]；{}", enemy_cards, ap_snapshot),
+    );
+
+    next_phase.set(match round_order.first {
+        Side::Player => BattlePhase::PlayerTurn,
+        Side::Enemy => BattlePhase::EnemyTurn,
+    });
 }

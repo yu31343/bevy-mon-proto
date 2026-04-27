@@ -352,6 +352,7 @@ name = "bevy-mon-proto"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_spine",
  "rand 0.8.5",
  "ron",
  "serde",
@@ -1347,6 +1348,17 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "wgpu-types",
+]
+
+[[package]]
+name = "bevy_spine"
+version = "0.11.0"
+source = "git+https://github.com/jabuwu/bevy_spine?branch=main#b569e8d7c8f3d5c70953d01ac90f7c865db61d73"
+dependencies = [
+ "bevy",
+ "glam",
+ "rusty_spine",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2641,6 +2653,7 @@ dependencies = [
  "bytemuck",
  "encase",
  "libm",
+ "mint",
  "rand 0.9.2",
  "serde_core",
 ]
@@ -3258,6 +3271,12 @@ dependencies = [
  "adler2",
  "simd-adler32",
 ]
+
+[[package]]
+name = "mint"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
 
 [[package]]
 name = "moxcms"
@@ -4287,6 +4306,15 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rusty_spine"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e4cbd4b95cd48d91f36f7384b1361a12c668275cf004cc20c3014042b73cf70"
+dependencies = [
+ "mint",
+]
 
 [[package]]
 name = "ruzstd"

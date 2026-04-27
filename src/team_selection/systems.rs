@@ -31,7 +31,11 @@ pub fn button_select_monster_system(
 pub fn button_confirm_selection_system(
     mut interaction_query: Query<
         &Interaction,
-        (Changed<Interaction>, With<Button>, With<ConfirmSelectionButton>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ConfirmSelectionButton>,
+        ),
     >,
     selection_state: Res<SelectionState>,
     monster_pool: Res<MonsterPool>,
@@ -91,12 +95,21 @@ pub fn update_selection_ui_system(
     mut indicator_query: Query<(&MonsterCardSelectionIndicator, &mut Visibility)>,
     mut order_text_query: Query<(&SelectionOrderText, &mut Text), Without<SelectionCountText>>,
     mut card_query: Query<
-        (&Interaction, &MonsterCardButton, &mut BackgroundColor, &mut BorderColor),
+        (
+            &Interaction,
+            &MonsterCardButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
         With<Button>,
     >,
     mut confirm_button_query: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (With<Button>, With<ConfirmSelectionButton>, Without<MonsterCardButton>),
+        (
+            With<Button>,
+            With<ConfirmSelectionButton>,
+            Without<MonsterCardButton>,
+        ),
     >,
 ) {
     // Update selection count text
@@ -152,7 +165,9 @@ pub fn update_selection_ui_system(
     // Update confirm button state
     for (interaction, mut bg, mut border) in &mut confirm_button_query {
         if *interaction == Interaction::None {
-            if selection_state.can_confirm() && selection_state.selected_indices.len() <= rules.max_team_size {
+            if selection_state.can_confirm()
+                && selection_state.selected_indices.len() <= rules.max_team_size
+            {
                 *bg = BackgroundColor(theme.button_idle);
                 *border = BorderColor::all(theme.button_border_idle);
             } else {
