@@ -12,7 +12,7 @@ pub(super) const MONSTER_NAMES: [&str; 7] = [
     "风精灵",
 ];
 
-pub(super) const NODE_SIZE: Vec2 = Vec2::new(520.0, 360.0);
+pub(super) const NODE_SIZE: Vec2 = Vec2::new(1024.0, 360.0);
 pub(super) const REFERENCE_SIZE: Vec2 = Vec2::new(887.0, 768.0);
 
 #[derive(Clone, Copy, Debug)]
@@ -39,12 +39,12 @@ pub(super) fn visual_config(name: &str, side: Side) -> MonsterVisualConfig {
         ("火精灵", Side::Player) => MonsterVisualConfig {
             facing_scale: 0.66,
             flip_y: false,
-            offset: Vec2::new(0.0, -28.0),
+            offset: Vec2::new(-400.0, -28.0),
         },
         ("火精灵", Side::Enemy) => MonsterVisualConfig {
             facing_scale: -0.66,
             flip_y: true,
-            offset: Vec2::new(0.0, -28.0),
+            offset: Vec2::new(400.0, -28.0),
         },
         (_, Side::Player) => MonsterVisualConfig {
             facing_scale: -0.88,

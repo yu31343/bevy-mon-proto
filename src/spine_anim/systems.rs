@@ -320,7 +320,10 @@ pub(super) fn handle_spine_animation_complete(
                         .remove::<PendingAnimationAction>();
                 }
                 AnimationCompleteAction::StartDeathFade => {
-                    spine_ui.tint = Color::WHITE;
+                    spine_ui.animation = None;
+                    if spine_ui.tint != Color::WHITE {
+                        spine_ui.tint = Color::WHITE;
+                    }
                     commands
                         .entity(ui_entity)
                         .remove::<PendingAnimationAction>()
