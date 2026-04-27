@@ -485,6 +485,14 @@ pub(crate) fn aura_status_stage_label(
     )
 }
 
+pub(crate) fn status_stage_label(stats: &Stats, statuses: &StatusBoard) -> String {
+    format!(
+        "状态: {} | 阶段: {}",
+        status_label(statuses),
+        stat_stage_debug_label(stats)
+    )
+}
+
 pub(crate) fn combatant_debug_summary(
     name: &Name,
     stats: &Stats,

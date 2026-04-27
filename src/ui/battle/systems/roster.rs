@@ -64,9 +64,14 @@ pub(crate) fn update_player_roster_ui_system(
     {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
-                    text.0 = format!("{}键：{}{}", meta.index + 5, name, dead);
+                    let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
+                    text.0 = if aura_text.is_empty() {
+                        format!("{}键：{}{}", meta.index + 5, name, dead)
+                    } else {
+                        format!("{}键：{} {}{}", meta.index + 5, name, aura_text, dead)
+                    };
                 } else {
                     text.0 = format!("{}键：队伍{}", meta.index + 5, meta.index + 1);
                 }
@@ -78,17 +83,13 @@ pub(crate) fn update_player_roster_ui_system(
 
         if let Some(meta) = overlay_aura {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
-                    text.0 = super::super::helpers::aura_status_stage_label(
-                        stats,
-                        &aura.elements(),
-                        statuses,
-                    );
+                if let Ok((stats, _, _, _, statuses)) = combat_query.get(entity) {
+                    text.0 = super::super::helpers::status_stage_label(stats, statuses);
                 } else {
-                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                    text.0 = "状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
                 }
             } else {
-                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                text.0 = "状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
             }
             continue;
         }
