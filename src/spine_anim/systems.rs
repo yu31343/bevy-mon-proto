@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_spine::{
-    SkeletonData, SpineEvent, SpineLoader, SpineUiAnimation, SpineUiFit, SpineUiNode,
-    SpineUiProxy, SpineUiReadyEvent, SpineUiSkeleton,
+    SkeletonData, SpineEvent, SpineLoader, SpineUiAnimation, SpineUiFit, SpineUiNode, SpineUiProxy,
+    SpineUiReadyEvent, SpineUiSkeleton,
 };
 
 use crate::battle::{BattleEvent, Combatant, EnemyTeam, InBattle, PlayerTeam, Side, Stats};
@@ -14,11 +14,9 @@ use super::components::{
     PendingAnimationAction,
 };
 use super::config::{
-    atlas_asset_path, death_fade_seconds, skill_animation, skeleton_asset_path,
-    supports_spine_animation, visual_config,
-    MONSTER_NAMES, NODE_SIZE, REFERENCE_SIZE,
+    MONSTER_NAMES, NODE_SIZE, REFERENCE_SIZE, atlas_asset_path, death_fade_seconds,
+    skeleton_asset_path, skill_animation, supports_spine_animation, visual_config,
 };
-
 
 #[derive(Resource, Default, Clone)]
 pub(super) struct MonsterAnimationLibrary(pub HashMap<String, Handle<SkeletonData>>);
@@ -66,21 +64,15 @@ pub(super) fn spawn_monster_ui_visuals(
             continue;
         };
 
-        info!("Spine: spawning animation for {} ({:?})", name.as_str(), combatant.side);
+        info!(
+            "Spine: spawning animation for {} ({:?})",
+            name.as_str(),
+            combatant.side
+        );
 
         let (left, right, top, bottom) = match combatant.side {
-            Side::Player => (
-                Val::Px(28.0),
-                Val::Auto,
-                Val::Px(196.0),
-                Val::Auto,
-            ),
-            Side::Enemy => (
-                Val::Auto,
-                Val::Px(28.0),
-                Val::Px(196.0),
-                Val::Auto,
-            ),
+            Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(196.0), Val::Auto),
+            Side::Enemy => (Val::Auto, Val::Px(28.0), Val::Px(196.0), Val::Auto),
         };
         let visual = visual_config(name.as_str(), combatant.side);
 
@@ -141,7 +133,11 @@ pub(super) fn sync_active_visibility_and_facing(
             Side::Enemy => enemy_active,
         };
         let should_show = visual.dying || Some(visual.owner) == active_owner;
-        let new_display = if should_show { Display::Flex } else { Display::None };
+        let new_display = if should_show {
+            Display::Flex
+        } else {
+            Display::None
+        };
         let old_display = node.display;
         node.display = new_display;
 
@@ -317,11 +313,14 @@ pub(super) fn handle_spine_animation_complete(
                     if !visual.dying && node.display != Display::None {
                         spine_ui.animation = Some(SpineUiAnimation::looping("idle_loop"));
                     }
-                    commands.entity(ui_entity).remove::<PendingAnimationAction>();
+                    commands
+                        .entity(ui_entity)
+                        .remove::<PendingAnimationAction>();
                 }
                 AnimationCompleteAction::StartDeathFade => {
                     spine_ui.tint = Color::WHITE;
-                    commands.entity(ui_entity)
+                    commands
+                        .entity(ui_entity)
                         .remove::<PendingAnimationAction>()
                         .insert(DeathFade {
                             timer: Timer::from_seconds(handle.death_fade_seconds, TimerMode::Once),
@@ -335,7 +334,13 @@ pub(super) fn handle_spine_animation_complete(
 pub(super) fn tick_death_fade(
     mut commands: Commands,
     time: Res<Time>,
-    mut dying_query: Query<(Entity, &mut MonsterVisual, &mut Node, &mut SpineUiNode, &mut DeathFade)>,
+    mut dying_query: Query<(
+        Entity,
+        &mut MonsterVisual,
+        &mut Node,
+        &mut SpineUiNode,
+        &mut DeathFade,
+    )>,
 ) {
     for (entity, mut visual, mut node, mut spine_ui, mut fade) in &mut dying_query {
         fade.timer.tick(time.delta());
@@ -369,9 +374,7 @@ pub(super) fn log_spine_loader_failures(
             if matches!(loader, SpineLoader::Failed) {
                 warn!(
                     "Spine: loader failed for monster animation. ui_entity={:?}, proxy_entity={:?}, skeleton={:?}",
-                    ui_entity,
-                    proxy.proxy_entity,
-                    handle.skeleton
+                    ui_entity, proxy.proxy_entity, handle.skeleton
                 );
             }
         }

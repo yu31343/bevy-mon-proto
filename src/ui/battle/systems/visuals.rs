@@ -73,7 +73,10 @@ pub(crate) fn button_visual_state_system(
     >,
     theme: Res<UiTheme>,
 ) {
-    let apply = |interaction: &Interaction, bg: &mut BackgroundColor, border: &mut BorderColor, theme: &UiTheme| {
+    let apply = |interaction: &Interaction,
+                 bg: &mut BackgroundColor,
+                 border: &mut BorderColor,
+                 theme: &UiTheme| {
         *bg = match *interaction {
             Interaction::Pressed => BackgroundColor(theme.button_pressed),
             Interaction::Hovered => BackgroundColor(theme.button_hover),
@@ -129,4 +132,3 @@ pub(crate) fn update_discard_armed_visual_system(
         }
     }
 }
-

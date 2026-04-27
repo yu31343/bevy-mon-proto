@@ -1,10 +1,6 @@
 use bevy::prelude::*;
 
-use super::{
-    components::*,
-    resources::UiFontHandle,
-    theme::UiTheme,
-};
+use super::{components::*, resources::UiFontHandle, theme::UiTheme};
 
 use crate::battle::Side;
 
@@ -13,7 +9,8 @@ pub(crate) fn spawn_camera(mut commands: Commands) {
 }
 
 pub(crate) fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-    static EMBEDDED_UI_FONT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded_ui_font.bin"));
+    static EMBEDDED_UI_FONT: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/embedded_ui_font.bin"));
 
     let font = Font::try_from_bytes(EMBEDDED_UI_FONT.to_vec())
         .expect("embedded UI font should be valid and loadable");
@@ -160,26 +157,24 @@ fn spawn_small_bench_card(
                     PlayerBenchCard { index },
                 ))
                 .with_children(|card| {
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("待机位"),
-                            title_font.clone(),
-                            TextColor(theme.text_primary),
-                        ));
-                        header.spawn((
-                            Text::new(header_text),
-                            hotkey_font.clone(),
-                            TextColor(theme.accent_player),
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },))
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("待机位"),
+                                title_font.clone(),
+                                TextColor(theme.text_primary),
+                            ));
+                            header.spawn((
+                                Text::new(header_text),
+                                hotkey_font.clone(),
+                                TextColor(theme.accent_player),
+                            ));
+                        });
                     card.spawn((
                         Text::new("队伍"),
                         title_font.clone(),
@@ -250,26 +245,24 @@ fn spawn_small_bench_card(
                     EnemyBenchCard { index },
                 ))
                 .with_children(|card| {
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("待机位"),
-                            title_font.clone(),
-                            TextColor(theme.text_primary),
-                        ));
-                        header.spawn((
-                            Text::new(header_text),
-                            hotkey_font.clone(),
-                            TextColor(theme.accent_enemy),
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },))
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("待机位"),
+                                title_font.clone(),
+                                TextColor(theme.text_primary),
+                            ));
+                            header.spawn((
+                                Text::new(header_text),
+                                hotkey_font.clone(),
+                                TextColor(theme.accent_enemy),
+                            ));
+                        });
                     card.spawn((
                         Text::new("队伍"),
                         title_font.clone(),
@@ -343,28 +336,23 @@ fn spawn_skill_row_player(
     icon_font: TextFont,
 ) {
     parent
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                justify_content: JustifyContent::SpaceBetween,
-                column_gap: Val::Px(8.0),
-                row_gap: Val::Px(8.0),
-                align_items: AlignItems::Stretch,
-                ..default()
-            },
-        ))
+        .spawn((Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(8.0),
+            align_items: AlignItems::Stretch,
+            ..default()
+        },))
         .with_children(|row| {
             for idx in 0..4 {
                 row.spawn((
                     Button,
                     Node {
-                        width: Val::Percent(48.0),
-                        min_height: Val::Px(64.0),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(78.0),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                        align_items: AlignItems::FlexStart,
+                        column_gap: Val::Px(6.0),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
                         ..default()
@@ -382,11 +370,11 @@ fn spawn_skill_row_player(
                     button
                         .spawn((
                             Node {
-                                width: Val::Px(30.0),
-                                height: Val::Px(30.0),
+                                width: Val::Px(26.0),
+                                height: Val::Px(26.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
-                                border_radius: BorderRadius::all(Val::Px(7.0)),
+                                border_radius: BorderRadius::all(Val::Px(6.0)),
                                 ..default()
                             },
                             ImageNode::solid_color(Color::srgba(0.22, 0.38, 0.52, 0.90)),
@@ -401,14 +389,12 @@ fn spawn_skill_row_player(
                         });
 
                     button
-                        .spawn((
-                            Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(2.0),
-                                flex_grow: 1.0,
-                                ..default()
-                            },
-                        ))
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(1.0),
+                            flex_grow: 1.0,
+                            ..default()
+                        },))
                         .with_children(|column| {
                             column.spawn((
                                 Text::new(format!("技能 {}", idx + 1)),
@@ -449,6 +435,10 @@ pub(crate) fn setup_ui_system(
     let result_font = super::helpers::make_text_font(40.0, ui_font.as_deref());
     let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let small_font = super::helpers::make_text_font(11.0, ui_font.as_deref());
+    let skill_header_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
+    let skill_body_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
+    let skill_meta_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
+    let skill_icon_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
 
     commands
         .spawn((
@@ -599,6 +589,7 @@ pub(crate) fn setup_ui_system(
                 }
             });
 
+
             // === Enemy Info: Top-Right (only name + HP + shield, no skills/team) ===
             root.spawn((
                 Node {
@@ -690,6 +681,7 @@ pub(crate) fn setup_ui_system(
                 }
             });
 
+
             // === Hint Text: Center ===
             root.spawn((
                 Node {
@@ -716,12 +708,13 @@ pub(crate) fn setup_ui_system(
                 ));
             });
 
+
             // === Bottom-Left: Control Buttons ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(20.0),
-                    bottom: Val::Px(20.0),
+                    bottom: Val::Px(16.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(10.0),
                     ..default()
@@ -893,9 +886,9 @@ pub(crate) fn setup_ui_system(
                     position_type: PositionType::Absolute,
                     right: Val::Px(16.0),
                     bottom: Val::Px(16.0),
-                    width: Val::Px(370.0),
+                    width: Val::Px(400.0),
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
+                    row_gap: Val::Px(8.0),
                     ..default()
                 },
                 SkillPanelRoot,
@@ -906,8 +899,8 @@ pub(crate) fn setup_ui_system(
                     Button,
                     Node {
                         width: Val::Percent(100.0),
-                        min_height: Val::Px(48.0),
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                        min_height: Val::Px(42.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
                         justify_content: JustifyContent::Center,
@@ -923,7 +916,7 @@ pub(crate) fn setup_ui_system(
                 .with_children(|btn| {
                     btn.spawn((
                         Text::new("换精灵（Q）"),
-                        body_font.clone(),
+                        skill_body_font.clone(),
                         TextColor(theme.accent_player),
                     ));
                 });
@@ -932,9 +925,9 @@ pub(crate) fn setup_ui_system(
                 right_panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
-                        padding: UiRect::all(Val::Px(12.0)),
+                        padding: UiRect::all(Val::Px(10.0)),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
+                        row_gap: Val::Px(6.0),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_panel),
                         ..default()
@@ -947,7 +940,7 @@ pub(crate) fn setup_ui_system(
                     skill_section.spawn((
                         Node {
                             width: Val::Percent(100.0),
-                            padding: UiRect::px(0.0, 0.0, 4.0, 6.0),
+                            padding: UiRect::px(0.0, 0.0, 3.0, 5.0),
                             border: UiRect::bottom(Val::Px(1.0)),
                             ..default()
                         },
@@ -956,7 +949,7 @@ pub(crate) fn setup_ui_system(
                     .with_children(|header| {
                         header.spawn((
                             Text::new("技能"),
-                            title_font.clone(),
+                            skill_header_font.clone(),
                             TextColor(theme.accent_player),
                             theme.title_text_shadow(),
                         ));
@@ -966,9 +959,9 @@ pub(crate) fn setup_ui_system(
                         &theme,
                         border_1,
                         radius_button,
-                        body_font.clone(),
-                        meta_font.clone(),
-                        icon_font.clone(),
+                        skill_body_font.clone(),
+                        skill_meta_font.clone(),
+                        skill_icon_font.clone(),
                     );
                 });
             });

@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
-use crate::battle::{EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, Stats};
+use crate::battle::{ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Stats, StatusBoard};
 
 use super::super::components::*;
 use super::super::theme::UiTheme;
 
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
-    combat_query: Query<(&Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
+    combat_query: Query<(&Stats, &Name, &Shield, &ElementAura, &StatusBoard), With<InBattle>>,
     mut text_q: Query<
         (
             &mut Text,
@@ -21,7 +21,13 @@ pub(crate) fn update_player_roster_ui_system(
     mut nodes: ParamSet<(
         Query<(&TeamMemberHpBarFill, &mut Node)>,
         Query<(&TeamMemberShieldBarFill, &mut Node)>,
-        Query<(&TeamMemberButton, &Interaction, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(
+            &TeamMemberButton,
+            &Interaction,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
         Query<(&PlayerBenchHpBarFill, &mut Node)>,
         Query<(&PlayerBenchShieldBarFill, &mut Node)>,
         Query<(&PlayerBenchCard, &mut Node)>,
@@ -41,7 +47,7 @@ pub(crate) fn update_player_roster_ui_system(
     for (mut text, overlay_name, overlay_aura, bench_name, bench_aura) in &mut text_q {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     text.0 = format!("{}键：{}{}", meta.index + 5, name, dead);
                 } else {
@@ -55,20 +61,24 @@ pub(crate) fn update_player_roster_ui_system(
 
         if let Some(meta) = overlay_aura {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", super::super::helpers::aura_label(aura.attached));
+                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
+                    text.0 = super::super::helpers::aura_status_stage_label(
+                        stats,
+                        &aura.elements(),
+                        statuses,
+                    );
                 } else {
-                    text.0 = "附着: 无".to_string();
+                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
                 }
             } else {
-                text.0 = "附着: 无".to_string();
+                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
             }
             continue;
         }
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     text.0 = format!("{}{}", name, dead);
                 } else {
@@ -82,20 +92,24 @@ pub(crate) fn update_player_roster_ui_system(
 
         if let Some(meta) = bench_aura {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", super::super::helpers::aura_label(aura.attached));
+                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
+                    text.0 = super::super::helpers::aura_status_stage_label(
+                        stats,
+                        &aura.elements(),
+                        statuses,
+                    );
                 } else {
-                    text.0 = "附着: 无".to_string();
+                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
                 }
             } else {
-                text.0 = "附着: 无".to_string();
+                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
             }
         }
     }
 
     for (meta, mut node) in &mut nodes.p0() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, _, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -108,7 +122,7 @@ pub(crate) fn update_player_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p1() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -121,7 +135,7 @@ pub(crate) fn update_player_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p3() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, _, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -134,7 +148,7 @@ pub(crate) fn update_player_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p4() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -178,7 +192,7 @@ pub(crate) fn update_player_roster_ui_system(
 
     for (meta, mut vis) in &mut visibilities.p0() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                 *vis = if shield.0 > 0 {
                     Visibility::Visible
                 } else {
@@ -192,7 +206,7 @@ pub(crate) fn update_player_roster_ui_system(
 
     for (meta, mut vis) in &mut visibilities.p1() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                 *vis = if shield.0 > 0 && meta.index != player_team.0.active_index {
                     Visibility::Visible
                 } else {
@@ -207,7 +221,7 @@ pub(crate) fn update_player_roster_ui_system(
 
 pub(crate) fn update_enemy_roster_ui_system(
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<(&Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
+    combat_query: Query<(&Stats, &Name, &Shield, &ElementAura, &StatusBoard), With<InBattle>>,
     mut text_q: Query<
         (
             &mut Text,
@@ -221,7 +235,12 @@ pub(crate) fn update_enemy_roster_ui_system(
     mut nodes: ParamSet<(
         Query<(&EnemyTeamMemberHpBarFill, &mut Node)>,
         Query<(&EnemyTeamMemberShieldBarFill, &mut Node)>,
-        Query<(&EnemyTeamMemberButton, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(
+            &EnemyTeamMemberButton,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
         Query<(&EnemyBenchHpBarFill, &mut Node)>,
         Query<(&EnemyBenchShieldBarFill, &mut Node)>,
         Query<(&EnemyBenchCard, &mut Node)>,
@@ -241,7 +260,7 @@ pub(crate) fn update_enemy_roster_ui_system(
     for (mut text, overlay_name, overlay_aura, bench_name, bench_aura) in &mut text_q {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     text.0 = format!("{}{}", name, dead);
                 } else {
@@ -255,20 +274,24 @@ pub(crate) fn update_enemy_roster_ui_system(
 
         if let Some(meta) = overlay_aura {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", super::super::helpers::aura_label(aura.attached));
+                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
+                    text.0 = super::super::helpers::aura_status_stage_label(
+                        stats,
+                        &aura.elements(),
+                        statuses,
+                    );
                 } else {
-                    text.0 = "附着: 无".to_string();
+                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
                 }
             } else {
-                text.0 = "附着: 无".to_string();
+                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
             }
             continue;
         }
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     text.0 = format!("{}{}", name, dead);
                 } else {
@@ -282,20 +305,24 @@ pub(crate) fn update_enemy_roster_ui_system(
 
         if let Some(meta) = bench_aura {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((_, _, _, aura)) = combat_query.get(entity) {
-                    text.0 = format!("附着: {}", super::super::helpers::aura_label(aura.attached));
+                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
+                    text.0 = super::super::helpers::aura_status_stage_label(
+                        stats,
+                        &aura.elements(),
+                        statuses,
+                    );
                 } else {
-                    text.0 = "附着: 无".to_string();
+                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
                 }
             } else {
-                text.0 = "附着: 无".to_string();
+                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
             }
         }
     }
 
     for (meta, mut node) in &mut nodes.p0() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, _, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -308,7 +335,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p1() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -321,7 +348,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p3() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, _, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -334,7 +361,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     for (meta, mut node) in &mut nodes.p4() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
                 } else {
@@ -375,7 +402,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     for (meta, mut vis) in &mut visibilities.p0() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                 *vis = if shield.0 > 0 {
                     Visibility::Visible
                 } else {
@@ -389,7 +416,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     for (meta, mut vis) in &mut visibilities.p1() {
         if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _)) = combat_query.get(entity) {
+            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                 *vis = if shield.0 > 0 && meta.index != enemy_team.0.active_index {
                     Visibility::Visible
                 } else {

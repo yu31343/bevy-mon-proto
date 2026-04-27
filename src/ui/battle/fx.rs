@@ -1,5 +1,5 @@
 //! 战斗简易特效系统
-//! 
+//!
 //! 负责处理战斗中的视觉特效，包括：
 //! - 技能格闪白效果（技能释放时）
 //! - 伤害/治疗飘字效果（受到伤害或治疗时）
@@ -10,7 +10,14 @@ use bevy::prelude::*;
 use crate::battle::{BattleEvent, Side};
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
-use super::{components::{BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton}, resources::UiFontHandle, theme::UiTheme};
+use super::{
+    components::{
+        BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton,
+        SwitchMonsterButton, TeamMemberButton,
+    },
+    resources::UiFontHandle,
+    theme::UiTheme,
+};
 
 /// 技能格闪白计时器组件
 /// - 与 `SkillSlotId` 组件附加在同一实体上
@@ -29,12 +36,12 @@ pub struct FxLifetime(pub Timer);
 pub struct ScreenFlashTimer(pub Timer);
 
 /// 处理战斗事件并触发对应特效
-/// 
+///
 /// 功能：
 /// - 监听并处理 `BattleEvent` 消息
 /// - 根据不同事件类型触发相应的视觉特效
 /// - 单次系统调用中处理所有本帧事件，避免重复处理
-/// 
+///
 /// 参数：
 /// - `events`: 战斗事件读取器
 /// - `commands`: 实体命令系统，用于创建/修改实体
@@ -46,7 +53,10 @@ pub fn process_battle_fx_events(
     mut commands: Commands,
     root: Query<Entity, With<BattleUiRoot>>,
     slots: Query<(Entity, &SkillSlotId)>,
-    mut discard_button: Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<DiscardButton>>,
+    mut discard_button: Query<
+        (Entity, &mut BackgroundColor, &mut BorderColor),
+        With<DiscardButton>,
+    >,
     ui_font: Option<Res<UiFontHandle>>,
 ) {
     // 获取UI根节点实体，若不存在则直接返回
@@ -93,14 +103,14 @@ pub fn process_battle_fx_events(
                 if *amount <= 0 {
                     continue;
                 }
-                
+
                 // 根据目标阵营确定飘字位置
                 let top = if *target == Side::Enemy {
-                    Val::Percent(22.0)  // 敌方飘字位置
+                    Val::Percent(22.0) // 敌方飘字位置
                 } else {
-                    Val::Percent(68.0)  // 玩家飘字位置
+                    Val::Percent(68.0) // 玩家飘字位置
                 };
-                
+
                 // 创建伤害飘字
                 commands.entity(root).with_children(|p| {
                     p.spawn((
@@ -110,17 +120,17 @@ pub fn process_battle_fx_events(
                             top,
                             ..default()
                         },
-                        Text::new(format!("-{amount}")),  // 伤害值显示（带负号）
+                        Text::new(format!("-{amount}")), // 伤害值显示（带负号）
                         make_font(26.0),
-                        TextColor(Color::srgb(1.0, 0.35, 0.35)),  // 红色伤害文字
+                        TextColor(Color::srgb(1.0, 0.35, 0.35)), // 红色伤害文字
                         TextShadow {
                             offset: Vec2::new(1.0, 1.0),
                             color: Color::srgba(0.0, 0.0, 0.0, 0.75),
                         },
-                        FxLifetime(Timer::from_seconds(1.1, TimerMode::Once)),  // 飘字持续1.1秒
+                        FxLifetime(Timer::from_seconds(1.1, TimerMode::Once)), // 飘字持续1.1秒
                     ));
                 });
-                
+
                 // 创建受击闪屏效果
                 commands.entity(root).with_children(|p| {
                     p.spawn((
@@ -132,8 +142,8 @@ pub fn process_battle_fx_events(
                             top: Val::Px(0.0),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.85, 0.15, 0.1, 0.22)),  // 淡红色闪屏
-                        ScreenFlashTimer(Timer::from_seconds(0.12, TimerMode::Once)),  // 闪屏持续0.12秒
+                        BackgroundColor(Color::srgba(0.85, 0.15, 0.1, 0.22)), // 淡红色闪屏
+                        ScreenFlashTimer(Timer::from_seconds(0.12, TimerMode::Once)), // 闪屏持续0.12秒
                     ));
                 });
             }
@@ -143,24 +153,24 @@ pub fn process_battle_fx_events(
                 if *amount <= 0 {
                     continue;
                 }
-                
+
                 // 创建治疗飘字
                 commands.entity(root).with_children(|p| {
                     p.spawn((
                         Node {
                             position_type: PositionType::Absolute,
                             left: Val::Percent(44.0),
-                            top: Val::Percent(52.0),  // 治疗飘字位置
+                            top: Val::Percent(52.0), // 治疗飘字位置
                             ..default()
                         },
-                        Text::new(format!("+{amount}")),  // 治疗值显示（带加号）
+                        Text::new(format!("+{amount}")), // 治疗值显示（带加号）
                         make_font(24.0),
-                        TextColor(Color::srgb(0.45, 1.0, 0.55)),  // 绿色治疗文字
+                        TextColor(Color::srgb(0.45, 1.0, 0.55)), // 绿色治疗文字
                         TextShadow {
                             offset: Vec2::new(1.0, 1.0),
                             color: Color::srgba(0.0, 0.0, 0.0, 0.65),
                         },
-                        FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)),  // 飘字持续1.0秒
+                        FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)), // 飘字持续1.0秒
                     ));
                 });
             }
@@ -171,12 +181,12 @@ pub fn process_battle_fx_events(
 }
 
 /// 更新技能格闪白效果
-/// 
+///
 /// 功能：
 /// - 更新技能格闪白计时器
 /// - 根据计时器状态控制闪白效果的显示与结束
 /// - 闪白结束后恢复技能格的原始样式
-/// 
+///
 /// 参数：
 /// - `commands`: 实体命令系统
 /// - `time`: 时间资源，用于更新计时器
@@ -197,11 +207,11 @@ pub fn tick_skill_flash_timer(
     for (entity, mut timer, mut bg, mut border, sid) in &mut q {
         // 更新计时器
         timer.0.tick(time.delta());
-        
+
         if timer.0.just_finished() {
             // 计时器结束：移除闪白计时器组件，恢复原始样式
             commands.entity(entity).remove::<SkillFlashTimer>();
-            
+
             // 根据阵营恢复不同的样式
             match sid.side {
                 Side::Player => {
@@ -222,11 +232,11 @@ pub fn tick_skill_flash_timer(
 }
 
 /// 更新屏幕闪白效果
-/// 
+///
 /// 功能：
 /// - 更新闪屏计时器
 /// - 计时器结束后销毁闪屏实体
-/// 
+///
 /// 参数：
 /// - `commands`: 实体命令系统
 /// - `time`: 时间资源，用于更新计时器
@@ -239,7 +249,7 @@ pub fn tick_screen_flashes(
     for (entity, mut t) in &mut q {
         // 更新计时器
         t.0.tick(time.delta());
-        
+
         // 计时器结束：销毁闪屏实体
         if t.0.just_finished() {
             commands.entity(entity).despawn();
@@ -248,11 +258,11 @@ pub fn tick_screen_flashes(
 }
 
 /// 更新临时特效的生命周期
-/// 
+///
 /// 功能：
 /// - 更新飘字等临时特效的生命周期计时器
 /// - 计时器结束后销毁临时特效实体
-/// 
+///
 /// 参数：
 /// - `commands`: 实体命令系统
 /// - `time`: 时间资源，用于更新计时器
@@ -265,7 +275,7 @@ pub fn tick_fx_lifetimes(
     for (entity, mut life) in &mut q {
         // 更新计时器
         life.0.tick(time.delta());
-        
+
         // 计时器结束：销毁临时特效实体
         if life.0.just_finished() {
             commands.entity(entity).despawn();
@@ -356,17 +366,41 @@ pub fn keyboard_button_flash_system(
     mut commands: Commands,
     mut queries: ParamSet<(
         // p0: 技能按钮（1/2/3/4）
-        Query<(Entity, &super::components::SkillButton, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(
+            Entity,
+            &super::components::SkillButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
         // p1: 结束回合按钮（E）
-        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::EndTurnButton>>,
+        Query<
+            (Entity, &mut BackgroundColor, &mut BorderColor),
+            With<super::components::EndTurnButton>,
+        >,
         // p2: 手牌按钮（Z/X/C/V/B）
-        Query<(Entity, &super::components::PlayerCardButton, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(
+            Entity,
+            &super::components::PlayerCardButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
         // p3: 队员切换按钮（5/6/7）
-        Query<(Entity, &super::components::TeamMemberButton, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(
+            Entity,
+            &super::components::TeamMemberButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
         // p4: 换精灵按钮（Q）
-        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::SwitchMonsterButton>>,
+        Query<
+            (Entity, &mut BackgroundColor, &mut BorderColor),
+            With<super::components::SwitchMonsterButton>,
+        >,
         // p5: 取消按钮（Q 关闭时也闪）
-        Query<(Entity, &mut BackgroundColor, &mut BorderColor), With<super::components::SwitchCancelButton>>,
+        Query<
+            (Entity, &mut BackgroundColor, &mut BorderColor),
+            With<super::components::SwitchCancelButton>,
+        >,
     )>,
 ) {
     // 辅助宏：写颜色并 insert 计时器
@@ -452,4 +486,3 @@ pub fn keyboard_button_flash_system(
         }
     }
 }
-

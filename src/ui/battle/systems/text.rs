@@ -1,36 +1,46 @@
 use bevy::prelude::*;
 
+use super::super::components::*;
 use crate::{
     battle::{
-        BattleEvent, Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, SkillCount,
-        SkillList, Stats, Team,
+        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, SkillCount,
+        SkillList, Stats, StatusBoard, Team,
     },
     data::BattleDbs,
     game_state::BattlePhase,
 };
 
-use super::super::components::*;
-
 fn format_active_summary(
     header: &str,
     team: &Team,
-    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
+    query: &Query<
+        (
+            &Combatant,
+            &Stats,
+            &Name,
+            &Shield,
+            &ElementAura,
+            &StatusBoard,
+        ),
+        With<InBattle>,
+    >,
 ) -> String {
     let Some(entity) = team.active_combatant() else {
         return format!("{header}：无在场精灵");
     };
-    let Ok((combatant, stats, name, shield, aura)) = query.get(entity) else {
+    let Ok((combatant, stats, name, shield, aura, statuses)) = query.get(entity) else {
         return format!("{header}：数据读取失败");
     };
     format!(
-        "{}在场 [{}] {} | HP {}/{} | 护盾 {} | 附着 {}",
+        "{}在场 [{}] {} | HP {}/{} | 护盾 {} | {} | 详细状态 {}",
         header,
         combatant.side,
         name,
         stats.hp.max(0),
         stats.max_hp,
         shield.0.max(0),
-        super::super::helpers::aura_label(aura.attached),
+        super::super::helpers::aura_status_stage_label(stats, &aura.elements(), statuses),
+        super::super::helpers::status_debug_label(statuses),
     )
 }
 
@@ -43,7 +53,6 @@ pub(crate) fn update_battle_text_system(
             Option<&BattlePhaseText>,
             Option<&PlayerStatsText>,
             Option<&EnemyStatsText>,
-            Option<&ResultText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
@@ -63,11 +72,22 @@ pub(crate) fn update_battle_text_system(
             Without<PlayerCardNameText>,
             Without<PlayerCardCostText>,
             Without<PlayerCardDescText>,
+            Without<BattleActionText>,
         ),
     >,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
+    combat_query: Query<
+        (
+            &Combatant,
+            &Stats,
+            &Name,
+            &Shield,
+            &ElementAura,
+            &StatusBoard,
+        ),
+        With<InBattle>,
+    >,
     skill_query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     skill_db: Res<BattleDbs>,
     battle_phase: Res<State<BattlePhase>>,
@@ -98,7 +118,6 @@ pub(crate) fn update_battle_text_system(
         is_phase,
         is_player,
         is_enemy,
-        is_result,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
@@ -109,10 +128,6 @@ pub(crate) fn update_battle_text_system(
         is_enemy_name,
     ) in &mut text_q
     {
-        if is_result.is_some() {
-            text.0.clear();
-            continue;
-        }
         if is_phase.is_some() {
             text.0 = format!(
                 "战斗阶段：{}",
@@ -122,7 +137,7 @@ pub(crate) fn update_battle_text_system(
         }
         if is_player_name.is_some() {
             if let Some(entity) = player_team.0.active_combatant() {
-                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
+                if let Ok((_, _, name, _, _, _)) = combat_query.get(entity) {
                     text.0 = format!("我方：{}", name);
                 }
             }
@@ -130,7 +145,7 @@ pub(crate) fn update_battle_text_system(
         }
         if is_enemy_name.is_some() {
             if let Some(entity) = enemy_team.0.active_combatant() {
-                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
+                if let Ok((_, _, name, _, _, _)) = combat_query.get(entity) {
                     text.0 = format!("敌方：{}", name);
                 }
             }
@@ -163,9 +178,10 @@ pub(crate) fn update_battle_text_system(
             } else {
                 let skill_id = skills[meta.index];
                 text.0 = format!(
-                    "{} AP消耗：{}",
+                    "{}\nAP消耗：{}\n{}",
                     super::super::helpers::skill_meta(skill_id, &skill_db),
-                    super::super::helpers::monster_skill_ap_cost_ui(meta.index)
+                    super::super::helpers::monster_skill_ap_cost_ui(skill_id, &skill_db),
+                    super::super::helpers::skill_summary(skill_id, &skill_db)
                 );
             }
             continue;
@@ -285,8 +301,16 @@ pub(crate) fn update_result_ui_system(
     battle_result: Res<crate::battle::BattleResult>,
 ) {
     if let Ok(mut result_text) = result_text_q.single_mut() {
-        result_text.0 = battle_result.message.clone();
+        if battle_result.message.is_empty() {
+            result_text.0.clear();
+            return;
+        }
+
+        let mut lines = vec![battle_result.message.clone()];
+        if let Some(status) = &battle_result.export_status {
+            lines.push(status.clone());
+        }
+        lines.push("按 L 导出 replay/action log。".to_string());
+        result_text.0 = lines.join("\n");
     }
 }
-
-

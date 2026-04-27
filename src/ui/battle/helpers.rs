@@ -1,13 +1,14 @@
 use bevy::prelude::*;
 
+use super::resources::UiFontHandle;
 use crate::{
-    battle::{Combatant, ElementAura, InBattle, Team, Shield, Stats},
-    data::{BattleDbs, CardDef, CardEffect, ElementType, SkillEffect, SkillId},
+    battle::{Combatant, ElementAura, InBattle, Shield, Stats, StatusBoard, Team},
+    data::{
+        AttributeStageModifier, AttributeType, BattleDbs, CardDef, CardEffect, EffectTarget,
+        ElementType, SkillCategory, SkillCondition, SkillEffect, SkillId, StatusCategory,
+        StatusTickTiming,
+    },
     game_state::BattlePhase,
-};
-
-use super::{
-    resources::UiFontHandle,
 };
 
 pub(crate) fn skill_name(skill_id: SkillId, dbs: &BattleDbs) -> String {
@@ -17,37 +18,275 @@ pub(crate) fn skill_name(skill_id: SkillId, dbs: &BattleDbs) -> String {
         .unwrap_or_else(|| format!("{skill_id:?}"))
 }
 
+fn skill_element_text(element: Option<ElementType>) -> &'static str {
+    match element {
+        Some(ElementType::Water) => "·水系",
+        Some(ElementType::Fire) => "·火系",
+        Some(ElementType::Grass) => "·草系",
+        Some(ElementType::Light) => "·光系",
+        Some(ElementType::Dark) => "·暗系",
+        Some(ElementType::Thunder) => "·雷系",
+        Some(ElementType::Wind) => "·风系",
+        None => "",
+    }
+}
+
+fn primary_effect(effect: &SkillEffect) -> &SkillEffect {
+    match effect {
+        SkillEffect::Sequence { effects } if !effects.is_empty() => primary_effect(&effects[0]),
+        _ => effect,
+    }
+}
+
 pub(crate) fn skill_meta(skill_id: SkillId, dbs: &BattleDbs) -> String {
     let Some(skill) = dbs.skills.get(&skill_id) else {
         return "类型：未知".to_string();
     };
-    match &skill.effect {
-        SkillEffect::Attack { .. } => {
-            let element_text = match skill.element {
-                Some(ElementType::Water) => "·水系",
-                Some(ElementType::Fire) => "·火系",
-                Some(ElementType::Grass) => "·草系",
-                Some(ElementType::Light) => "·光系",
-                Some(ElementType::Dark) => "·暗系",
-                Some(ElementType::Thunder) => "·雷系",
-                Some(ElementType::Wind) => "·风系",
-                None => "",
-            };
-            format!("类型：攻击{}", element_text)
+
+    let primary = primary_effect(&skill.effect);
+    match skill.category {
+        SkillCategory::NormalAttack => "类型：普通攻击".to_string(),
+        SkillCategory::ElementAttack => {
+            format!("类型：元素攻击{}", skill_element_text(skill.element))
         }
-        SkillEffect::Heal { .. } => "类型：治疗".to_string(),
-        SkillEffect::Shield { .. } => "类型：护盾".to_string(),
+        SkillCategory::SpecialAttack => {
+            format!("类型：特殊攻击{}", skill_element_text(skill.element))
+        }
+        SkillCategory::SelfUtility => match primary {
+            SkillEffect::Shield { .. } => "类型：自身护盾".to_string(),
+            SkillEffect::Heal { .. } => "类型：自身治疗".to_string(),
+            SkillEffect::Cleanse { .. } => "类型：自身净化".to_string(),
+            SkillEffect::ModifyStages { .. } | SkillEffect::ApplyStatus { .. } => {
+                "类型：自身增益".to_string()
+            }
+            _ => "类型：自身辅助".to_string(),
+        },
+        SkillCategory::AllyUtility => match primary {
+            SkillEffect::Heal { .. } => "类型：己方治疗".to_string(),
+            SkillEffect::Shield { .. } => "类型：己方护盾".to_string(),
+            SkillEffect::Cleanse { .. } => "类型：己方净化".to_string(),
+            SkillEffect::ModifyStages { .. } | SkillEffect::ApplyStatus { .. } => {
+                "类型：己方增益".to_string()
+            }
+            _ => "类型：己方辅助".to_string(),
+        },
+        SkillCategory::EnemyDebuff => "类型：敌方减益".to_string(),
     }
 }
 
-pub(crate) fn monster_skill_ap_cost_ui(slot: usize) -> i32 {
-    match slot {
-        0 => 2,
-        1 => 3,
-        2 => 1,
-        3 => 1,
-        _ => 999,
+pub(crate) fn monster_skill_ap_cost_ui(skill_id: SkillId, dbs: &BattleDbs) -> i32 {
+    dbs.skills
+        .get(&skill_id)
+        .map(|skill| skill.cost_ap)
+        .unwrap_or(999)
+}
+
+fn attribute_name(attribute: AttributeType) -> &'static str {
+    match attribute {
+        AttributeType::Atk => "Atk",
+        AttributeType::Def => "Def",
+        AttributeType::Spd => "Spd",
+        AttributeType::Acc => "Acc",
     }
+}
+
+fn effect_target_label(target: EffectTarget) -> &'static str {
+    match target {
+        EffectTarget::Infer => "目标",
+        EffectTarget::SelfTarget => "自身",
+        EffectTarget::Opponent => "敌方",
+    }
+}
+
+fn format_stage_modifiers(modifiers: &[AttributeStageModifier]) -> String {
+    modifiers
+        .iter()
+        .map(|modifier| {
+            format!(
+                "{}{:+}",
+                attribute_name(modifier.attribute),
+                modifier.amount
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn status_effect_name(status_id: &str, dbs: &BattleDbs) -> String {
+    match status_id {
+        "stage_shift_buff" => "属性增益".to_string(),
+        "stage_shift_debuff" => "属性减益".to_string(),
+        _ => dbs
+            .statuses
+            .statuses
+            .get(status_id)
+            .map(|status| status.name.clone())
+            .unwrap_or_else(|| status_id.to_string()),
+    }
+}
+
+fn status_effects_label(status_ids: &[String], dbs: &BattleDbs) -> String {
+    status_ids
+        .iter()
+        .map(|status_id| status_effect_name(status_id, dbs))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn condition_summary(condition: &SkillCondition, dbs: &BattleDbs) -> String {
+    match condition {
+        SkillCondition::TargetHadAura { element } => {
+            format!("目标已有{}附着", element_name(*element))
+        }
+        SkillCondition::TargetHadStatus { status_id } => {
+            format!("目标有状态{}", status_effect_name(status_id, dbs))
+        }
+        SkillCondition::TargetHadNoShield => "目标没有护盾".to_string(),
+        SkillCondition::LastReactionName { reaction_name } => format!("触发{}", reaction_name),
+        SkillCondition::LastWindSpreadSucceeded => "成功扩散".to_string(),
+        SkillCondition::LastWindSpreadFailed => "未扩散".to_string(),
+        SkillCondition::LastCleanseSucceeded => "净化成功".to_string(),
+        SkillCondition::LastCleanseFailed => "净化失败".to_string(),
+        SkillCondition::LastTargetFainted => "目标倒下".to_string(),
+        SkillCondition::Any { conditions } => conditions
+            .iter()
+            .map(|condition| condition_summary(condition, dbs))
+            .collect::<Vec<_>>()
+            .join(" 或 "),
+        SkillCondition::All { conditions } => conditions
+            .iter()
+            .map(|condition| condition_summary(condition, dbs))
+            .collect::<Vec<_>>()
+            .join(" 且 "),
+    }
+}
+
+fn effect_summary(effect: &SkillEffect, dbs: &BattleDbs) -> String {
+    match effect {
+        SkillEffect::Attack {
+            power,
+            lifesteal_ratio,
+            ignore_shield,
+        } => {
+            let mut parts = vec![format!("伤害{}", power)];
+            if *ignore_shield {
+                parts.push("无视护盾".to_string());
+            }
+            if let Some(ratio) = lifesteal_ratio {
+                parts.push(format!("吸血{}%", (ratio * 100.0).round() as i32));
+            }
+            parts.join("，")
+        }
+        SkillEffect::Heal { amount } => format!("治疗{}", amount),
+        SkillEffect::Shield { amount } => format!("护盾{}", amount),
+        SkillEffect::ApplyStatus { status_id } => {
+            format!("施加状态{}", status_effect_name(status_id, dbs))
+        }
+        SkillEffect::Cleanse {
+            prefer_aura,
+            fallback_to_debuff,
+            amount,
+        } => {
+            let target = if *prefer_aura && *fallback_to_debuff {
+                "优先清附着，否则清减益"
+            } else if *prefer_aura {
+                "清附着"
+            } else if *fallback_to_debuff {
+                "清减益"
+            } else {
+                "净化"
+            };
+            format!("{}×{}", target, amount)
+        }
+        SkillEffect::Dispel { status_ids, target } => {
+            format!(
+                "驱散{}{}",
+                effect_target_label(*target),
+                status_effects_label(status_ids, dbs)
+            )
+        }
+        SkillEffect::DealFixedDamage {
+            amount,
+            ignore_shield,
+            target,
+        } => {
+            if *ignore_shield {
+                format!(
+                    "对{}造成{}固定伤害(无视盾)",
+                    effect_target_label(*target),
+                    amount
+                )
+            } else {
+                format!("对{}造成{}固定伤害", effect_target_label(*target), amount)
+            }
+        }
+        SkillEffect::DealStatDifferenceDamage {
+            source_attribute,
+            target_attribute,
+            multiply_by_source_stage,
+            ignore_shield,
+            target,
+        } => {
+            let mut parts = vec![format!(
+                "对{}造成{}-{}属性差固定伤害",
+                effect_target_label(*target),
+                attribute_name(*source_attribute),
+                attribute_name(*target_attribute)
+            )];
+            if *multiply_by_source_stage {
+                parts.push("受来源等级修正".to_string());
+            }
+            if *ignore_shield {
+                parts.push("无视护盾".to_string());
+            }
+            parts.join("，")
+        }
+        SkillEffect::ModifyStages {
+            modifiers,
+            duration_turns,
+            target,
+        } => format!(
+            "{}属性{}，{}回合",
+            effect_target_label(*target),
+            format_stage_modifiers(modifiers),
+            duration_turns
+        ),
+        SkillEffect::Conditional { branches } => branches
+            .iter()
+            .map(|branch| {
+                format!(
+                    "若{}，则{}",
+                    condition_summary(&branch.condition, dbs),
+                    effect_summary(&branch.effect, dbs)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("；"),
+        SkillEffect::Sequence { effects } => effects
+            .iter()
+            .map(|effect| effect_summary(effect, dbs))
+            .collect::<Vec<_>>()
+            .join("；"),
+    }
+}
+
+pub(crate) fn skill_summary(skill_id: SkillId, dbs: &BattleDbs) -> String {
+    let Some(skill) = dbs.skills.get(&skill_id) else {
+        return "效果：未知".to_string();
+    };
+
+    let mut summary = effect_summary(&skill.effect, dbs);
+    if matches!(skill.category, SkillCategory::ElementAttack) {
+        if let Some(element) = skill.element {
+            summary = format!("附着{}；{}", element_name(element), summary);
+        }
+    } else if matches!(skill.category, SkillCategory::SpecialAttack)
+        && matches!(skill.element, Some(ElementType::Wind))
+    {
+        summary = format!("风扩散；{}", summary);
+    }
+
+    format!("效果：{}", summary)
 }
 
 pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
@@ -63,13 +302,7 @@ pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
 
 pub(crate) fn active_hp_percent(
     team: &Team,
-    query: &Query<(
-        &Combatant,
-        &Stats,
-        &Name,
-        &Shield,
-        &ElementAura,
-    ), With<InBattle>>,
+    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
 ) -> f32 {
     let Some(entity) = team.active_combatant() else {
         return 0.0;
@@ -85,13 +318,7 @@ pub(crate) fn active_hp_percent(
 
 pub(crate) fn active_shield(
     team: &Team,
-    query: &Query<(
-        &Combatant,
-        &Stats,
-        &Name,
-        &Shield,
-        &ElementAura,
-    ), With<InBattle>>,
+    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
 ) -> i32 {
     let Some(entity) = team.active_combatant() else {
         return 0;
@@ -104,13 +331,7 @@ pub(crate) fn active_shield(
 
 pub(crate) fn active_shield_percent(
     team: &Team,
-    query: &Query<(
-        &Combatant,
-        &Stats,
-        &Name,
-        &Shield,
-        &ElementAura,
-    ), With<InBattle>>,
+    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
 ) -> f32 {
     let Some(entity) = team.active_combatant() else {
         return 0.0;
@@ -136,11 +357,174 @@ pub(crate) fn element_name(element: ElementType) -> &'static str {
     }
 }
 
-pub(crate) fn aura_label(aura: Option<ElementType>) -> &'static str {
-    match aura {
-        Some(element) => element_name(element),
-        None => "无",
+pub(crate) fn aura_label(aura: &[ElementType]) -> String {
+    if aura.is_empty() {
+        return "无".to_string();
     }
+    aura.iter()
+        .map(|element| element_name(*element))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+pub(crate) fn status_label(statuses: &StatusBoard) -> String {
+    let labels = statuses
+        .entries
+        .iter()
+        .filter(|entry| entry.category != StatusCategory::Aura)
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>();
+
+    if labels.is_empty() {
+        "无".to_string()
+    } else {
+        labels.join("/")
+    }
+}
+
+pub(crate) fn aura_and_status_label(aura: &[ElementType], statuses: &StatusBoard) -> String {
+    format!(
+        "附着: {} | 状态: {}",
+        aura_label(aura),
+        status_label(statuses)
+    )
+}
+
+fn status_category_label(category: StatusCategory) -> &'static str {
+    match category {
+        StatusCategory::Aura => "附着",
+        StatusCategory::Buff => "增益",
+        StatusCategory::Debuff => "减益",
+        StatusCategory::Special => "特殊",
+    }
+}
+
+fn status_tick_timing_label(timing: Option<StatusTickTiming>) -> &'static str {
+    match timing {
+        Some(StatusTickTiming::OwnerActionEnd) => "行动后",
+        None => "即时",
+    }
+}
+
+pub(crate) fn status_debug_label(statuses: &StatusBoard) -> String {
+    let labels = statuses
+        .entries
+        .iter()
+        .map(|entry| {
+            let mut parts = vec![format!(
+                "{}[{}|{}回合|{}]",
+                entry.name,
+                status_category_label(entry.category),
+                entry.remaining_turns.max(0),
+                status_tick_timing_label(entry.tick_timing)
+            )];
+            if !entry.stage_modifiers.is_empty() {
+                parts.push(format!(
+                    "阶段{}",
+                    entry
+                        .stage_modifiers
+                        .iter()
+                        .map(|modifier| {
+                            format!(
+                                "{}{:+}",
+                                attribute_name(modifier.attribute),
+                                modifier.amount
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("/")
+                ));
+            }
+            if entry.fixed_damage_on_tick > 0 {
+                parts.push(format!("持续伤害{}", entry.fixed_damage_on_tick));
+            }
+            if entry.heal_on_tick > 0 {
+                parts.push(format!("持续治疗{}", entry.heal_on_tick));
+            }
+            if let Some(multiplier) = entry.heal_taken_multiplier {
+                parts.push(format!("治疗倍率{:.2}", multiplier));
+            }
+            if entry.evade_charges > 0 {
+                parts.push(format!("闪避{}次", entry.evade_charges));
+            }
+            parts.join("·")
+        })
+        .collect::<Vec<_>>();
+
+    if labels.is_empty() {
+        "无".to_string()
+    } else {
+        labels.join(" / ")
+    }
+}
+
+pub(crate) fn stat_stage_debug_label(stats: &Stats) -> String {
+    format!(
+        "Atk{:+} Def{:+} Spd{:+} Acc{:+}",
+        stats.atk_stage, stats.def_stage, stats.spd_stage, stats.acc_stage
+    )
+}
+
+pub(crate) fn aura_status_stage_label(
+    stats: &Stats,
+    aura: &[ElementType],
+    statuses: &StatusBoard,
+) -> String {
+    format!(
+        "附着: {} | 状态: {} | 阶段: {}",
+        aura_label(aura),
+        status_label(statuses),
+        stat_stage_debug_label(stats)
+    )
+}
+
+pub(crate) fn combatant_debug_summary(
+    name: &Name,
+    stats: &Stats,
+    shield: &Shield,
+    aura: &ElementAura,
+    statuses: &StatusBoard,
+) -> String {
+    format!(
+        "{} | HP {}/{} | 护盾 {} | 附着 {} | 属性等级 {} | 详细状态 {}",
+        name,
+        stats.hp.max(0),
+        stats.max_hp,
+        shield.0.max(0),
+        aura_label(&aura.elements()),
+        stat_stage_debug_label(stats),
+        status_debug_label(statuses)
+    )
+}
+
+pub(crate) fn team_debug_summary(
+    header: &str,
+    team: &Team,
+    query: &Query<(&Stats, &Name, &Shield, &ElementAura, &StatusBoard), With<InBattle>>,
+) -> String {
+    if team.combatants.is_empty() {
+        return format!("{header}\n无成员");
+    }
+
+    let mut lines = vec![header.to_string()];
+    for (index, entity) in team.combatants.iter().copied().enumerate() {
+        let prefix = if index == team.active_index {
+            format!("[前场{}]", index + 1)
+        } else {
+            format!("[后场{}]", index + 1)
+        };
+        let line = if let Ok((stats, name, shield, aura, statuses)) = query.get(entity) {
+            format!(
+                "{} {}",
+                prefix,
+                combatant_debug_summary(name, stats, shield, aura, statuses)
+            )
+        } else {
+            format!("{} 数据读取失败", prefix)
+        };
+        lines.push(line);
+    }
+    lines.join("\n")
 }
 
 pub(crate) fn card_hotkey_label(index: usize) -> &'static str {
@@ -170,5 +554,3 @@ pub(crate) fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextF
     }
     text_font
 }
-
-

@@ -12,7 +12,7 @@ use battle::{
 };
 
 use crate::{
-    battle::{Team, Combatant, ElementAura, InBattle, Shield, Stats},
+    battle::{Combatant, ElementAura, InBattle, Shield, Stats, Team},
     data::{BattleDbs, CardDef, ElementType, SkillId},
     game_state::{BattlePhase, GameState},
 };
@@ -67,7 +67,6 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             ),
         );
 
-
     app.add_systems(
         Update,
         update_player_hand_ui_system.run_if(in_state(GameState::Battle)),
@@ -118,10 +117,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.add_systems(Update, update_result_ui_system);
 }
 
-fn cleanup_battle_ui_system(
-    mut commands: Commands,
-    query: Query<Entity, With<BattleUiRoot>>,
-) {
+fn cleanup_battle_ui_system(mut commands: Commands, query: Query<Entity, With<BattleUiRoot>>) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
@@ -138,8 +134,8 @@ fn skill_meta(skill_id: SkillId, dbs: &BattleDbs) -> String {
 }
 
 #[allow(dead_code)]
-fn monster_skill_ap_cost_ui(slot: usize) -> i32 {
-    battle::helpers::monster_skill_ap_cost_ui(slot)
+fn monster_skill_ap_cost_ui(skill_id: SkillId, dbs: &BattleDbs) -> i32 {
+    battle::helpers::monster_skill_ap_cost_ui(skill_id, dbs)
 }
 
 #[allow(dead_code)]
@@ -177,7 +173,7 @@ fn element_name(element: ElementType) -> &'static str {
 }
 
 #[allow(dead_code)]
-fn aura_label(aura: Option<ElementType>) -> &'static str {
+fn aura_label(aura: &[ElementType]) -> String {
     battle::helpers::aura_label(aura)
 }
 
