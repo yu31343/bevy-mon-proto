@@ -7,22 +7,37 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, InBattle,
-        PendingKoResolution, ReplayEventLog, Side, Stats, StructuredBattleLog, TurnCount,
-        note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
+        ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
+        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog,
+        TurnCount, note_action_phase, note_structured_phase, push_battle_line,
+        push_named_action_trace,
     },
     game_state::{BattlePhase, GameState},
 };
 
-use super::abort_battle;
+use super::{abort_battle, process_round_end_status_durations};
 
 pub fn check_end_system(
-    query: Query<(&Combatant, &Stats, &Name), With<InBattle>>,
+    mut queries: ParamSet<(
+        Query<(&Combatant, &Stats, &Name), With<InBattle>>,
+        Query<
+            (
+                &mut Stats,
+                &mut Shield,
+                &mut crate::battle::StatusBoard,
+                &mut ElementAura,
+            ),
+            With<InBattle>,
+        >,
+    )>,
     player_team: ResMut<crate::battle::PlayerTeam>,
     enemy_team: ResMut<crate::battle::EnemyTeam>,
     mut pending_ko: ResMut<PendingKoResolution>,
     turn_count: Res<TurnCount>,
+    formula_rules: Res<crate::data::BattleFormulaRules>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut formula_writer: MessageWriter<crate::battle::BattleFormulaEvent>,
+    mut status_writer: MessageWriter<crate::battle::BattleStatusEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     mut battle_result: ResMut<BattleResult>,
@@ -40,51 +55,6 @@ pub fn check_end_system(
         return;
     };
 
-    let mut p_dead = false;
-    let Ok((_, p_stats, p_name)) = query.get(p_entity) else {
-        abort_battle(
-            "结算失败：玩家成员数据缺失。",
-            &mut battle_log,
-            &mut battle_result,
-            &mut next_game_state,
-        );
-        return;
-    };
-    if p_stats.hp <= 0 {
-        event_writer.write(BattleEvent::CombatantFainted {
-            owner: p_entity,
-            side: Side::Player,
-            name: p_name.to_string(),
-        });
-        note_action_phase(
-            &mut structured_log,
-            turn_count.0,
-            Side::Player,
-            "玩家倒下",
-            format!("{} 倒下；当前HP={}", p_name, p_stats.hp),
-        );
-        push_named_action_trace(
-            &mut action_trace,
-            turn_count.0,
-            Side::Player,
-            "fainted",
-            format!("{} 倒下；当前HP={}", p_name, p_stats.hp),
-        );
-
-        let mut next_idx = None;
-        for (i, &e) in player_team.0.combatants.iter().enumerate() {
-            if let Ok((_, s, _)) = query.get(e) {
-                if s.hp > 0 {
-                    next_idx = Some(i);
-                    break;
-                }
-            }
-        }
-
-        pending_ko.player_switch_index = next_idx;
-        p_dead = next_idx.is_none();
-    }
-
     let Some(e_entity) = enemy_team.0.active_combatant() else {
         abort_battle(
             "结算失败：敌方上场成员无效。",
@@ -95,49 +65,110 @@ pub fn check_end_system(
         return;
     };
 
-    let mut e_dead = false;
-    let Ok((_, e_stats, e_name)) = query.get(e_entity) else {
-        abort_battle(
-            "结算失败：敌方成员数据缺失。",
-            &mut battle_log,
-            &mut battle_result,
-            &mut next_game_state,
-        );
-        return;
+    let (p_hp, p_name, player_next_idx, e_hp, e_name, enemy_next_idx) = {
+        let query = queries.p0();
+
+        let Ok((_, p_stats, p_name)) = query.get(p_entity) else {
+            abort_battle(
+                "结算失败：玩家成员数据缺失。",
+                &mut battle_log,
+                &mut battle_result,
+                &mut next_game_state,
+            );
+            return;
+        };
+        let Ok((_, e_stats, e_name)) = query.get(e_entity) else {
+            abort_battle(
+                "结算失败：敌方成员数据缺失。",
+                &mut battle_log,
+                &mut battle_result,
+                &mut next_game_state,
+            );
+            return;
+        };
+
+        let mut player_next_idx = None;
+        if p_stats.hp <= 0 {
+            for (i, &entity) in player_team.0.combatants.iter().enumerate() {
+                if let Ok((_, stats, _)) = query.get(entity) {
+                    if stats.hp > 0 {
+                        player_next_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut enemy_next_idx = None;
+        if e_stats.hp <= 0 {
+            for (i, &entity) in enemy_team.0.combatants.iter().enumerate() {
+                if let Ok((_, stats, _)) = query.get(entity) {
+                    if stats.hp > 0 {
+                        enemy_next_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        (
+            p_stats.hp,
+            p_name.to_string(),
+            player_next_idx,
+            e_stats.hp,
+            e_name.to_string(),
+            enemy_next_idx,
+        )
     };
-    if e_stats.hp <= 0 {
+
+    let mut p_dead = false;
+    if p_hp <= 0 {
+        event_writer.write(BattleEvent::CombatantFainted {
+            owner: p_entity,
+            side: Side::Player,
+            name: p_name.clone(),
+        });
+        note_action_phase(
+            &mut structured_log,
+            turn_count.0,
+            Side::Player,
+            "玩家倒下",
+            format!("{} 倒下；当前HP={}", p_name, p_hp),
+        );
+        push_named_action_trace(
+            &mut action_trace,
+            turn_count.0,
+            Side::Player,
+            "fainted",
+            format!("{} 倒下；当前HP={}", p_name, p_hp),
+        );
+        pending_ko.player_switch_index = player_next_idx;
+        p_dead = player_next_idx.is_none();
+    }
+
+    let mut e_dead = false;
+    if e_hp <= 0 {
         event_writer.write(BattleEvent::CombatantFainted {
             owner: e_entity,
             side: Side::Enemy,
-            name: e_name.to_string(),
+            name: e_name.clone(),
         });
         note_action_phase(
             &mut structured_log,
             turn_count.0,
             Side::Enemy,
             "敌方倒下",
-            format!("{} 倒下；当前HP={}", e_name, e_stats.hp),
+            format!("{} 倒下；当前HP={}", e_name, e_hp),
         );
         push_named_action_trace(
             &mut action_trace,
             turn_count.0,
             Side::Enemy,
             "fainted",
-            format!("{} 倒下；当前HP={}", e_name, e_stats.hp),
+            format!("{} 倒下；当前HP={}", e_name, e_hp),
         );
-
-        let mut next_idx = None;
-        for (i, &e) in enemy_team.0.combatants.iter().enumerate() {
-            if let Ok((_, s, _)) = query.get(e) {
-                if s.hp > 0 {
-                    next_idx = Some(i);
-                    break;
-                }
-            }
-        }
-
-        pending_ko.enemy_switch_index = next_idx;
-        e_dead = next_idx.is_none();
+        pending_ko.enemy_switch_index = enemy_next_idx;
+        e_dead = enemy_next_idx.is_none();
     }
 
     if pending_ko.player_switch_index.is_some()
@@ -162,6 +193,42 @@ pub fn check_end_system(
         );
         next_phase.set(BattlePhase::DeathResolve);
     } else {
+        for &entity in &player_team.0.combatants {
+            if let Ok((mut stats, _shield, mut statuses, mut aura)) = queries.p1().get_mut(entity) {
+                process_round_end_status_durations(
+                    &mut stats,
+                    &mut aura,
+                    &mut statuses,
+                    crate::battle::SideEndTickParams {
+                        side: Side::Player,
+                        round: turn_count.0,
+                        formula_rules: &formula_rules,
+                        event_writer: &mut event_writer,
+                        formula_writer: &mut formula_writer,
+                        status_writer: &mut status_writer,
+                        structured_log: &mut structured_log,
+                    },
+                );
+            }
+        }
+        for &entity in &enemy_team.0.combatants {
+            if let Ok((mut stats, _shield, mut statuses, mut aura)) = queries.p1().get_mut(entity) {
+                process_round_end_status_durations(
+                    &mut stats,
+                    &mut aura,
+                    &mut statuses,
+                    crate::battle::SideEndTickParams {
+                        side: Side::Enemy,
+                        round: turn_count.0,
+                        formula_rules: &formula_rules,
+                        event_writer: &mut event_writer,
+                        formula_writer: &mut formula_writer,
+                        status_writer: &mut status_writer,
+                        structured_log: &mut structured_log,
+                    },
+                );
+            }
+        }
         next_phase.set(BattlePhase::RoundStart);
     }
 }
@@ -372,9 +439,10 @@ mod tests {
         battle::{
             ActionTraceEntry, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent,
             BattleStateEvent, BattleStatusEvent, BattleTraceEvent, ElementAura, EnemyTeam,
-            PlayerTeam, ReplayEventLog, Shield, Side, StructuredBattleLog, Team,
-            systems::consume_battle_events_system,
+            PlayerTeam, ReplayEventLog, Shield, Side, StatusBoard, StatusInstance,
+            StructuredBattleLog, Team, systems::consume_battle_events_system,
         },
+        data::{BattleFormulaRules, StatusCategory, StatusTickTiming},
         game_state::GameState,
     };
     use bevy::{ecs::message::Messages, prelude::State, time::TimePlugin};
@@ -474,6 +542,92 @@ mod tests {
         assert!(trace.0.iter().any(|entry| {
             entry.action == "fainted" && entry.detail.contains("Player A 倒下")
         }));
+    }
+
+    #[test]
+    fn check_end_decrements_statuses_only_at_full_round_end() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleFormulaEvent>>();
+        app.init_resource::<Messages<BattleStatusEvent>>();
+        app.init_resource::<PendingKoResolution>();
+        app.insert_resource(TurnCount(1));
+        app.insert_resource(BattleFormulaRules::default());
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ActionTrace::default());
+        app.insert_resource(BattleResult::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.insert_resource(NextState::<GameState>::default());
+        app.add_systems(Update, check_end_system);
+
+        let player_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player A"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Wind,
+                },
+                test_stats(10),
+                Shield(0),
+                ElementAura::default(),
+                StatusBoard {
+                    entries: vec![StatusInstance {
+                        id: "wind_evade".to_string(),
+                        name: "闪避".to_string(),
+                        category: StatusCategory::Buff,
+                        remaining_turns: 1,
+                        applied_round: 1,
+                        source_side: Some(Side::Player),
+                        tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                        stage_modifiers: vec![],
+                        fixed_damage_on_tick: 0,
+                        heal_on_tick: 0,
+                        heal_taken_multiplier: None,
+                        evade_charges: 1,
+                    }],
+                },
+            ))
+            .id();
+        let enemy_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Enemy A"),
+                Combatant {
+                    side: Side::Enemy,
+                    element: crate::data::ElementType::Grass,
+                },
+                test_stats(10),
+                Shield(0),
+                ElementAura::default(),
+                StatusBoard::default(),
+            ))
+            .id();
+
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        assert_eq!(player_statuses.entries.len(), 1);
+        assert_eq!(player_statuses.entries[0].remaining_turns, 1);
+
+        app.world_mut().resource_mut::<TurnCount>().0 = 2;
+        app.update();
+
+        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        assert!(player_statuses.entries.is_empty());
     }
 
     #[test]

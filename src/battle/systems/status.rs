@@ -3,19 +3,19 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         BattleEvent, BattleFormulaEvent, BattleStatusEvent, ElementAura, Shield, Side, Stats,
-        StatusBoard, StructuredBattleLog, note_action_phase, status_event,
-        tick_statuses_for_timing,
+        StatusBoard, StructuredBattleLog, decrement_status_durations_for_round,
+        note_action_phase, status_event, tick_statuses_for_timing,
     },
     data::{BattleFormulaRules, ElementType, StatusTickTiming},
 };
 
-pub(crate) struct SideEndTickParams<'a, 'w> {
+pub(crate) struct SideEndTickParams<'a, 'event, 'formula, 'status> {
     pub side: Side,
     pub round: u32,
     pub formula_rules: &'a BattleFormulaRules,
-    pub event_writer: &'a mut MessageWriter<'w, BattleEvent>,
-    pub formula_writer: &'a mut MessageWriter<'w, BattleFormulaEvent>,
-    pub status_writer: &'a mut MessageWriter<'w, BattleStatusEvent>,
+    pub event_writer: &'a mut MessageWriter<'event, BattleEvent>,
+    pub formula_writer: &'a mut MessageWriter<'formula, BattleFormulaEvent>,
+    pub status_writer: &'a mut MessageWriter<'status, BattleStatusEvent>,
     pub structured_log: &'a mut StructuredBattleLog,
 }
 
@@ -32,11 +32,11 @@ fn aura_status_element(status_id: &str) -> Option<ElementType> {
 pub(crate) fn process_side_end_statuses(
     stats: &mut Stats,
     shield: &mut Shield,
-    aura: &mut ElementAura,
+    _aura: &mut ElementAura,
     status_board: &mut StatusBoard,
-    params: SideEndTickParams<'_, '_>,
+    params: SideEndTickParams<'_, '_, '_, '_>,
 ) {
-    let outcomes = tick_statuses_for_timing(status_board, stats, StatusTickTiming::OwnerActionEnd);
+    let outcomes = tick_statuses_for_timing(status_board, StatusTickTiming::OwnerActionEnd);
     for outcome in outcomes {
         if outcome.fixed_damage > 0 {
             let absorbed = shield.0.min(outcome.fixed_damage);
@@ -141,7 +141,30 @@ pub(crate) fn process_side_end_statuses(
             params.round,
             params.side,
             outcome.status_id.clone(),
-            if outcome.expired { "expired" } else { "ticked" },
+            "triggered_timing",
+            format!(
+                "tick_timing={:?} remaining_turns={} status_name={}",
+                StatusTickTiming::OwnerActionEnd,
+                outcome.remaining_turns,
+                outcome.status_name
+            ),
+        ));
+    }
+}
+
+pub(crate) fn process_round_end_status_durations(
+    stats: &mut Stats,
+    aura: &mut ElementAura,
+    status_board: &mut StatusBoard,
+    params: SideEndTickParams<'_, '_, '_, '_>,
+) {
+    let outcomes = decrement_status_durations_for_round(status_board, stats, params.round);
+    for outcome in outcomes {
+        params.status_writer.write(status_event(
+            params.round,
+            params.side,
+            outcome.status_id.clone(),
+            if outcome.expired { "expired" } else { "duration_ticked" },
             format!(
                 "remaining_turns={} status_name={}",
                 outcome.remaining_turns, outcome.status_name

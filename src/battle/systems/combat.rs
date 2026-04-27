@@ -132,7 +132,13 @@ fn apply_status_by_id(
         return false;
     };
 
-    let refreshed = apply_status_from_def(target_statuses, target_stats, def, Some(source_side));
+    let refreshed = apply_status_from_def(
+        target_statuses,
+        target_stats,
+        def,
+        Some(source_side),
+        round.unwrap_or(0),
+    );
 
     if let Some(round) = round {
         if let Some(writer) = status_writer.as_deref_mut() {
@@ -611,6 +617,7 @@ fn apply_stage_modifiers_to_target(
             StatusCategory::Buff
         },
         remaining_turns: duration_turns,
+        applied_round: round.unwrap_or(0),
         source_side: Some(source_side),
         tick_timing: Some(StatusTickTiming::OwnerActionEnd),
         stage_modifiers: modifiers
