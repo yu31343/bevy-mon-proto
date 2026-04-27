@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use crate::battle::{ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Stats, StatusBoard};
+use crate::{
+    battle::{ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Stats, StatusBoard},
+    data::BattleFormulaRules,
+};
 
 use super::super::components::*;
 use super::super::theme::UiTheme;
@@ -14,7 +17,10 @@ pub(crate) fn update_player_roster_ui_system(
             Option<&TeamMemberButtonText>,
             Option<&TeamMemberAuraText>,
             Option<&PlayerBenchNameText>,
+            Option<&PlayerBenchStatsText>,
             Option<&PlayerBenchAuraText>,
+            Option<&PlayerBenchHpValueText>,
+            Option<&PlayerBenchShieldValueText>,
         ),
         (Without<ActionPointsText>, Without<PlayerCardNameText>),
     >,
@@ -37,6 +43,7 @@ pub(crate) fn update_player_roster_ui_system(
         Query<(&PlayerBenchShieldBarTrack, &mut Visibility)>,
     )>,
     theme: Res<UiTheme>,
+    formula_rules: Res<BattleFormulaRules>,
 ) {
     let Some(player_team) = player_team else {
         return;
@@ -44,7 +51,17 @@ pub(crate) fn update_player_roster_ui_system(
 
     let get_entity = |index: usize| player_team.0.combatants.get(index).copied();
 
-    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura) in &mut text_q {
+    for (
+        mut text,
+        overlay_name,
+        overlay_aura,
+        bench_name,
+        bench_stats,
+        bench_aura,
+        bench_hp,
+        bench_shield,
+    ) in &mut text_q
+    {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
@@ -78,9 +95,14 @@ pub(crate) fn update_player_roster_ui_system(
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
-                    text.0 = format!("{}{}", name, dead);
+                    let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
+                    text.0 = if aura_text.is_empty() {
+                        format!("{}{}", name, dead)
+                    } else {
+                        format!("{} {}{}", name, aura_text, dead)
+                    };
                 } else {
                     text.0 = format!("队伍{}", meta.index + 1);
                 }
@@ -90,19 +112,64 @@ pub(crate) fn update_player_roster_ui_system(
             continue;
         }
 
-        if let Some(meta) = bench_aura {
+        if let Some(meta) = bench_stats {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
-                    text.0 = super::super::helpers::aura_status_stage_label(
-                        stats,
-                        &aura.elements(),
-                        statuses,
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = format!(
+                        "Atk: {}{} Def: {}{} Acc: {}{} Spd: {}{}",
+                        super::super::helpers::stage_prefix(stats.atk_stage),
+                        super::super::helpers::effective_atk_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.def_stage),
+                        super::super::helpers::effective_def_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.acc_stage),
+                        super::super::helpers::effective_acc_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.spd_stage),
+                        super::super::helpers::effective_spd_value(stats, &formula_rules),
                     );
                 } else {
-                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                    text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
                 }
             } else {
-                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_aura {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
+                    text.0 = format!("状态：{}", super::super::helpers::status_label(statuses));
+                } else {
+                    text.0 = "状态：无".to_string();
+                }
+            } else {
+                text.0 = "状态：无".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_hp {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = format!("{}/{}", stats.hp.max(0), stats.max_hp);
+                } else {
+                    text.0 = "0/0".to_string();
+                }
+            } else {
+                text.0 = "0/0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_shield {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
+                    text.0 = shield.0.max(0).to_string();
+                } else {
+                    text.0 = "0".to_string();
+                }
+            } else {
+                text.0 = "0".to_string();
             }
         }
     }
@@ -228,7 +295,10 @@ pub(crate) fn update_enemy_roster_ui_system(
             Option<&EnemyTeamMemberButtonText>,
             Option<&EnemyTeamMemberAuraText>,
             Option<&EnemyBenchNameText>,
+            Option<&EnemyBenchStatsText>,
             Option<&EnemyBenchAuraText>,
+            Option<&EnemyBenchHpValueText>,
+            Option<&EnemyBenchShieldValueText>,
         ),
         (Without<ActionPointsText>, Without<PlayerCardNameText>),
     >,
@@ -250,6 +320,7 @@ pub(crate) fn update_enemy_roster_ui_system(
         Query<(&EnemyBenchShieldBarTrack, &mut Visibility)>,
     )>,
     theme: Res<UiTheme>,
+    formula_rules: Res<BattleFormulaRules>,
 ) {
     let Some(enemy_team) = enemy_team else {
         return;
@@ -257,7 +328,17 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     let get_entity = |index: usize| enemy_team.0.combatants.get(index).copied();
 
-    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura) in &mut text_q {
+    for (
+        mut text,
+        overlay_name,
+        overlay_aura,
+        bench_name,
+        bench_stats,
+        bench_aura,
+        bench_hp,
+        bench_shield,
+    ) in &mut text_q
+    {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
@@ -291,9 +372,14 @@ pub(crate) fn update_enemy_roster_ui_system(
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
-                    text.0 = format!("{}{}", name, dead);
+                    let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
+                    text.0 = if aura_text.is_empty() {
+                        format!("{}{}", name, dead)
+                    } else {
+                        format!("{} {}{}", name, aura_text, dead)
+                    };
                 } else {
                     text.0 = format!("队伍{}", meta.index + 1);
                 }
@@ -303,19 +389,64 @@ pub(crate) fn update_enemy_roster_ui_system(
             continue;
         }
 
-        if let Some(meta) = bench_aura {
+        if let Some(meta) = bench_stats {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, _, _, aura, statuses)) = combat_query.get(entity) {
-                    text.0 = super::super::helpers::aura_status_stage_label(
-                        stats,
-                        &aura.elements(),
-                        statuses,
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = format!(
+                        "Atk: {}{} Def: {}{} Acc: {}{} Spd: {}{}",
+                        super::super::helpers::stage_prefix(stats.atk_stage),
+                        super::super::helpers::effective_atk_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.def_stage),
+                        super::super::helpers::effective_def_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.acc_stage),
+                        super::super::helpers::effective_acc_value(stats, &formula_rules),
+                        super::super::helpers::stage_prefix(stats.spd_stage),
+                        super::super::helpers::effective_spd_value(stats, &formula_rules),
                     );
                 } else {
-                    text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                    text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
                 }
             } else {
-                text.0 = "附着: 无 | 状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+                text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_aura {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
+                    text.0 = format!("状态：{}", super::super::helpers::status_label(statuses));
+                } else {
+                    text.0 = "状态：无".to_string();
+                }
+            } else {
+                text.0 = "状态：无".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_hp {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = format!("{}/{}", stats.hp.max(0), stats.max_hp);
+                } else {
+                    text.0 = "0/0".to_string();
+                }
+            } else {
+                text.0 = "0/0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = bench_shield {
+            if let Some(entity) = get_entity(meta.index) {
+                if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
+                    text.0 = shield.0.max(0).to_string();
+                } else {
+                    text.0 = "0".to_string();
+                }
+            } else {
+                text.0 = "0".to_string();
             }
         }
     }

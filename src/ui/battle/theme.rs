@@ -36,6 +36,20 @@ pub(crate) struct UiTheme {
     pub text_secondary: Color,
     pub text_muted: Color,
     pub divider: Color,
+    pub aura_fire: Color,
+    pub aura_water: Color,
+    pub aura_grass: Color,
+    pub aura_light: Color,
+    pub aura_dark: Color,
+    pub aura_thunder: Color,
+    pub aura_wind: Color,
+    pub status_burn: Color,
+    pub status_scorch: Color,
+    pub status_paralysis: Color,
+    pub status_poison_like: Color,
+    pub status_buff: Color,
+    pub status_debuff: Color,
+    pub status_special: Color,
 }
 
 impl Default for UiTheme {
@@ -75,6 +89,20 @@ impl Default for UiTheme {
             text_secondary: Color::srgb(0.72, 0.84, 0.95),
             text_muted: Color::srgb(0.50, 0.62, 0.78),
             divider: Color::srgba(0.25, 0.45, 0.70, 0.30),
+            aura_fire: Color::srgb(1.0, 0.58, 0.22),
+            aura_water: Color::srgb(0.42, 0.76, 1.0),
+            aura_grass: Color::srgb(0.58, 0.90, 0.50),
+            aura_light: Color::srgb(1.0, 0.93, 0.55),
+            aura_dark: Color::srgb(0.58, 0.58, 0.64),
+            aura_thunder: Color::srgb(0.82, 0.72, 0.98),
+            aura_wind: Color::srgb(0.74, 0.96, 0.90),
+            status_burn: Color::srgb(1.0, 0.36, 0.30),
+            status_scorch: Color::srgb(1.0, 0.62, 0.56),
+            status_paralysis: Color::srgb(0.98, 0.86, 0.28),
+            status_poison_like: Color::srgb(0.64, 0.48, 0.92),
+            status_buff: Color::srgb(0.48, 0.92, 0.62),
+            status_debuff: Color::srgb(1.0, 0.52, 0.66),
+            status_special: Color::srgb(0.76, 0.84, 1.0),
         }
     }
 }

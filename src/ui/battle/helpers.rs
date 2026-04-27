@@ -367,6 +367,13 @@ pub(crate) fn aura_label(aura: &[ElementType]) -> String {
         .join("/")
 }
 
+pub(crate) fn compact_aura_label(aura: &[ElementType]) -> String {
+    if aura.is_empty() {
+        return String::new();
+    }
+    aura.iter().map(|element| element_name(*element)).collect()
+}
+
 pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     let labels = statuses
         .entries
@@ -545,6 +552,133 @@ pub(crate) fn card_description(card: &CardDef) -> String {
         CardEffect::NextShieldBoost { amount } => format!("效果：下次护盾 +{}。", amount),
         CardEffect::NextHealBoost { amount } => format!("效果：下次治疗 +{}。", amount),
     }
+}
+
+pub(crate) fn element_color(element: ElementType, theme: &super::theme::UiTheme) -> Color {
+    match element {
+        ElementType::Fire => theme.aura_fire,
+        ElementType::Water => theme.aura_water,
+        ElementType::Grass => theme.aura_grass,
+        ElementType::Light => theme.aura_light,
+        ElementType::Dark => theme.aura_dark,
+        ElementType::Thunder => theme.aura_thunder,
+        ElementType::Wind => theme.aura_wind,
+    }
+}
+
+pub(crate) fn status_color(
+    entry: &crate::battle::StatusInstance,
+    theme: &super::theme::UiTheme,
+) -> Color {
+    let lower_id = entry.id.to_ascii_lowercase();
+    let lower_name = entry.name.to_ascii_lowercase();
+    if lower_id.contains("burn") || lower_name.contains("燃") {
+        return theme.status_burn;
+    }
+    if lower_id.contains("scorch") || lower_name.contains("灼") || lower_name.contains("燎") {
+        return theme.status_scorch;
+    }
+    if lower_id.contains("paral")
+        || lower_id.contains("electro")
+        || lower_name.contains("麻")
+        || lower_name.contains("电")
+    {
+        return theme.status_paralysis;
+    }
+    if lower_id.contains("curse")
+        || lower_id.contains("seed")
+        || lower_id.contains("entangle")
+        || lower_name.contains("诅")
+        || lower_name.contains("草")
+        || lower_name.contains("缠")
+    {
+        return theme.status_poison_like;
+    }
+    match entry.category {
+        StatusCategory::Buff => theme.status_buff,
+        StatusCategory::Debuff => theme.status_debuff,
+        StatusCategory::Special => theme.status_special,
+        StatusCategory::Aura => theme.text_muted,
+    }
+}
+
+pub(crate) fn effective_atk_value(stats: &Stats, rules: &crate::data::BattleFormulaRules) -> i32 {
+    let stage = stats.atk_stage.clamp(
+        rules.attribute_stage_bounds.min,
+        rules.attribute_stage_bounds.max,
+    );
+    let ratio = if stage >= 0 {
+        (2 + stage) as f32 / 2.0
+    } else {
+        2.0 / (2 + stage.abs()) as f32
+    };
+    ((stats.atk as f32) * ratio).round() as i32
+}
+
+pub(crate) fn effective_def_value(stats: &Stats, rules: &crate::data::BattleFormulaRules) -> i32 {
+    let stage = stats.def_stage.clamp(
+        rules.attribute_stage_bounds.min,
+        rules.attribute_stage_bounds.max,
+    );
+    let ratio = if stage >= 0 {
+        (2 + stage) as f32 / 2.0
+    } else {
+        2.0 / (2 + stage.abs()) as f32
+    };
+    ((stats.def as f32) * ratio).round() as i32
+}
+
+pub(crate) fn effective_spd_value(stats: &Stats, rules: &crate::data::BattleFormulaRules) -> i32 {
+    let stage = stats.spd_stage.clamp(
+        rules.attribute_stage_bounds.min,
+        rules.attribute_stage_bounds.max,
+    );
+    (stats.spd + stage * 2).max(1)
+}
+
+pub(crate) fn effective_acc_value(stats: &Stats, rules: &crate::data::BattleFormulaRules) -> i32 {
+    let stage = stats.acc_stage.clamp(
+        rules.attribute_stage_bounds.min,
+        rules.attribute_stage_bounds.max,
+    );
+    ((stats.acc as f32 / 100.0 + stage as f32 * rules.accuracy.stage_step)
+        .clamp(rules.accuracy.min, rules.accuracy.max)
+        * 100.0)
+        .round() as i32
+}
+
+pub(crate) fn stage_prefix(stage: i32) -> String {
+    if stage == 0 {
+        String::new()
+    } else {
+        format!("{:+} ", stage)
+    }
+}
+
+pub(crate) fn replace_debug_tokens(
+    commands: &mut Commands,
+    line_entity: Entity,
+    children: Option<&Children>,
+    font: &TextFont,
+    items: &[(String, Color)],
+    token_kind: impl Component + Clone,
+) {
+    if let Some(children) = children {
+        for child in children.iter().skip(1) {
+            commands.entity(child).despawn();
+        }
+    }
+    commands.entity(line_entity).with_children(|line| {
+        for (idx, (text, color)) in items.iter().enumerate() {
+            let prefix = if idx == 0 { "" } else { "" };
+            line.spawn((
+                Text::new(format!("{prefix}{text}")),
+                font.clone(),
+                TextColor(*color),
+                token_kind.clone(),
+            ));
+        }
+    });
 }
 
 pub(crate) fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextFont {

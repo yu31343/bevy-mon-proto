@@ -82,7 +82,13 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
 
     app.add_systems(
         Update,
-        update_battle_text_system.run_if(in_state(GameState::Battle)),
+        (
+            update_phase_text_system,
+            update_active_panel_text_system,
+            update_active_panel_tokens_system,
+            update_skill_text_system,
+        )
+            .run_if(in_state(GameState::Battle)),
     );
 
     app.add_systems(

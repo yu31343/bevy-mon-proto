@@ -370,10 +370,10 @@ mod tests {
     use super::*;
     use crate::{
         battle::{
-            systems::consume_battle_events_system, ActionTraceEntry, BattleEvent,
-            BattleFormulaEvent, BattleLifecycleEvent, BattleStateEvent, BattleStatusEvent,
-            BattleTraceEvent, ElementAura, EnemyTeam, PlayerTeam, ReplayEventLog, Shield, Side,
-            StructuredBattleLog, Team,
+            ActionTraceEntry, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent,
+            BattleStateEvent, BattleStatusEvent, BattleTraceEvent, ElementAura, EnemyTeam,
+            PlayerTeam, ReplayEventLog, Shield, Side, StructuredBattleLog, Team,
+            systems::consume_battle_events_system,
         },
         game_state::GameState,
     };
@@ -625,7 +625,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let export_dir = std::env::temp_dir().join(format!("bevy_mon_proto_runtime_export_{unique}"));
+        let export_dir =
+            std::env::temp_dir().join(format!("bevy_mon_proto_runtime_export_{unique}"));
 
         let mut app = App::new();
         app.init_resource::<Messages<BattleEvent>>();
@@ -761,8 +762,9 @@ mod tests {
         assert_eq!(replay_log.0[5].phase, "status-r3");
         assert_eq!(replay_log.0[5].summary, "burning_aura:applied");
 
-        let export_message = write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
-            .expect("export should succeed");
+        let export_message =
+            write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+                .expect("export should succeed");
         let slug = sanitize_filename_segment(&battle_result.message);
         let replay_path = export_dir.join(format!("{slug}_replay.ron"));
         let action_path = export_dir.join(format!("{slug}_action_trace.ron"));

@@ -3438,7 +3438,8 @@ mod tests {
     fn wind_spread_backline_triggers_secondary_reaction() {
         let mut world = World::new();
         world.init_resource::<Messages<BattleEvent>>();
-        let mut system_state: SystemState<MessageWriter<BattleEvent>> = SystemState::new(&mut world);
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
 
         let mut attacker_stats = base_stats(30);
         let mut attacker_shield = Shield(0);
@@ -3544,7 +3545,8 @@ mod tests {
     fn elemental_attack_shield_blocks_attachment_and_reaction() {
         let mut world = World::new();
         world.init_resource::<Messages<BattleEvent>>();
-        let mut system_state: SystemState<MessageWriter<BattleEvent>> = SystemState::new(&mut world);
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
 
         let mut attacker_stats = base_stats(30);
         let mut attacker_shield = Shield(0);
@@ -3610,7 +3612,15 @@ mod tests {
         let events = world.resource::<Messages<BattleEvent>>();
         let mut cursor = events.get_cursor();
         let collected: Vec<_> = cursor.read(events).cloned().collect();
-        assert!(!collected.iter().any(|event| matches!(event, BattleEvent::ElementAuraApplied { .. })));
-        assert!(!collected.iter().any(|event| matches!(event, BattleEvent::ReactionTriggered { .. })));
+        assert!(
+            !collected
+                .iter()
+                .any(|event| matches!(event, BattleEvent::ElementAuraApplied { .. }))
+        );
+        assert!(
+            !collected
+                .iter()
+                .any(|event| matches!(event, BattleEvent::ReactionTriggered { .. }))
+        );
     }
 }
