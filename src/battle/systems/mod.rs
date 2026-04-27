@@ -21,5 +21,7 @@ pub(crate) use combat::{
     apply_wind_effect, skill_execution_mode, skill_target_mode,
 };
 pub(crate) use init::abort_battle;
-pub(crate) use status::{SideEndTickParams, process_side_end_statuses};
+pub(crate) use status::{
+    SideEndTickParams, process_round_end_status_durations, process_side_end_statuses,
+};
 pub(crate) use text::{element_text, side_text};

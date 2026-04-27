@@ -156,6 +156,7 @@ pub struct StatusInstance {
     pub name: String,
     pub category: StatusCategory,
     pub remaining_turns: i32,
+    pub applied_round: u32,
     pub source_side: Option<Side>,
     pub tick_timing: Option<StatusTickTiming>,
     pub stage_modifiers: Vec<StatusStageModifier>,
@@ -193,12 +194,13 @@ impl StatusBoard {
 }
 
 impl StatusInstance {
-    pub fn from_def(def: &StatusDef, source_side: Option<Side>) -> Self {
+    pub fn from_def(def: &StatusDef, source_side: Option<Side>, applied_round: u32) -> Self {
         Self {
             id: def.id.clone(),
             name: def.name.clone(),
             category: def.category,
             remaining_turns: def.duration_turns,
+            applied_round,
             source_side,
             tick_timing: def.tick_timing,
             stage_modifiers: def
@@ -259,6 +261,7 @@ pub fn upsert_status_instance(
         existing.name = status.name;
         existing.category = status.category;
         existing.remaining_turns = status.remaining_turns;
+        existing.applied_round = status.applied_round;
         existing.source_side = status.source_side;
         existing.tick_timing = status.tick_timing;
         existing.stage_modifiers = status.stage_modifiers;
@@ -279,10 +282,11 @@ pub fn apply_status_from_def(
     stats: &mut Stats,
     def: &StatusDef,
     source_side: Option<Side>,
+    applied_round: u32,
 ) -> bool {
     upsert_status_instance(
         status_board,
-        StatusInstance::from_def(def, source_side),
+        StatusInstance::from_def(def, source_side, applied_round),
         stats,
     )
 }
@@ -303,33 +307,60 @@ pub fn remove_status_by_id(
 
 pub fn tick_statuses_for_timing(
     status_board: &mut StatusBoard,
-    stats: &mut Stats,
     timing: StatusTickTiming,
 ) -> Vec<StatusTickOutcome> {
     let mut outcomes = Vec::with_capacity(status_board.entries.len());
 
-    for entry in &mut status_board.entries {
+    for entry in &status_board.entries {
         if entry.tick_timing != Some(timing) {
             continue;
         }
-        let fixed_damage = entry.fixed_damage_on_tick.max(0);
-        let heal_amount = entry.heal_on_tick.max(0);
+        outcomes.push(StatusTickOutcome {
+            status_id: entry.id.clone(),
+            status_name: entry.name.clone(),
+            fixed_damage: entry.fixed_damage_on_tick.max(0),
+            heal_amount: entry.heal_on_tick.max(0),
+            expired: false,
+            remaining_turns: entry.remaining_turns.max(0),
+        });
+    }
+
+    outcomes
+}
+
+pub fn decrement_status_durations_for_round(
+    status_board: &mut StatusBoard,
+    stats: &mut Stats,
+    current_round: u32,
+) -> Vec<StatusTickOutcome> {
+    let mut outcomes = Vec::with_capacity(status_board.entries.len());
+
+    for entry in &mut status_board.entries {
+        if entry.applied_round >= current_round {
+            outcomes.push(StatusTickOutcome {
+                status_id: entry.id.clone(),
+                status_name: entry.name.clone(),
+                fixed_damage: 0,
+                heal_amount: 0,
+                expired: false,
+                remaining_turns: entry.remaining_turns.max(0),
+            });
+            continue;
+        }
         if entry.remaining_turns > 0 {
             entry.remaining_turns -= 1;
         }
         outcomes.push(StatusTickOutcome {
             status_id: entry.id.clone(),
             status_name: entry.name.clone(),
-            fixed_damage,
-            heal_amount,
+            fixed_damage: 0,
+            heal_amount: 0,
             expired: entry.remaining_turns <= 0,
             remaining_turns: entry.remaining_turns.max(0),
         });
     }
 
-    status_board
-        .entries
-        .retain(|entry| entry.tick_timing != Some(timing) || entry.remaining_turns > 0);
+    status_board.entries.retain(|entry| entry.remaining_turns > 0);
     recalculate_stage_modifiers(stats, status_board);
     outcomes
 }
@@ -677,7 +708,7 @@ pub fn note_round_phase(log: &mut StructuredBattleLog, round: u32, detail: impl 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::SkillId;
+    use crate::data::{SkillId, StatusCategory, StatusTickTiming};
 
     #[test]
     fn replay_log_assigns_monotonic_sequence_numbers() {
@@ -749,5 +780,77 @@ mod tests {
         assert!(structured_log.0.is_empty());
         assert!(replay_log.0.is_empty());
         assert!(action_trace.0.is_empty());
+    }
+
+    #[test]
+    fn owner_action_end_tick_does_not_decrement_duration() {
+        let mut status_board = StatusBoard {
+            entries: vec![StatusInstance {
+                id: "wind_evade".to_string(),
+                name: "闪避".to_string(),
+                category: StatusCategory::Buff,
+                remaining_turns: 1,
+                applied_round: 1,
+                source_side: Some(Side::Player),
+                tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                stage_modifiers: vec![],
+                fixed_damage_on_tick: 0,
+                heal_on_tick: 0,
+                heal_taken_multiplier: None,
+                evade_charges: 1,
+            }],
+        };
+
+        let outcomes = tick_statuses_for_timing(&mut status_board, StatusTickTiming::OwnerActionEnd);
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].remaining_turns, 1);
+        assert!(!outcomes[0].expired);
+        assert_eq!(status_board.entries.len(), 1);
+        assert_eq!(status_board.entries[0].remaining_turns, 1);
+    }
+
+    #[test]
+    fn round_end_decrement_skips_same_round_and_expires_next_full_round() {
+        let mut stats = Stats {
+            hp: 10,
+            max_hp: 10,
+            atk: 5,
+            def: 5,
+            spd: 5,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        };
+        let mut status_board = StatusBoard {
+            entries: vec![StatusInstance {
+                id: "wind_evade".to_string(),
+                name: "闪避".to_string(),
+                category: StatusCategory::Buff,
+                remaining_turns: 1,
+                applied_round: 1,
+                source_side: Some(Side::Player),
+                tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                stage_modifiers: vec![],
+                fixed_damage_on_tick: 0,
+                heal_on_tick: 0,
+                heal_taken_multiplier: None,
+                evade_charges: 1,
+            }],
+        };
+
+        let first_round = decrement_status_durations_for_round(&mut status_board, &mut stats, 1);
+        assert_eq!(first_round.len(), 1);
+        assert_eq!(first_round[0].remaining_turns, 1);
+        assert!(!first_round[0].expired);
+        assert_eq!(status_board.entries.len(), 1);
+
+        let second_round = decrement_status_durations_for_round(&mut status_board, &mut stats, 2);
+        assert_eq!(second_round.len(), 1);
+        assert_eq!(second_round[0].remaining_turns, 0);
+        assert!(second_round[0].expired);
+        assert!(status_board.entries.is_empty());
     }
 }
