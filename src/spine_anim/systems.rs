@@ -71,8 +71,10 @@ pub(super) fn spawn_monster_ui_visuals(
         );
 
         let (left, right, top, bottom) = match combatant.side {
-            Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(196.0), Val::Auto),
-            Side::Enemy => (Val::Auto, Val::Px(28.0), Val::Px(196.0), Val::Auto),
+            //Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(196.0), Val::Auto),
+            Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(325.0), Val::Auto),//debug mode
+            //Side::Enemy => (Val::Auto, Val::Px(28.0), Val::Px(196.0), Val::Auto),
+            Side::Enemy => (Val::Auto, Val::Px(350.0), Val::Px(196.0), Val::Auto),//debug mode
         };
         let visual = visual_config(name.as_str(), combatant.side);
 

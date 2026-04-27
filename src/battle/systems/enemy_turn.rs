@@ -19,7 +19,7 @@ use super::{
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 0.75;
+const ENEMY_AI_ACTION_DELAY: f32 = 1.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnemyAiSkillKind {
