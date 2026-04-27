@@ -3274,6 +3274,11 @@ fn apply_effect_with_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::{
+        ecs::{message::Messages, system::SystemState},
+        prelude::World,
+    };
+    use std::collections::HashMap;
 
     fn test_skill(condition: SkillCondition) -> SkillDef {
         SkillDef {
@@ -3306,10 +3311,16 @@ mod tests {
             last_wind_spread_succeeded: false,
             ..Default::default()
         };
-        assert!(!evaluate_condition(&SkillCondition::LastWindSpreadFailed, &ctx));
+        assert!(!evaluate_condition(
+            &SkillCondition::LastWindSpreadFailed,
+            &ctx
+        ));
 
         ctx.last_attack_resolved = true;
-        assert!(evaluate_condition(&SkillCondition::LastWindSpreadFailed, &ctx));
+        assert!(evaluate_condition(
+            &SkillCondition::LastWindSpreadFailed,
+            &ctx
+        ));
     }
 
     #[test]
@@ -3319,10 +3330,16 @@ mod tests {
             last_wind_spread_succeeded: true,
             ..Default::default()
         };
-        assert!(!evaluate_condition(&SkillCondition::LastWindSpreadSucceeded, &ctx));
+        assert!(!evaluate_condition(
+            &SkillCondition::LastWindSpreadSucceeded,
+            &ctx
+        ));
 
         ctx.last_attack_resolved = true;
-        assert!(evaluate_condition(&SkillCondition::LastWindSpreadSucceeded, &ctx));
+        assert!(evaluate_condition(
+            &SkillCondition::LastWindSpreadSucceeded,
+            &ctx
+        ));
     }
 
     #[test]
@@ -3341,9 +3358,7 @@ mod tests {
                         lifesteal_ratio: None,
                         ignore_shield: false,
                     },
-                    SkillEffect::Conditional {
-                        branches: vec![],
-                    },
+                    SkillEffect::Conditional { branches: vec![] },
                 ],
             },
         };
@@ -3375,5 +3390,227 @@ mod tests {
             },
             &ctx,
         ));
+    }
+
+    fn formula_rules() -> BattleFormulaRules {
+        BattleFormulaRules::default()
+    }
+
+    fn empty_status_db() -> StatusDb {
+        StatusDb {
+            statuses: HashMap::new(),
+        }
+    }
+
+    fn test_reaction_db() -> ReactionDb {
+        ReactionDb {
+            reactions: vec![ReactionDef {
+                id: "vaporize".to_string(),
+                name: "蒸发".to_string(),
+                required_elements: vec![ElementType::Water, ElementType::Fire],
+                required_statuses: vec![],
+                trigger_element: ElementType::Fire,
+                fixed_damage: 3,
+                heal_attacker: 0,
+                apply_statuses: vec![],
+                clear_statuses: vec![],
+                aura_results: vec![],
+            }],
+        }
+    }
+
+    fn base_stats(hp: i32) -> Stats {
+        Stats {
+            hp,
+            max_hp: hp,
+            atk: 10,
+            def: 0,
+            spd: 10,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        }
+    }
+
+    #[test]
+    fn wind_spread_backline_triggers_secondary_reaction() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> = SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(30);
+        let mut attacker_shield = Shield(0);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut front_stats = base_stats(30);
+        let mut front_shield = Shield(0);
+        let mut front_aura = ElementAura {
+            slots: [Some(ElementType::Fire), None],
+        };
+        let mut front_statuses = StatusBoard::default();
+        let mut back_stats = base_stats(30);
+        let mut back_shield = Shield(0);
+        let mut back_aura = ElementAura {
+            slots: [Some(ElementType::Water), None],
+        };
+        let mut back_statuses = StatusBoard::default();
+        let mut pending_boosts = PendingBoosts::default();
+        let mut accuracy_rng = AccuracyRng::default();
+        let element_db = ElementDb::from_default_config();
+        let status_db = empty_status_db();
+        let reaction_db = test_reaction_db();
+        let mut structured_log = StructuredBattleLog::default();
+        let mut ctx = EffectResolutionContext::default();
+        let skill = SkillDef {
+            id: crate::data::SkillId::CycloneRend,
+            name: "气旋撕裂".to_string(),
+            category: SkillCategory::SpecialAttack,
+            cost_ap: 2,
+            effect: SkillEffect::Attack {
+                power: 10,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Wind),
+            base_accuracy: Some(1.0),
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            apply_wind_effect(
+                &skill,
+                Side::Player,
+                Side::Enemy,
+                &mut attacker_stats,
+                &mut attacker_shield,
+                &mut attacker_statuses,
+                WindSpreadTarget {
+                    base_element: ElementType::Grass,
+                    stats: &mut front_stats,
+                    shield: &mut front_shield,
+                    aura: &mut front_aura,
+                    statuses: &mut front_statuses,
+                },
+                Some(WindSpreadTarget {
+                    base_element: ElementType::Grass,
+                    stats: &mut back_stats,
+                    shield: &mut back_shield,
+                    aura: &mut back_aura,
+                    statuses: &mut back_statuses,
+                }),
+                None,
+                &mut pending_boosts,
+                &formula_rules(),
+                &mut accuracy_rng,
+                &element_db,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                Some(&mut structured_log),
+                Some(1),
+                Some(&mut ctx),
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(front_aura.elements(), vec![ElementType::Fire]);
+        assert!(back_aura.elements().is_empty());
+        assert_eq!(ctx.last_reaction_name.as_deref(), Some("蒸发"));
+        assert!(ctx.last_wind_spread_succeeded);
+        assert!(ctx.last_attack_resolved);
+        assert!(back_stats.hp < back_stats.max_hp);
+
+        let events = world.resource::<Messages<BattleEvent>>();
+        let mut cursor = events.get_cursor();
+        let collected: Vec<_> = cursor.read(events).cloned().collect();
+        assert!(collected.iter().any(|event| matches!(
+            event,
+            BattleEvent::WindSpreadTriggered {
+                source: Side::Player,
+                target: Side::Enemy,
+                element: ElementType::Fire,
+            }
+        )));
+        assert!(collected.iter().any(|event| matches!(
+            event,
+            BattleEvent::ReactionTriggered { reaction_name, .. } if reaction_name == "蒸发"
+        )));
+    }
+
+    #[test]
+    fn elemental_attack_shield_blocks_attachment_and_reaction() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> = SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(30);
+        let mut attacker_shield = Shield(0);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut target_stats = base_stats(30);
+        let mut target_shield = Shield(99);
+        let mut target_aura = ElementAura {
+            slots: [Some(ElementType::Fire), None],
+        };
+        let mut target_statuses = StatusBoard::default();
+        let mut pending_boosts = PendingBoosts::default();
+        let mut accuracy_rng = AccuracyRng::default();
+        let element_db = ElementDb::from_default_config();
+        let status_db = empty_status_db();
+        let reaction_db = test_reaction_db();
+        let skill = SkillDef {
+            id: crate::data::SkillId::WaterBlade,
+            name: "水刃".to_string(),
+            category: SkillCategory::ElementAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 10,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Water),
+            base_accuracy: Some(1.0),
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            apply_effect(
+                &skill,
+                Side::Player,
+                Side::Enemy,
+                ElementType::Grass,
+                &mut attacker_stats,
+                &mut attacker_shield,
+                &mut attacker_statuses,
+                &mut target_stats,
+                &mut target_shield,
+                &mut target_aura,
+                &mut target_statuses,
+                &mut pending_boosts,
+                &formula_rules(),
+                &mut accuracy_rng,
+                &element_db,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                None,
+                Some(1),
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(target_aura.elements(), vec![ElementType::Fire]);
+        assert_eq!(target_stats.hp, target_stats.max_hp);
+        assert!(target_shield.0 < 99);
+
+        let events = world.resource::<Messages<BattleEvent>>();
+        let mut cursor = events.get_cursor();
+        let collected: Vec<_> = cursor.read(events).cloned().collect();
+        assert!(!collected.iter().any(|event| matches!(event, BattleEvent::ElementAuraApplied { .. })));
+        assert!(!collected.iter().any(|event| matches!(event, BattleEvent::ReactionTriggered { .. })));
     }
 }

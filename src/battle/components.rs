@@ -683,7 +683,12 @@ mod tests {
     fn replay_log_assigns_monotonic_sequence_numbers() {
         let mut replay_log = ReplayEventLog::default();
         push_replay_log_entry(&mut replay_log, "battle-event", "BattleEvent", "first");
-        push_replay_log_entry(&mut replay_log, "status-r1", "burning_aura:applied", "second");
+        push_replay_log_entry(
+            &mut replay_log,
+            "status-r1",
+            "burning_aura:applied",
+            "second",
+        );
 
         assert_eq!(replay_log.0.len(), 2);
         assert_eq!(replay_log.0[0].seq, 1);

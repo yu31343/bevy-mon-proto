@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use bevy::prelude::*;
 
@@ -15,8 +18,8 @@ use super::abort_battle;
 
 pub fn check_end_system(
     query: Query<(&Combatant, &Stats, &Name), With<InBattle>>,
-    mut player_team: ResMut<crate::battle::PlayerTeam>,
-    mut enemy_team: ResMut<crate::battle::EnemyTeam>,
+    player_team: ResMut<crate::battle::PlayerTeam>,
+    enemy_team: ResMut<crate::battle::EnemyTeam>,
     mut pending_ko: ResMut<PendingKoResolution>,
     turn_count: Res<TurnCount>,
     mut event_writer: MessageWriter<BattleEvent>,
@@ -48,7 +51,6 @@ pub fn check_end_system(
         return;
     };
     if p_stats.hp <= 0 {
-        p_dead = true;
         event_writer.write(BattleEvent::CombatantFainted {
             owner: p_entity,
             side: Side::Player,
@@ -104,7 +106,6 @@ pub fn check_end_system(
         return;
     };
     if e_stats.hp <= 0 {
-        e_dead = true;
         event_writer.write(BattleEvent::CombatantFainted {
             owner: e_entity,
             side: Side::Enemy,
@@ -293,13 +294,13 @@ fn sanitize_filename_segment(input: &str) -> String {
     }
 }
 
-fn export_logs(
+fn write_export_logs(
+    export_dir: &Path,
     battle_result: &BattleResult,
     replay_log: &ReplayEventLog,
     action_trace: &ActionTrace,
 ) -> Result<String, String> {
-    let export_dir = PathBuf::from("battle_logs");
-    fs::create_dir_all(&export_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
+    fs::create_dir_all(export_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
 
     let result_slug = sanitize_filename_segment(&battle_result.message);
     let replay_path = export_dir.join(format!("{result_slug}_replay.ron"));
@@ -321,6 +322,15 @@ fn export_logs(
         replay_path.display(),
         action_path.display()
     ))
+}
+
+fn export_logs(
+    battle_result: &BattleResult,
+    replay_log: &ReplayEventLog,
+    action_trace: &ActionTrace,
+) -> Result<String, String> {
+    let export_dir = PathBuf::from("battle_logs");
+    write_export_logs(&export_dir, battle_result, replay_log, action_trace)
 }
 
 pub fn restart_from_result_system(
@@ -352,5 +362,431 @@ pub fn restart_from_result_system(
 
         next_phase.set(BattlePhase::Init);
         next_game_state.set(GameState::TeamSelection);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        battle::{
+            systems::consume_battle_events_system, ActionTraceEntry, BattleEvent,
+            BattleFormulaEvent, BattleLifecycleEvent, BattleStateEvent, BattleStatusEvent,
+            BattleTraceEvent, ElementAura, EnemyTeam, PlayerTeam, ReplayEventLog, Shield, Side,
+            StructuredBattleLog, Team,
+        },
+        game_state::GameState,
+    };
+    use bevy::{ecs::message::Messages, prelude::State, time::TimePlugin};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_stats(hp: i32) -> Stats {
+        Stats {
+            hp,
+            max_hp: 20,
+            atk: 5,
+            def: 5,
+            spd: 5,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        }
+    }
+
+    #[test]
+    fn check_end_marks_auto_switch_and_enters_death_resolve() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<PendingKoResolution>();
+        app.insert_resource(TurnCount(4));
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ActionTrace::default());
+        app.insert_resource(BattleResult::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.insert_resource(NextState::<GameState>::default());
+        app.add_systems(Update, check_end_system);
+
+        let player_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player A"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Fire,
+                },
+                test_stats(0),
+            ))
+            .id();
+        let player_bench = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player B"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Water,
+                },
+                test_stats(12),
+            ))
+            .id();
+        let enemy_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Enemy A"),
+                Combatant {
+                    side: Side::Enemy,
+                    element: crate::data::ElementType::Grass,
+                },
+                test_stats(10),
+            ))
+            .id();
+
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active, player_bench],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let pending = app.world().resource::<PendingKoResolution>();
+        assert_eq!(pending.player_switch_index, Some(1));
+        assert_eq!(pending.enemy_switch_index, None);
+        assert!(!pending.player_defeated);
+        assert!(!pending.enemy_defeated);
+
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::DeathResolve)
+        ));
+
+        let trace = app.world().resource::<ActionTrace>();
+        assert!(trace.0.iter().any(|entry| {
+            entry.action == "fainted" && entry.detail.contains("Player A 倒下")
+        }));
+    }
+
+    #[test]
+    fn resolve_ko_switches_to_next_living_combatant() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.init_resource::<Messages<BattleEvent>>();
+        app.insert_resource(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: Some(1),
+            enemy_switch_index: None,
+            player_defeated: false,
+            enemy_defeated: false,
+        });
+        app.insert_resource(TurnCount(5));
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ActionTrace::default());
+        app.insert_resource(BattleResult::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.insert_resource(NextState::<GameState>::default());
+        app.add_systems(Update, resolve_ko_system);
+
+        let player_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player A"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Fire,
+                },
+                test_stats(0),
+            ))
+            .id();
+        let player_bench = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player B"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Water,
+                },
+                test_stats(14),
+            ))
+            .id();
+        let enemy_active = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Enemy A"),
+                Combatant {
+                    side: Side::Enemy,
+                    element: crate::data::ElementType::Grass,
+                },
+                test_stats(8),
+            ))
+            .id();
+
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active, player_bench],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let player_team = app.world().resource::<PlayerTeam>();
+        assert_eq!(player_team.0.active_index, 1);
+
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::RoundStart)
+        ));
+
+        let battle_log = app.world().resource::<BattleLog>();
+        assert!(
+            battle_log
+                .0
+                .iter()
+                .any(|line| line.contains("玩家换上了 Player B"))
+        );
+
+        let trace = app.world().resource::<ActionTrace>();
+        assert!(
+            trace
+                .0
+                .iter()
+                .any(|entry| entry.action == "auto_switch" && entry.detail.contains("Player B"))
+        );
+    }
+
+    #[test]
+    fn write_export_logs_writes_replay_and_action_trace_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let export_dir = std::env::temp_dir().join(format!("bevy_mon_proto_test_{unique}"));
+
+        let battle_result = BattleResult {
+            message: "胜利！全歼敌方。按 R 重新开始。".to_string(),
+            export_status: None,
+        };
+        let replay_log = ReplayEventLog(vec![crate::battle::ReplayLogEntry {
+            seq: 1,
+            phase: "battle-event".to_string(),
+            summary: "BattleEvent".to_string(),
+            detail: "玩家使用了 火拳。".to_string(),
+        }]);
+        let action_trace = ActionTrace(vec![ActionTraceEntry {
+            seq: 1,
+            round: 1,
+            side: Side::Player,
+            action: "skill:FirePunch".to_string(),
+            detail: "玩家释放火拳".to_string(),
+        }]);
+
+        let export_message =
+            write_export_logs(&export_dir, &battle_result, &replay_log, &action_trace)
+                .expect("export should succeed");
+
+        let slug = sanitize_filename_segment(&battle_result.message);
+        let replay_path = export_dir.join(format!("{slug}_replay.ron"));
+        let action_path = export_dir.join(format!("{slug}_action_trace.ron"));
+        assert!(replay_path.exists());
+        assert!(action_path.exists());
+        assert!(export_message.contains(&format!("{slug}_replay.ron")));
+        assert!(export_message.contains(&format!("{slug}_action_trace.ron")));
+
+        let replay_text = fs::read_to_string(&replay_path).expect("read replay export");
+        let action_text = fs::read_to_string(&action_path).expect("read action export");
+        assert!(replay_text.contains("BattleEvent"));
+        assert!(replay_text.contains("玩家使用了 火拳"));
+        assert!(action_text.contains("skill:FirePunch"));
+        assert!(action_text.contains("玩家释放火拳"));
+
+        let _ = fs::remove_dir_all(&export_dir);
+    }
+
+    #[test]
+    fn exported_replay_and_action_logs_match_runtime_generated_content() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let export_dir = std::env::temp_dir().join(format!("bevy_mon_proto_runtime_export_{unique}"));
+
+        let mut app = App::new();
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleTraceEvent>>();
+        app.init_resource::<Messages<BattleStateEvent>>();
+        app.init_resource::<Messages<BattleLifecycleEvent>>();
+        app.init_resource::<Messages<BattleFormulaEvent>>();
+        app.init_resource::<Messages<BattleStatusEvent>>();
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ReplayEventLog::default());
+        app.insert_resource(BattleResult {
+            message: "胜利！全歼敌方。按 R 重新开始。".to_string(),
+            export_status: None,
+        });
+        app.insert_resource(TurnCount(3));
+        app.insert_resource(State::new(GameState::Battle));
+        app.add_systems(Update, consume_battle_events_system);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Player A"),
+                Combatant {
+                    side: Side::Player,
+                    element: crate::data::ElementType::Fire,
+                },
+                test_stats(18),
+                Shield(4),
+                ElementAura::default(),
+                crate::battle::StatusBoard::default(),
+            ))
+            .id();
+        let enemy = app
+            .world_mut()
+            .spawn((
+                InBattle,
+                Name::new("Enemy A"),
+                Combatant {
+                    side: Side::Enemy,
+                    element: crate::data::ElementType::Water,
+                },
+                test_stats(11),
+                Shield(0),
+                ElementAura::default(),
+                crate::battle::StatusBoard::default(),
+            ))
+            .id();
+
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy],
+            active_index: 0,
+        }));
+
+        app.world_mut()
+            .resource_mut::<Messages<BattleEvent>>()
+            .write(BattleEvent::SkillUsed {
+                side: Side::Player,
+                skill_name: "火拳".to_string(),
+                slot: 0,
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleEvent>>()
+            .write(BattleEvent::DamageDealt {
+                source: Side::Player,
+                target: Side::Enemy,
+                amount: 7,
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleTraceEvent>>()
+            .write(BattleTraceEvent {
+                round: 3,
+                side: Side::Player,
+                action: "skill:FirePunch".to_string(),
+                detail: "玩家释放火拳并命中。".to_string(),
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleFormulaEvent>>()
+            .write(BattleFormulaEvent {
+                round: 3,
+                source: Side::Player,
+                target: Side::Enemy,
+                action: "damage_formula".to_string(),
+                detail: "基础伤害=7；护盾吸收=0；最终生命伤害=7。".to_string(),
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleStatusEvent>>()
+            .write(BattleStatusEvent {
+                round: 3,
+                subject: Side::Enemy,
+                status_id: "burning_aura".to_string(),
+                action: "applied".to_string(),
+                detail: "敌方获得燃烧附着。".to_string(),
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleLifecycleEvent>>()
+            .write(BattleLifecycleEvent {
+                phase: "battle-result".to_string(),
+                summary: "战斗结束".to_string(),
+                detail: "胜利！全歼敌方。按 R 重新开始。".to_string(),
+            });
+
+        app.update();
+
+        let replay_log = app.world().resource::<ReplayEventLog>();
+        let action_trace = ActionTrace(vec![ActionTraceEntry {
+            seq: 1,
+            round: 3,
+            side: Side::Player,
+            action: "skill:FirePunch".to_string(),
+            detail: "玩家释放火拳并命中。".to_string(),
+        }]);
+        let battle_result = app.world().resource::<BattleResult>();
+
+        assert_eq!(replay_log.0.len(), 6);
+        assert_eq!(replay_log.0[0].seq, 1);
+        assert_eq!(replay_log.0[0].phase, "battle-event");
+        assert_eq!(replay_log.0[0].summary, "BattleEvent");
+        assert_eq!(replay_log.0[0].detail, "玩家 使用了 火拳。");
+        assert_eq!(replay_log.0[1].seq, 2);
+        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点实际伤害。");
+        assert_eq!(replay_log.0[2].phase, "trace-r3");
+        assert_eq!(replay_log.0[2].summary, "skill:FirePunch");
+        assert_eq!(replay_log.0[3].phase, "battle-result");
+        assert_eq!(replay_log.0[3].summary, "战斗结束");
+        assert_eq!(replay_log.0[4].phase, "formula-r3");
+        assert_eq!(replay_log.0[4].summary, "damage_formula");
+        assert_eq!(replay_log.0[5].phase, "status-r3");
+        assert_eq!(replay_log.0[5].summary, "burning_aura:applied");
+
+        let export_message = write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+            .expect("export should succeed");
+        let slug = sanitize_filename_segment(&battle_result.message);
+        let replay_path = export_dir.join(format!("{slug}_replay.ron"));
+        let action_path = export_dir.join(format!("{slug}_action_trace.ron"));
+        assert!(export_message.contains(&format!("{slug}_replay.ron")));
+        assert!(export_message.contains(&format!("{slug}_action_trace.ron")));
+
+        let replay_text = fs::read_to_string(&replay_path).expect("read replay export");
+        let action_text = fs::read_to_string(&action_path).expect("read action export");
+
+        assert!(replay_text.contains("phase: \"battle-event\""));
+        assert!(replay_text.contains("detail: \"玩家 使用了 火拳。\""));
+        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点实际伤害。\""));
+        assert!(replay_text.contains("phase: \"trace-r3\""));
+        assert!(replay_text.contains("summary: \"skill:FirePunch\""));
+        assert!(replay_text.contains("phase: \"battle-result\""));
+        assert!(replay_text.contains("summary: \"战斗结束\""));
+        assert!(replay_text.contains("phase: \"formula-r3\""));
+        assert!(replay_text.contains("detail: \"基础伤害=7；护盾吸收=0；最终生命伤害=7。\""));
+        assert!(replay_text.contains("summary: \"burning_aura:applied\""));
+        assert!(action_text.contains("seq: 1"));
+        assert!(action_text.contains("round: 3"));
+        assert!(action_text.contains("action: \"skill:FirePunch\""));
+        assert!(action_text.contains("detail: \"玩家释放火拳并命中。\""));
+
+        let _ = fs::remove_dir_all(&export_dir);
     }
 }
