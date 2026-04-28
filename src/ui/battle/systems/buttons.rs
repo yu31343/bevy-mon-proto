@@ -19,6 +19,26 @@ pub(crate) struct RetreatConfirmState {
     pub armed: bool,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct BenchRosterOverlayOpen(pub bool);
+
+#[derive(Resource)]
+pub(crate) struct PendingBenchRosterOverlayToggle {
+    pub target: Option<bool>,
+    pub timer: Timer,
+}
+
+impl Default for PendingBenchRosterOverlayToggle {
+    fn default() -> Self {
+        let mut timer = Timer::from_seconds(0.0, TimerMode::Once);
+        timer.pause();
+        Self {
+            target: None,
+            timer,
+        }
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct PendingSwitchOverlayToggle {
     pub target: Option<bool>,
@@ -595,5 +615,69 @@ pub(crate) fn button_retreat_system(
             next_game_state.set(GameState::Lobby);
             break;
         }
+    }
+}
+
+pub(crate) fn button_toggle_bench_roster_overlay_system(
+    mut player_bench_query: Query<&Interaction, (Changed<Interaction>, With<PlayerBenchButton>)>,
+    mut enemy_bench_query: Query<&Interaction, (Changed<Interaction>, With<EnemyBenchButton>)>,
+    mut cancel_query: Query<&Interaction, (Changed<Interaction>, With<BenchRosterCancelButton>)>,
+    open: Res<BenchRosterOverlayOpen>,
+    mut pending_toggle: ResMut<PendingBenchRosterOverlayToggle>,
+) {
+    for interaction in &mut player_bench_query {
+        if *interaction == Interaction::Pressed {
+            queue_bench_roster_overlay_toggle(&mut pending_toggle, !open.0);
+            return;
+        }
+    }
+
+    for interaction in &mut enemy_bench_query {
+        if *interaction == Interaction::Pressed {
+            queue_bench_roster_overlay_toggle(&mut pending_toggle, !open.0);
+            return;
+        }
+    }
+
+    for interaction in &mut cancel_query {
+        if *interaction == Interaction::Pressed {
+            queue_bench_roster_overlay_toggle(&mut pending_toggle, false);
+            return;
+        }
+    }
+}
+
+fn queue_bench_roster_overlay_toggle(
+    pending_toggle: &mut ResMut<PendingBenchRosterOverlayToggle>,
+    visible: bool,
+) {
+    pending_toggle.target = Some(visible);
+    pending_toggle.timer = Timer::from_seconds(0.12, TimerMode::Once);
+}
+
+pub(crate) fn apply_pending_bench_roster_overlay_toggle_system(
+    time: Res<Time>,
+    mut nodes: Query<&mut Node, With<BenchRosterOverlayRoot>>,
+    mut open: ResMut<BenchRosterOverlayOpen>,
+    mut pending_toggle: ResMut<PendingBenchRosterOverlayToggle>,
+) {
+    let Some(visible) = pending_toggle.target else {
+        return;
+    };
+
+    pending_toggle.timer.tick(time.delta());
+    if !pending_toggle.timer.just_finished() {
+        return;
+    }
+
+    pending_toggle.target = None;
+    open.0 = visible;
+
+    for mut node in &mut nodes {
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
 }

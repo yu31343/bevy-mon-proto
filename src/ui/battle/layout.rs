@@ -449,8 +449,8 @@ fn spawn_skill_row_player(
     parent
         .spawn((Node {
             width: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(8.0),
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(8.0),
             align_items: AlignItems::Stretch,
             ..default()
         },))
@@ -459,13 +459,14 @@ fn spawn_skill_row_player(
                 row.spawn((
                     Button,
                     Node {
-                        width: Val::Percent(100.0),
+                        width: Val::Percent(25.0),
                         min_height: Val::Px(78.0),
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
                         align_items: AlignItems::FlexStart,
                         column_gap: Val::Px(6.0),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
+                        flex_direction: FlexDirection::Row,
                         ..default()
                     },
                     BackgroundColor(theme.button_idle),
@@ -486,6 +487,7 @@ fn spawn_skill_row_player(
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 border_radius: BorderRadius::all(Val::Px(6.0)),
+                                flex_shrink: 0.0,
                                 ..default()
                             },
                             ImageNode::solid_color(Color::srgba(0.22, 0.38, 0.52, 0.90)),
@@ -793,32 +795,76 @@ pub(crate) fn setup_ui_system(
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(276.0),
+                    top: Val::Px(250.0),
                     left: Val::Px(20.0),
                     width: Val::Px(320.0),
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(8.0),
                     ..default()
                 },
             ))
             .with_children(|row| {
-                for idx in 0..3 {
-                    spawn_small_bench_card(
-                        row,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        meta_font.clone(),
-                        small_font.clone(),
-                        small_font.clone(),
-                        idx,
-                        Side::Player,
-                    );
-                }
+                row.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(42.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    PlayerBenchButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("待机精灵"),
+                        body_font.clone(),
+                        TextColor(theme.text_primary),
+                    ));
+                });
             });
 
 
-            // === Enemy Info: Top-Right (only name + HP + shield, no skills/team) ===
+            // === Enemy Bench Button: Below Enemy Info Panel ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(250.0),
+                    right: Val::Px(20.0),
+                    width: Val::Px(320.0),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                row.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(42.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    EnemyBenchButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("待机精灵"),
+                        body_font.clone(),
+                        TextColor(theme.text_primary),
+                    ));
+                });
+            });
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -994,34 +1040,6 @@ pub(crate) fn setup_ui_system(
                     &[("无", theme.text_muted)],
                 );
             });
-
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(276.0),
-                    right: Val::Px(20.0),
-                    width: Val::Px(320.0),
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(8.0),
-                    ..default()
-                },
-            ))
-            .with_children(|row| {
-                for idx in 0..3 {
-                    spawn_small_bench_card(
-                        row,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        meta_font.clone(),
-                        small_font.clone(),
-                        small_font.clone(),
-                        idx,
-                        Side::Enemy,
-                    );
-                }
-            });
-
 
             // === Hint Text: Center ===
             root.spawn((
@@ -1271,32 +1289,75 @@ pub(crate) fn setup_ui_system(
                 }
             });
 
-            // === Bottom-Right: Switch Button + Skills ===
+            // === Bottom-Center: Skills Row ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(16.0),
+                    width: Val::Px(820.0),
+                    margin: UiRect::left(Val::Px(-410.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
+                    ..default()
+                },
+                BackgroundColor(theme.panel),
+                BorderColor::all(theme.border_panel),
+                theme.panel_shadow(),
+                SkillPanelRoot,
+            ))
+            .with_children(|skill_panel| {
+                skill_panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect::px(0.0, 0.0, 3.0, 5.0),
+                        border: UiRect::bottom(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor::all(theme.divider),
+                ))
+                .with_children(|header| {
+                    header.spawn((
+                        Text::new("技能"),
+                        skill_header_font.clone(),
+                        TextColor(theme.accent_player),
+                        theme.title_text_shadow(),
+                    ));
+                });
+                spawn_skill_row_player(
+                    skill_panel,
+                    &theme,
+                    border_1,
+                    radius_button,
+                    skill_body_font.clone(),
+                    skill_meta_font.clone(),
+                    skill_icon_font.clone(),
+                );
+            });
+
+            // === Bottom-Right: Switch Monster Button ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     right: Val::Px(16.0),
                     bottom: Val::Px(16.0),
-                    width: Val::Px(400.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(8.0),
                     ..default()
                 },
-                SkillPanelRoot,
             ))
-            .with_children(|right_panel| {
-                // Switch Monster Button
-                right_panel.spawn((
+            .with_children(|right_bottom| {
+                right_bottom.spawn((
                     Button,
                     Node {
-                        width: Val::Percent(100.0),
-                        min_height: Val::Px(42.0),
+                        width: Val::Px(150.0),
+                        min_height: Val::Px(46.0),
                         padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
                         ..default()
                     },
                     BackgroundColor(theme.button_idle),
@@ -1307,53 +1368,9 @@ pub(crate) fn setup_ui_system(
                 .with_children(|btn| {
                     btn.spawn((
                         Text::new("换精灵（Q）"),
-                        skill_body_font.clone(),
+                        body_font.clone(),
                         TextColor(theme.accent_player),
                     ));
-                });
-
-                // Skill Section
-                right_panel.spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        padding: UiRect::all(Val::Px(10.0)),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_panel),
-                        ..default()
-                    },
-                    BackgroundColor(theme.panel),
-                    BorderColor::all(theme.border_panel),
-                    theme.panel_shadow(),
-                ))
-                .with_children(|skill_section| {
-                    skill_section.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            padding: UiRect::px(0.0, 0.0, 3.0, 5.0),
-                            border: UiRect::bottom(Val::Px(1.0)),
-                            ..default()
-                        },
-                        BorderColor::all(theme.divider),
-                    ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("技能"),
-                            skill_header_font.clone(),
-                            TextColor(theme.accent_player),
-                            theme.title_text_shadow(),
-                        ));
-                    });
-                    spawn_skill_row_player(
-                        skill_section,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        skill_body_font.clone(),
-                        skill_meta_font.clone(),
-                        skill_icon_font.clone(),
-                    );
                 });
             });
 
@@ -1523,6 +1540,141 @@ pub(crate) fn setup_ui_system(
                                         TeamMemberShieldBarFill { index: idx },
                                     ));
                                 });
+                            });
+                        }
+                    });
+                });
+            });
+
+            // === Bench Roster Overlay (hidden by default) ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(40.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
+                BenchRosterOverlayRoot,
+            ))
+            .with_children(|overlay| {
+                overlay.spawn((
+                    Node {
+                        width: Val::Px(700.0),
+                        max_height: Val::Vh(80.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(16.0),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_panel),
+                        overflow: Overflow::scroll(),
+                        ..default()
+                    },
+                    BackgroundColor(theme.panel),
+                    BorderColor::all(theme.border_panel),
+                    theme.panel_shadow(),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            padding: UiRect::px(0.0, 0.0, 6.0, 8.0),
+                            border: UiRect::bottom(Val::Px(1.0)),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BorderColor::all(theme.divider),
+                    ))
+                    .with_children(|header| {
+                        header.spawn((
+                            Text::new("待机精灵"),
+                            title_font.clone(),
+                            TextColor(theme.accent_player),
+                            theme.title_text_shadow(),
+                        ));
+                        header.spawn((
+                            Button,
+                            Node {
+                                min_width: Val::Px(80.0),
+                                min_height: Val::Px(36.0),
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                border: border_1,
+                                border_radius: BorderRadius::all(radius_button),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(theme.button_idle),
+                            BorderColor::all(theme.button_border_idle),
+                            theme.button_shadow(),
+                            BenchRosterCancelButton,
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new("关闭"),
+                                meta_font.clone(),
+                                TextColor(theme.text_primary),
+                            ));
+                        });
+                    });
+
+                    panel.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(12.0),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|roster| {
+                        for idx in 0..3 {
+                            roster.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    min_height: Val::Px(100.0),
+                                    padding: UiRect::all(Val::Px(12.0)),
+                                    border: border_1,
+                                    border_radius: BorderRadius::all(radius_button),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.button_idle),
+                                BorderColor::all(theme.button_border_idle),
+                            ))
+                            .with_children(|card| {
+                                card.spawn((
+                                    Text::new(format!("待机位 {}", idx + 1)),
+                                    body_font.clone(),
+                                    TextColor(theme.text_primary),
+                                    BenchRosterNameText { index: idx },
+                                ));
+                                card.spawn((
+                                    Text::new("Atk: 0 Def: 0 Acc: 0 Spd: 0"),
+                                    meta_font.clone(),
+                                    TextColor(theme.text_secondary),
+                                    BenchRosterStatsText { index: idx },
+                                ));
+                                card.spawn((
+                                    Text::new("HP: 0/0"),
+                                    meta_font.clone(),
+                                    TextColor(theme.text_secondary),
+                                    BenchRosterHpText { index: idx },
+                                ));
+                                card.spawn((
+                                    Text::new("状态：无"),
+                                    meta_font.clone(),
+                                    TextColor(theme.text_muted),
+                                    BenchRosterAuraText { index: idx },
+                                ));
                             });
                         }
                     });

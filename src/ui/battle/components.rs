@@ -274,6 +274,38 @@ pub(crate) struct EnemyShieldBarFill;
 pub(crate) struct SwitchOverlayRoot;
 
 #[derive(Component)]
+pub(crate) struct PlayerBenchButton;
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchButton;
+
+#[derive(Component)]
+pub(crate) struct BenchRosterOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct BenchRosterCancelButton;
+
+#[derive(Component)]
+pub(crate) struct BenchRosterNameText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct BenchRosterStatsText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct BenchRosterHpText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct BenchRosterAuraText {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct SkillPanelRoot;
 
 #[derive(Component)]
