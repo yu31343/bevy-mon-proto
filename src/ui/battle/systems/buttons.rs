@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, TurnContext, UiControlSide,
+        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
+        UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
@@ -237,7 +238,7 @@ pub(crate) fn button_switch_member_system(
     enemy_team: Option<ResMut<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
     mut event_writer: MessageWriter<BattleEvent>,
-    combat_query: Query<(&Stats, &Name), With<InBattle>>,
+    mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<InBattle>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
         return;
@@ -271,14 +272,28 @@ pub(crate) fn button_switch_member_system(
             continue;
         }
 
+        let current_entity = team.combatants[team.active_index];
         let target_entity = team.combatants[target_index];
-        let Ok((stats, name)) = combat_query.get(target_entity) else {
+        let Ok(
+            [
+                (mut current_stats, _, mut current_statuses),
+                (target_stats, name, target_statuses),
+            ],
+        ) = combat_query.get_many_mut([current_entity, target_entity])
+        else {
             continue;
         };
-        if stats.hp <= 0 {
+        if target_stats.hp <= 0 {
             continue;
         }
 
+        transfer_status_by_id(
+            &mut current_statuses,
+            &mut current_stats,
+            target_statuses.into_inner(),
+            target_stats.into_inner(),
+            "nature_regen",
+        );
         *ap -= 1;
         team.active_index = target_index;
         event_writer.write(BattleEvent::Switched {

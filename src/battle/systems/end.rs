@@ -10,6 +10,7 @@ use crate::{
         ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
         PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog, TurnCount,
         note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
+        transfer_status_by_id,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -234,7 +235,15 @@ pub fn check_end_system(
 
 pub fn resolve_ko_system(
     time: Res<Time>,
-    query: Query<(&Combatant, &Stats, &Name), With<InBattle>>,
+    mut query: Query<
+        (
+            &Combatant,
+            &mut Stats,
+            &Name,
+            &mut crate::battle::StatusBoard,
+        ),
+        With<InBattle>,
+    >,
     mut player_team: ResMut<crate::battle::PlayerTeam>,
     mut enemy_team: ResMut<crate::battle::EnemyTeam>,
     mut pending_ko: ResMut<PendingKoResolution>,
@@ -253,10 +262,24 @@ pub fn resolve_ko_system(
     }
 
     if let Some(idx) = pending_ko.player_switch_index.take() {
-        player_team.0.active_index = idx;
+        let old_e = player_team.0.combatants[player_team.0.active_index];
         let new_e = player_team.0.combatants[idx];
-        if let Ok((_, stats, new_n)) = query.get(new_e) {
-            if stats.hp > 0 {
+        if let Ok(
+            [
+                (_, mut old_stats, _, mut old_statuses),
+                (_, new_stats, new_n, new_statuses),
+            ],
+        ) = query.get_many_mut([old_e, new_e])
+        {
+            if new_stats.hp > 0 {
+                transfer_status_by_id(
+                    &mut old_statuses,
+                    &mut old_stats,
+                    new_statuses.into_inner(),
+                    new_stats.into_inner(),
+                    "nature_regen",
+                );
+                player_team.0.active_index = idx;
                 event_writer.write(BattleEvent::Switched {
                     side: Side::Player,
                     name: new_n.to_string(),
@@ -281,10 +304,24 @@ pub fn resolve_ko_system(
     }
 
     if let Some(idx) = pending_ko.enemy_switch_index.take() {
-        enemy_team.0.active_index = idx;
+        let old_e = enemy_team.0.combatants[enemy_team.0.active_index];
         let new_e = enemy_team.0.combatants[idx];
-        if let Ok((_, stats, new_n)) = query.get(new_e) {
-            if stats.hp > 0 {
+        if let Ok(
+            [
+                (_, mut old_stats, _, mut old_statuses),
+                (_, new_stats, new_n, new_statuses),
+            ],
+        ) = query.get_many_mut([old_e, new_e])
+        {
+            if new_stats.hp > 0 {
+                transfer_status_by_id(
+                    &mut old_statuses,
+                    &mut old_stats,
+                    new_statuses.into_inner(),
+                    new_stats.into_inner(),
+                    "nature_regen",
+                );
+                enemy_team.0.active_index = idx;
                 event_writer.write(BattleEvent::Switched {
                     side: Side::Enemy,
                     name: new_n.to_string(),
@@ -475,8 +512,11 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(TimePlugin);
         app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleFormulaEvent>>();
+        app.init_resource::<Messages<BattleStatusEvent>>();
         app.init_resource::<PendingKoResolution>();
         app.insert_resource(TurnCount(4));
+        app.insert_resource(BattleFormulaRules::default());
         app.insert_resource(BattleLog::default());
         app.insert_resource(StructuredBattleLog::default());
         app.insert_resource(ActionTrace::default());
@@ -495,6 +535,7 @@ mod tests {
                     element: crate::data::ElementType::Fire,
                 },
                 test_stats(0),
+                StatusBoard::default(),
             ))
             .id();
         let player_bench = app
@@ -507,6 +548,7 @@ mod tests {
                     element: crate::data::ElementType::Water,
                 },
                 test_stats(12),
+                StatusBoard::default(),
             ))
             .id();
         let enemy_active = app
@@ -519,6 +561,7 @@ mod tests {
                     element: crate::data::ElementType::Grass,
                 },
                 test_stats(10),
+                StatusBoard::default(),
             ))
             .id();
 
@@ -676,6 +719,7 @@ mod tests {
                     element: crate::data::ElementType::Fire,
                 },
                 test_stats(0),
+                StatusBoard::default(),
             ))
             .id();
         let player_bench = app
@@ -688,6 +732,7 @@ mod tests {
                     element: crate::data::ElementType::Water,
                 },
                 test_stats(14),
+                StatusBoard::default(),
             ))
             .id();
         let enemy_active = app
@@ -700,6 +745,7 @@ mod tests {
                     element: crate::data::ElementType::Grass,
                 },
                 test_stats(8),
+                StatusBoard::default(),
             ))
             .id();
 

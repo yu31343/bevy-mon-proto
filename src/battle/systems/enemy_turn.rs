@@ -6,7 +6,7 @@ use crate::{
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
         RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
         TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
-        push_named_action_trace, push_turn_action_trace,
+        push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{BattleDbs, CardEffect, SkillCategory, SkillDef, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
@@ -636,9 +636,23 @@ pub fn enemy_turn_input_system(
             && target_index < enemy_team.0.combatants.len()
             && target_index != enemy_team.0.active_index
         {
+            let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
             let target_entity = enemy_team.0.combatants[target_index];
-            if let Ok((_, _, stats, _, _, _, _, _, name)) = exec_query.get(target_entity) {
-                if stats.hp > 0 {
+            if let Ok(
+                [
+                    (_, _, mut current_stats, _, _, _, mut current_statuses, _, _),
+                    (_, _, target_stats, _, _, _, target_statuses, _, name),
+                ],
+            ) = exec_query.get_many_mut([current_entity, target_entity])
+            {
+                if target_stats.hp > 0 {
+                    transfer_status_by_id(
+                        &mut current_statuses,
+                        &mut current_stats,
+                        target_statuses.into_inner(),
+                        target_stats.into_inner(),
+                        "nature_regen",
+                    );
                     action_points.enemy -= 1;
                     enemy_team.0.active_index = target_index;
                     writers.event_writer.write(BattleEvent::Switched {

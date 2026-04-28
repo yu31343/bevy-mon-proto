@@ -5,7 +5,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         AccuracyRng, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
-        PendingBoosts, Shield, Side, SkillList, Stats, TurnAction, TurnContext, TurnCount,
+        PendingBoosts, Shield, Side, SkillList, Stats, StatusBoard, TurnAction, TurnContext,
+        TurnCount, transfer_status_by_id,
     },
     data::{BattleDbs, BattleFormulaRules, SkillEffect},
     game_state::{BattlePhase, GameState},
@@ -34,7 +35,7 @@ fn player_input_system(
     mut player_team: ResMut<crate::battle::PlayerTeam>,
     mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
-    query: Query<(&Combatant, &SkillList, &Stats), With<InBattle>>,
+    mut query: Query<(&Combatant, &SkillList, &mut Stats, &mut StatusBoard), With<InBattle>>,
 ) {
     if player_team.0.combatants.is_empty() {
         abort_battle(
@@ -51,9 +52,23 @@ fn player_input_system(
         let current = player_team.0.active_index;
         for offset in 1..player_team.0.combatants.len() {
             let next_idx = (current + offset) % player_team.0.combatants.len();
-            let entity = player_team.0.combatants[next_idx];
-            if let Ok((_, _, stats)) = query.get(entity) {
-                if stats.hp > 0 {
+            let current_entity = player_team.0.combatants[current];
+            let next_entity = player_team.0.combatants[next_idx];
+            if let Ok(
+                [
+                    (_, _, mut current_stats, mut current_statuses),
+                    (_, _, next_stats, next_statuses),
+                ],
+            ) = query.get_many_mut([current_entity, next_entity])
+            {
+                if next_stats.hp > 0 {
+                    transfer_status_by_id(
+                        &mut current_statuses,
+                        &mut current_stats,
+                        next_statuses.into_inner(),
+                        next_stats.into_inner(),
+                        "nature_regen",
+                    );
                     player_team.0.active_index = next_idx;
                     turn_ctx.player_action = Some(TurnAction::Switch);
                     next_phase.set(BattlePhase::EnemyTurn);
@@ -73,7 +88,7 @@ fn player_input_system(
         return;
     };
 
-    let Ok((_, skill_list, _)) = query.get(active_entity) else {
+    let Ok((_, skill_list, _, _)) = query.get(active_entity) else {
         abort_battle(
             "玩家当前成员数据丢失，战斗已中断。",
             &mut battle_log,

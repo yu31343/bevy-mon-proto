@@ -405,7 +405,7 @@
                 DealStatDifferenceDamage(
                     source_attribute: Def,
                     target_attribute: Def,
-                    multiply_by_source_stage: true,
+                    multiply_by_source_stage: false,
                     ignore_shield: false,
                     target: Opponent,
                 ),
