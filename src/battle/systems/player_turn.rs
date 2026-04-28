@@ -4,7 +4,7 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleEvent, BattleFormulaEvent, BattleLog, BattleResult,
         BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts, RoundOrder,
-        SelectedCard, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
+        SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
         TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
         push_named_action_trace, push_turn_action_trace,
     },
@@ -46,7 +46,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     battle_log: ResMut<'w, BattleLog>,
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
-    selected: ResMut<'w, SelectedCard>,
+    selected: ResMut<'w, SelectedCards>,
 }
 
 fn finalize_player_turn(
@@ -618,9 +618,9 @@ pub fn player_turn_input_system(
         if hand.player.is_empty() {
             return;
         }
-        let Some(target_index) = selected.index.filter(|&i| i < hand.player.len()) else {
+        let Some(target_index) = selected.player.index.filter(|&i| i < hand.player.len()) else {
             // 无已选牌：切换武装状态（再按一次 F 取消）
-            selected.discard_armed = !selected.discard_armed;
+            selected.player.discard_armed = !selected.player.discard_armed;
             return;
         };
         let card_id = hand.player.remove(target_index);
@@ -651,8 +651,8 @@ pub fn player_turn_input_system(
             "discard_card",
             format!("弃置卡牌={}；当前AP={}", card_name, action_points.player),
         );
-        selected.index = None;
-        selected.discard_armed = false;
+        selected.player.index = None;
+        selected.player.discard_armed = false;
         // 弃牌可能使 AP 从 0 变为正，这种情况不触发自动结束。
         return;
     }
@@ -670,7 +670,7 @@ pub fn player_turn_input_system(
                 return;
             }
             // 若已武装弃牌模式（由点击"弃牌"按钮触发），直接弃置该牌
-            if selected.discard_armed {
+            if selected.player.discard_armed {
                 let card_id = hand.player.remove(idx);
                 action_points.player += 1;
                 let card_name = dbs
@@ -699,13 +699,13 @@ pub fn player_turn_input_system(
                     "discard_card",
                     format!("弃置卡牌={}；当前AP={}", card_name, action_points.player),
                 );
-                selected.index = None;
-                selected.discard_armed = false;
+                selected.player.index = None;
+                selected.player.discard_armed = false;
                 return;
             }
             // 第一步：选中该牌（显示描述）
-            if selected.index != Some(idx) {
-                selected.index = Some(idx);
+            if selected.player.index != Some(idx) {
+                selected.player.index = Some(idx);
                 return;
             }
             // 第二步：出牌
@@ -760,8 +760,8 @@ pub fn player_turn_input_system(
                         ),
                     );
 
-                    selected.index = None;
-                    selected.discard_armed = false;
+                    selected.player.index = None;
+                    selected.player.discard_armed = false;
 
                     let should_go_check_end = query
                         .get(p_entity)

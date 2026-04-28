@@ -28,7 +28,9 @@ impl Plugin for BattlePlugin {
             .init_resource::<AccuracyRng>()
             .init_resource::<Hand>()
             .init_resource::<PendingBoosts>()
-            .init_resource::<SelectedCard>()
+            .init_resource::<BattleControlMode>()
+            .init_resource::<UiControlSide>()
+            .init_resource::<SelectedCards>()
             .add_message::<BattleEvent>()
             .add_message::<BattleTraceEvent>()
             .add_message::<BattleStateEvent>()
@@ -52,8 +54,13 @@ impl Plugin for BattlePlugin {
             );
         app.add_systems(
             Update,
-            systems::enemy_turn_ai_system
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+            (
+                systems::enemy_turn_ai_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+                systems::enemy_turn_input_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+                systems::sync_ui_control_side_system.run_if(in_state(GameState::Battle)),
+            ),
         );
 
         app.add_systems(

@@ -376,11 +376,28 @@ pub enum TurnAction {
     Switch,
 }
 
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BattleControlMode {
+    #[default]
+    PlayerVsAi,
+    DebugPlayerControlsBoth,
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct UiControlSide(pub Side);
+
+impl Default for UiControlSide {
+    fn default() -> Self {
+        Self(Side::Player)
+    }
+}
+
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnContext {
     pub player_ended: bool,
     pub enemy_ended: bool,
     pub player_end_requested: bool,
+    pub enemy_end_requested: bool,
     pub player_action: Option<TurnAction>,
     pub enemy_action: Option<TurnAction>,
 }
@@ -493,10 +510,16 @@ pub struct PendingBoosts {
     pub enemy: PendingBoost,
 }
 
-#[derive(Resource, Default, Clone, Copy)]
-pub struct SelectedCard {
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SelectedCardState {
     pub index: Option<usize>,
     pub discard_armed: bool,
+}
+
+#[derive(Resource, Default, Clone, Copy)]
+pub struct SelectedCards {
+    pub player: SelectedCardState,
+    pub enemy: SelectedCardState,
 }
 
 #[derive(Debug, Clone)]
@@ -671,12 +694,14 @@ pub fn clear_turn_context(turn_ctx: &mut TurnContext) {
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
     turn_ctx.player_end_requested = false;
+    turn_ctx.enemy_end_requested = false;
 }
 
 pub fn reset_round_end_flags(turn_ctx: &mut TurnContext) {
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
     turn_ctx.player_end_requested = false;
+    turn_ctx.enemy_end_requested = false;
 }
 
 pub fn note_structured_phase(

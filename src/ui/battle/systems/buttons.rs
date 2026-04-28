@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, Hand, InBattle, PendingBoosts, PlayerTeam, SelectedCard, Side,
-        SkillCount, SkillList, Stats, TurnContext,
+        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
+        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, TurnContext, UiControlSide,
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
@@ -44,15 +44,26 @@ fn queue_switch_overlay_toggle(
     pending_toggle.timer = Timer::from_seconds(0.12, TimerMode::Once);
 }
 
+fn is_controllable_phase(phase: BattlePhase, mode: BattleControlMode) -> bool {
+    phase == BattlePhase::PlayerTurn
+        || (phase == BattlePhase::EnemyTurn && mode == BattleControlMode::DebugPlayerControlsBoth)
+}
+
 pub(crate) fn button_toggle_switch_overlay_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     game_state: Res<State<GameState>>,
     battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SwitchMonsterButton>)>,
     mut cancel_query: Query<&Interaction, (Changed<Interaction>, With<SwitchCancelButton>)>,
     open: Res<SwitchOverlayOpen>,
     mut pending_toggle: ResMut<PendingSwitchOverlayToggle>,
 ) {
+    let controllable_phase = is_controllable_phase(*battle_phase.get(), *battle_mode);
+    if !controllable_phase {
+        return;
+    }
+
     for interaction in &mut interaction_query {
         if *interaction == Interaction::Pressed {
             queue_switch_overlay_toggle(&mut pending_toggle, true);
@@ -67,8 +78,11 @@ pub(crate) fn button_toggle_switch_overlay_system(
         }
     }
 
+    let controllable_phase = *battle_phase.get() == BattlePhase::PlayerTurn
+        || (*battle_phase.get() == BattlePhase::EnemyTurn
+            && *battle_mode == BattleControlMode::DebugPlayerControlsBoth);
     if *game_state.get() == GameState::Battle
-        && *battle_phase.get() == BattlePhase::PlayerTurn
+        && controllable_phase
         && keyboard.just_pressed(KeyCode::KeyQ)
     {
         queue_switch_overlay_toggle(&mut pending_toggle, !open.0);
@@ -76,9 +90,15 @@ pub(crate) fn button_toggle_switch_overlay_system(
 }
 
 pub(crate) fn close_switch_overlay_on_switch_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut switch_events: Query<&Interaction, (Changed<Interaction>, With<TeamMemberButton>)>,
     mut pending_toggle: ResMut<PendingSwitchOverlayToggle>,
 ) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
+
     for interaction in &mut switch_events {
         if *interaction == Interaction::Pressed {
             queue_switch_overlay_toggle(&mut pending_toggle, false);
@@ -146,6 +166,8 @@ pub(crate) fn apply_pending_switch_overlay_toggle_system(
 }
 
 pub(crate) fn button_select_skill_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
         (&Interaction, &SkillButton),
         (Changed<Interaction>, With<Button>),
@@ -153,63 +175,103 @@ pub(crate) fn button_select_skill_system(
     mut turn_ctx: ResMut<TurnContext>,
     action_points: Res<ActionPoints>,
     player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
-    if let Some(player_team) = player_team {
-        if let Some(active_entity) = player_team.0.active_combatant() {
-            let Ok((skills, skill_count)) = query.get(active_entity) else {
-                return;
-            };
-            let skills = skills.0;
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
+    let active_entity = match ui_control_side.0 {
+        Side::Player => player_team.and_then(|team| team.0.active_combatant()),
+        Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
+    };
+    let Some(active_entity) = active_entity else {
+        return;
+    };
+    let Ok((skills, skill_count)) = query.get(active_entity) else {
+        return;
+    };
+    let skills = skills.0;
 
-            for (interaction, button) in &mut interaction_query {
-                if *interaction == Interaction::Pressed {
-                    if button.index >= skill_count.0 {
-                        continue;
-                    }
-                    let skill_id = skills[button.index];
-                    let cost =
-                        super::super::helpers::monster_skill_ap_cost_ui(skill_id, &battle_dbs);
-                    if action_points.player < cost {
-                        continue;
-                    }
-                    turn_ctx.player_action =
-                        Some(crate::battle::TurnAction::Skill(skills[button.index]));
-                    // 保持在玩家回合内，由 `player_turn_input_system` 按 AP 规则执行。
-                    next_phase.set(BattlePhase::PlayerTurn);
-                }
-            }
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
         }
+        if button.index >= skill_count.0 {
+            continue;
+        }
+        let skill_id = skills[button.index];
+        let cost = super::super::helpers::monster_skill_ap_cost_ui(skill_id, &battle_dbs);
+        let ap = match ui_control_side.0 {
+            Side::Player => action_points.player,
+            Side::Enemy => action_points.enemy,
+        };
+        if ap < cost {
+            continue;
+        }
+        match ui_control_side.0 {
+            Side::Player => {
+                turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id))
+            }
+            Side::Enemy => turn_ctx.enemy_action = Some(crate::battle::TurnAction::Skill(skill_id)),
+        }
+        next_phase.set(match ui_control_side.0 {
+            Side::Player => BattlePhase::PlayerTurn,
+            Side::Enemy => BattlePhase::EnemyTurn,
+        });
     }
 }
 
 pub(crate) fn button_switch_member_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
         (&Interaction, &TeamMemberButton),
         (Changed<Interaction>, With<Button>),
     >,
     mut action_points: ResMut<ActionPoints>,
-    mut player_team: ResMut<PlayerTeam>,
+    player_team: Option<ResMut<PlayerTeam>>,
+    enemy_team: Option<ResMut<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     mut event_writer: MessageWriter<BattleEvent>,
     combat_query: Query<(&Stats, &Name), With<InBattle>>,
 ) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
+
+    let mut player_team = player_team;
+    let mut enemy_team = enemy_team;
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
             continue;
         }
         let target_index = button.index;
-        if action_points.player < 1 {
+        let (team, ap, side) = match ui_control_side.0 {
+            Side::Player => {
+                let Some(team) = player_team.as_mut() else {
+                    return;
+                };
+                (&mut team.0, &mut action_points.player, Side::Player)
+            }
+            Side::Enemy => {
+                let Some(team) = enemy_team.as_mut() else {
+                    return;
+                };
+                (&mut team.0, &mut action_points.enemy, Side::Enemy)
+            }
+        };
+        if *ap < 1 {
             continue;
         }
-        if target_index >= player_team.0.combatants.len()
-            || target_index == player_team.0.active_index
-        {
+        if target_index >= team.combatants.len() || target_index == team.active_index {
             continue;
         }
 
-        let target_entity = player_team.0.combatants[target_index];
+        let target_entity = team.combatants[target_index];
         let Ok((stats, name)) = combat_query.get(target_entity) else {
             continue;
         };
@@ -217,169 +279,291 @@ pub(crate) fn button_switch_member_system(
             continue;
         }
 
-        action_points.player -= 1;
-        player_team.0.active_index = target_index;
+        *ap -= 1;
+        team.active_index = target_index;
         event_writer.write(BattleEvent::Switched {
-            side: Side::Player,
+            side,
             name: name.to_string(),
         });
     }
 }
 
 pub(crate) fn button_play_card_two_step_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
         (&Interaction, &PlayerCardButton),
         (Changed<Interaction>, With<Button>),
     >,
-    mut selected: ResMut<SelectedCard>,
+    mut selected: ResMut<SelectedCards>,
     mut turn_ctx: ResMut<TurnContext>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
+    ui_control_side: Res<UiControlSide>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
             continue;
         }
         let idx = button.index;
-        if idx >= hand.player.len() {
-            selected.index = None;
-            selected.discard_armed = false;
-            continue;
-        }
-
-        if selected.discard_armed {
-            let card_id = hand.player[idx];
-            hand.player.remove(idx);
-            action_points.player += 1;
-
-            let card_name = dbs
-                .cards
-                .get(&card_id)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| format!("{card_id:?}"));
-
-            event_writer.write(BattleEvent::CardDiscarded {
-                side: Side::Player,
-                card_name,
-            });
-
-            turn_ctx.player_action = None;
-            selected.index = None;
-            selected.discard_armed = false;
-            break;
-        }
-
-        if selected.index != Some(idx) {
-            selected.index = Some(idx);
-            continue;
-        }
-
-        let card_id = hand.player[idx];
-        let Some(card) = dbs.cards.get(&card_id) else {
-            continue;
-        };
-        if action_points.player < card.cost_ap {
-            continue;
-        }
-
-        hand.player.remove(idx);
-        action_points.player -= card.cost_ap;
-        event_writer.write(BattleEvent::CardUsed {
-            side: Side::Player,
-            card_name: card.name.to_string(),
-        });
-
-        match card.effect {
-            crate::data::CardEffect::GainAp { amount } => action_points.player += amount,
-            crate::data::CardEffect::NextAttackBoost { amount } => {
-                pending_boosts.player.next_attack_bonus += amount
+        match ui_control_side.0 {
+            Side::Player => {
+                let cards = &mut hand.player;
+                let ap = &mut action_points.player;
+                let boosts = &mut pending_boosts.player;
+                let selected_state = &mut selected.player;
+                if idx >= cards.len() {
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    continue;
+                }
+                if selected_state.discard_armed {
+                    let card_id = cards[idx];
+                    cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_name,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if selected_state.index != Some(idx) {
+                    selected_state.index = Some(idx);
+                    continue;
+                }
+                let card_id = cards[idx];
+                let Some(card) = dbs.cards.get(&card_id) else {
+                    continue;
+                };
+                if *ap < card.cost_ap {
+                    continue;
+                }
+                cards.remove(idx);
+                *ap -= card.cost_ap;
+                event_writer.write(BattleEvent::CardUsed {
+                    side: Side::Player,
+                    card_name: card.name.to_string(),
+                });
+                match card.effect {
+                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
+                    crate::data::CardEffect::NextAttackBoost { amount } => {
+                        boosts.next_attack_bonus += amount
+                    }
+                    crate::data::CardEffect::NextShieldBoost { amount } => {
+                        boosts.next_shield_bonus += amount
+                    }
+                    crate::data::CardEffect::NextHealBoost { amount } => {
+                        boosts.next_heal_bonus += amount
+                    }
+                }
+                turn_ctx.player_action = None;
+                selected_state.index = None;
+                selected_state.discard_armed = false;
+                if *ap <= 0 {
+                    turn_ctx.player_end_requested = true;
+                }
             }
-            crate::data::CardEffect::NextShieldBoost { amount } => {
-                pending_boosts.player.next_shield_bonus += amount
+            Side::Enemy => {
+                let cards = &mut hand.enemy;
+                let ap = &mut action_points.enemy;
+                let boosts = &mut pending_boosts.enemy;
+                let selected_state = &mut selected.enemy;
+                if idx >= cards.len() {
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    continue;
+                }
+                if selected_state.discard_armed {
+                    let card_id = cards[idx];
+                    cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_name,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if selected_state.index != Some(idx) {
+                    selected_state.index = Some(idx);
+                    continue;
+                }
+                let card_id = cards[idx];
+                let Some(card) = dbs.cards.get(&card_id) else {
+                    continue;
+                };
+                if *ap < card.cost_ap {
+                    continue;
+                }
+                cards.remove(idx);
+                *ap -= card.cost_ap;
+                event_writer.write(BattleEvent::CardUsed {
+                    side: Side::Enemy,
+                    card_name: card.name.to_string(),
+                });
+                match card.effect {
+                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
+                    crate::data::CardEffect::NextAttackBoost { amount } => {
+                        boosts.next_attack_bonus += amount
+                    }
+                    crate::data::CardEffect::NextShieldBoost { amount } => {
+                        boosts.next_shield_bonus += amount
+                    }
+                    crate::data::CardEffect::NextHealBoost { amount } => {
+                        boosts.next_heal_bonus += amount
+                    }
+                }
+                turn_ctx.enemy_action = None;
+                selected_state.index = None;
+                selected_state.discard_armed = false;
+                if *ap <= 0 {
+                    turn_ctx.enemy_end_requested = true;
+                }
             }
-            crate::data::CardEffect::NextHealBoost { amount } => {
-                pending_boosts.player.next_heal_bonus += amount
-            }
-        }
-
-        turn_ctx.player_action = None;
-        selected.index = None;
-        selected.discard_armed = false;
-
-        if action_points.player <= 0 {
-            turn_ctx.player_end_requested = true;
         }
         break;
     }
 }
 
 pub(crate) fn button_discard_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
         (&Interaction, &DiscardButton),
         (Changed<Interaction>, With<Button>),
     >,
     mut turn_ctx: ResMut<TurnContext>,
-    mut selected: ResMut<SelectedCard>,
+    mut selected: ResMut<SelectedCards>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
+    ui_control_side: Res<UiControlSide>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
     for (interaction, _) in &mut interaction_query {
-        if *interaction == Interaction::Pressed {
-            if hand.player.is_empty() {
-                selected.discard_armed = false;
-                selected.index = None;
-                continue;
-            }
-
-            let target_index = match selected.index {
-                Some(idx) if idx < hand.player.len() => idx,
-                _ => {
-                    // 无已选牌：切换武装状态（再次点击取消）
-                    selected.discard_armed = !selected.discard_armed;
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match ui_control_side.0 {
+            Side::Player => {
+                let cards = &mut hand.player;
+                let ap = &mut action_points.player;
+                let selected_state = &mut selected.player;
+                if cards.is_empty() {
+                    selected_state.discard_armed = false;
+                    selected_state.index = None;
                     continue;
                 }
-            };
-
-            let card_id = hand.player.remove(target_index);
-            action_points.player += 1;
-
-            let card_name = dbs
-                .cards
-                .get(&card_id)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| format!("{card_id:?}"));
-
-            event_writer.write(BattleEvent::CardDiscarded {
-                side: Side::Player,
-                card_name,
-            });
-
-            turn_ctx.player_action = None;
-            selected.index = None;
-            selected.discard_armed = false;
-            break;
+                let target_index = match selected_state.index {
+                    Some(idx) if idx < cards.len() => idx,
+                    _ => {
+                        selected_state.discard_armed = !selected_state.discard_armed;
+                        continue;
+                    }
+                };
+                let card_id = cards.remove(target_index);
+                *ap += 1;
+                let card_name = dbs
+                    .cards
+                    .get(&card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| format!("{card_id:?}"));
+                event_writer.write(BattleEvent::CardDiscarded {
+                    side: Side::Player,
+                    card_name,
+                });
+                turn_ctx.player_action = None;
+                selected_state.index = None;
+                selected_state.discard_armed = false;
+            }
+            Side::Enemy => {
+                let cards = &mut hand.enemy;
+                let ap = &mut action_points.enemy;
+                let selected_state = &mut selected.enemy;
+                if cards.is_empty() {
+                    selected_state.discard_armed = false;
+                    selected_state.index = None;
+                    continue;
+                }
+                let target_index = match selected_state.index {
+                    Some(idx) if idx < cards.len() => idx,
+                    _ => {
+                        selected_state.discard_armed = !selected_state.discard_armed;
+                        continue;
+                    }
+                };
+                let card_id = cards.remove(target_index);
+                *ap += 1;
+                let card_name = dbs
+                    .cards
+                    .get(&card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| format!("{card_id:?}"));
+                event_writer.write(BattleEvent::CardDiscarded {
+                    side: Side::Enemy,
+                    card_name,
+                });
+                turn_ctx.enemy_action = None;
+                selected_state.index = None;
+                selected_state.discard_armed = false;
+            }
         }
+        break;
     }
 }
 
 pub(crate) fn button_end_turn_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
         (&Interaction, &EndTurnButton),
         (Changed<Interaction>, With<Button>),
     >,
+    ui_control_side: Res<UiControlSide>,
     mut turn_ctx: ResMut<TurnContext>,
 ) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+        return;
+    }
     for (interaction, _) in &mut interaction_query {
-        if *interaction == Interaction::Pressed {
-            turn_ctx.player_action = None;
-            turn_ctx.player_end_requested = true;
-            break;
+        if *interaction != Interaction::Pressed {
+            continue;
         }
+        match ui_control_side.0 {
+            Side::Player => {
+                turn_ctx.player_action = None;
+                turn_ctx.player_end_requested = true;
+            }
+            Side::Enemy => {
+                turn_ctx.enemy_action = None;
+                turn_ctx.enemy_end_requested = true;
+            }
+        }
+        break;
     }
 }
 

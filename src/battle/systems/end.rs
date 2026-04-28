@@ -402,9 +402,13 @@ fn export_logs(
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut selection_state: ResMut<crate::team_selection::SelectionState>,
+    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
     team_selections: Option<ResMut<crate::data::TeamSelections>>,
     replay_log: Res<ReplayEventLog>,
     action_trace: Res<ActionTrace>,
+    mut battle_mode: ResMut<crate::battle::BattleControlMode>,
+    mut ui_control_side: ResMut<crate::battle::UiControlSide>,
+    mut selected_cards: ResMut<crate::battle::SelectedCards>,
     mut battle_result: ResMut<BattleResult>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -420,7 +424,11 @@ pub fn restart_from_result_system(
 
     if keyboard.just_pressed(KeyCode::KeyR) {
         battle_result.export_status = None;
-        selection_state.selected_indices.clear();
+        selection_state.reset();
+        *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+        *battle_mode = crate::battle::BattleControlMode::PlayerVsAi;
+        ui_control_side.0 = Side::Player;
+        *selected_cards = crate::battle::SelectedCards::default();
         if let Some(mut team_selections) = team_selections {
             team_selections.player_indices.clear();
             team_selections.enemy_indices.clear();

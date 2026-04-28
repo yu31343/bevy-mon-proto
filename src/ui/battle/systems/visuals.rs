@@ -6,7 +6,7 @@ use super::super::components::{
 };
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
-use crate::battle::SelectedCard;
+use crate::battle::{SelectedCards, Side, UiControlSide};
 
 /// 弃牌武装状态的高亮颜色（琥珀色，与蓝白点击闪光明显区分）
 const DISCARD_ARMED_COLOR: Color = Color::srgba(0.85, 0.60, 0.10, 0.88);
@@ -116,17 +116,23 @@ pub(crate) fn button_visual_state_system(
 ///
 /// 每帧轮询，确保 Hover → Un-hover 后武装色能正确恢复。
 pub(crate) fn update_discard_armed_visual_system(
-    selected: Res<SelectedCard>,
+    selected: Res<SelectedCards>,
+    ui_control_side: Res<UiControlSide>,
     mut q: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (With<DiscardButton>, Without<ButtonClickFlash>),
     >,
     theme: Res<UiTheme>,
 ) {
+    let discard_armed = match ui_control_side.0 {
+        Side::Player => selected.player.discard_armed,
+        Side::Enemy => selected.enemy.discard_armed,
+    };
+
     for (interaction, mut bg, mut border) in &mut q {
         // 仅在未悬停/未按下时介入，Hover/Press 状态交给 button_visual_state_system
         if *interaction == Interaction::None {
-            if selected.discard_armed {
+            if discard_armed {
                 *bg = BackgroundColor(DISCARD_ARMED_COLOR);
                 *border = BorderColor::all(DISCARD_ARMED_BORDER);
             } else {

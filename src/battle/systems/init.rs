@@ -3,9 +3,10 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, Combatant, ElementAura,
-        Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCard, Shield, Side,
+        Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
         SkillCount, SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
-        clear_runtime_battle_logs, clear_turn_context, note_structured_phase, push_battle_line,
+        UiControlSide, clear_runtime_battle_logs, clear_turn_context, note_structured_phase,
+        push_battle_line,
     },
     data::{BattleDataStatus, BattleDbs, BattleRules, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
@@ -90,7 +91,8 @@ pub fn init_battle_system(
     });
     commands.insert_resource(Hand::default());
     commands.insert_resource(PendingBoosts::default());
-    commands.insert_resource(SelectedCard::default());
+    commands.insert_resource(SelectedCards::default());
+    commands.insert_resource(UiControlSide(Side::Player));
 
     if let Some(status) = data_status {
         if let Some(reason) = &status.error {
@@ -118,11 +120,11 @@ pub fn init_battle_system(
         );
         return;
     }
-    if enemy_count != player_count {
+    if !(1..=battle_rules.max_team_size).contains(&enemy_count) {
         abort_battle(
             &format!(
-                "战斗初始化失败：敌我队伍人数不一致（玩家 {}，敌方 {}）。",
-                player_count, enemy_count
+                "战斗初始化失败：敌方队伍人数非法（需 1..={}，当前 {}）。",
+                battle_rules.max_team_size, enemy_count
             ),
             battle_log,
             result,

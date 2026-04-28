@@ -2,9 +2,9 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, ActionTrace, BattleEvent, Hand, PendingBoosts, PlayerTeam, RoundOrder,
-        SelectedCard, Side, Stats, StructuredBattleLog, TurnContext, TurnCount, note_round_phase,
-        opposite_side, push_named_action_trace,
+        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, Hand, PendingBoosts, PlayerTeam,
+        RoundOrder, SelectedCards, Side, Stats, StructuredBattleLog, TurnContext, TurnCount,
+        UiControlSide, note_round_phase, opposite_side, push_named_action_trace,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
@@ -35,7 +35,7 @@ pub(crate) struct RoundStartResources<'w> {
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
     pending_boosts: ResMut<'w, PendingBoosts>,
-    selected: ResMut<'w, SelectedCard>,
+    selected: ResMut<'w, SelectedCards>,
     structured_log: ResMut<'w, StructuredBattleLog>,
     action_trace: ResMut<'w, ActionTrace>,
 }
@@ -92,8 +92,10 @@ pub fn round_start_system(
 
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
+    turn_ctx.player_end_requested = false;
+    turn_ctx.enemy_end_requested = false;
     **pending_boosts = PendingBoosts::default();
-    **selected = SelectedCard::default();
+    **selected = SelectedCards::default();
 
     let Some(player_entity) = player_team.0.active_combatant() else {
         return;
@@ -153,4 +155,18 @@ pub fn round_start_system(
         Side::Player => BattlePhase::PlayerTurn,
         Side::Enemy => BattlePhase::EnemyTurn,
     });
+}
+
+pub fn sync_ui_control_side_system(
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
+    mut ui_control_side: ResMut<UiControlSide>,
+) {
+    ui_control_side.0 = match *battle_phase.get() {
+        BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::DebugPlayerControlsBoth => {
+            Side::Enemy
+        }
+        BattlePhase::EnemyTurn => Side::Player,
+        _ => Side::Player,
+    };
 }

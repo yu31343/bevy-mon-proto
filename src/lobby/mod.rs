@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::{
     data::MonsterPool,
     game_state::GameState,
+    team_selection::SelectionEntryMode,
     ui::battle::{resources::UiFontHandle, theme::UiTheme},
 };
 
@@ -61,6 +62,9 @@ struct StartBattleButton;
 
 #[derive(Component)]
 struct OpenDexButton;
+
+#[derive(Component)]
+struct DebugBattleButton;
 
 #[derive(Component)]
 struct MonsterDexUiRoot;
@@ -165,6 +169,30 @@ fn setup_lobby_ui(
             .with_children(|btn| {
                 btn.spawn((
                     Text::new("查看精灵图鉴"),
+                    body_font.clone(),
+                    TextColor(theme.text_primary),
+                ));
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Px(280.0),
+                    min_height: Val::Px(58.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(theme.radius_button),
+                    ..default()
+                },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
+                DebugBattleButton,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("调试模式"),
                     body_font,
                     TextColor(theme.text_primary),
                 ));
@@ -180,14 +208,28 @@ fn cleanup_lobby_ui(mut commands: Commands, query: Query<Entity, With<LobbyUiRoo
 
 fn lobby_button_system(
     mut next_state: ResMut<NextState<GameState>>,
+    mut entry_mode: ResMut<SelectionEntryMode>,
     mut battle_buttons: Query<
         &Interaction,
         (Changed<Interaction>, With<Button>, With<StartBattleButton>),
     >,
     mut dex_buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, With<OpenDexButton>)>,
+    mut debug_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<DebugBattleButton>),
+    >,
 ) {
     for interaction in &mut battle_buttons {
         if *interaction == Interaction::Pressed {
+            *entry_mode = SelectionEntryMode::VsAi;
+            next_state.set(GameState::TeamSelection);
+            return;
+        }
+    }
+
+    for interaction in &mut debug_buttons {
+        if *interaction == Interaction::Pressed {
+            *entry_mode = SelectionEntryMode::Debug;
             next_state.set(GameState::TeamSelection);
             return;
         }
@@ -208,7 +250,11 @@ fn lobby_button_visual_system(
         (
             Changed<Interaction>,
             With<Button>,
-            Or<(With<StartBattleButton>, With<OpenDexButton>)>,
+            Or<(
+                With<StartBattleButton>,
+                With<OpenDexButton>,
+                With<DebugBattleButton>,
+            )>,
         ),
     >,
 ) {

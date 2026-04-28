@@ -3,8 +3,10 @@ use bevy::prelude::*;
 use crate::{
     data::{BattleRules, MonsterPool},
     team_selection::{
-        BackToLobbyButton, ConfirmSelectionButton, MonsterCardButton,
-        MonsterCardSelectionIndicator, SelectionCountText, SelectionOrderText, SelectionUiRoot,
+        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
+        SelectionCountText, SelectionInstructionsText, SelectionOrderText, SelectionTitleText,
+        SelectionUiRoot,
     },
     ui::battle::{resources::UiFontHandle, theme::UiTheme},
 };
@@ -58,6 +60,7 @@ pub fn setup_selection_ui(
                     margin: UiRect::bottom(Val::Px(10.0)),
                     ..default()
                 },
+                SelectionTitleText,
             ));
 
             // Instructions
@@ -69,6 +72,7 @@ pub fn setup_selection_ui(
                     margin: UiRect::bottom(Val::Px(15.0)),
                     ..default()
                 },
+                SelectionInstructionsText,
             ));
 
             // Selection count
@@ -137,6 +141,7 @@ pub fn setup_selection_ui(
                             Text::new("确认选择"),
                             make_text_font(18.0, font_handle.as_ref()),
                             TextColor(Color::WHITE),
+                            ConfirmSelectionButtonText,
                         ));
                     });
 
@@ -161,6 +166,7 @@ pub fn setup_selection_ui(
                             Text::new("返回大厅"),
                             make_text_font(18.0, font_handle.as_ref()),
                             TextColor(Color::WHITE),
+                            BackToLobbyButtonText,
                         ));
                     });
                 });

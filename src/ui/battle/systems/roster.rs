@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    battle::{ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Stats, StatusBoard},
+    battle::{
+        ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard,
+        UiControlSide,
+    },
     data::BattleFormulaRules,
 };
 
@@ -10,6 +13,8 @@ use super::super::theme::UiTheme;
 
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     combat_query: Query<(&Stats, &Name, &Shield, &ElementAura, &StatusBoard), With<InBattle>>,
     mut text_q: Query<
         (
@@ -45,11 +50,21 @@ pub(crate) fn update_player_roster_ui_system(
     theme: Res<UiTheme>,
     formula_rules: Res<BattleFormulaRules>,
 ) {
+    let player_team = player_team.map(|team| team.0.clone());
+    let enemy_team = enemy_team.map(|team| team.0.clone());
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => player_team.clone(),
+        Side::Enemy => enemy_team,
+    };
+    let Some(controlled_team) = controlled_team else {
+        return;
+    };
     let Some(player_team) = player_team else {
         return;
     };
 
-    let get_entity = |index: usize| player_team.0.combatants.get(index).copied();
+    let get_controlled_entity = |index: usize| controlled_team.combatants.get(index).copied();
+    let get_player_entity = |index: usize| player_team.combatants.get(index).copied();
 
     for (
         mut text,
@@ -63,7 +78,7 @@ pub(crate) fn update_player_roster_ui_system(
     ) in &mut text_q
     {
         if let Some(meta) = overlay_name {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_controlled_entity(meta.index) {
                 if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
@@ -82,7 +97,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = overlay_aura {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_controlled_entity(meta.index) {
                 if let Ok((stats, _, _, _, statuses)) = combat_query.get(entity) {
                     text.0 = super::super::helpers::status_stage_label(stats, statuses);
                 } else {
@@ -95,7 +110,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = bench_name {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
                     let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
@@ -114,7 +129,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = bench_stats {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                     text.0 = format!(
                         "Atk: {}{} Def: {}{} Acc: {}{} Spd: {}{}",
@@ -137,7 +152,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = bench_aura {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
                     text.0 = format!("状态：{}", super::super::helpers::status_label(statuses));
                 } else {
@@ -150,7 +165,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = bench_hp {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                     text.0 = format!("{}/{}", stats.hp.max(0), stats.max_hp);
                 } else {
@@ -163,7 +178,7 @@ pub(crate) fn update_player_roster_ui_system(
         }
 
         if let Some(meta) = bench_shield {
-            if let Some(entity) = get_entity(meta.index) {
+            if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                     text.0 = shield.0.max(0).to_string();
                 } else {
@@ -176,7 +191,7 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut node) in &mut nodes.p0() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_controlled_entity(meta.index) {
             if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
@@ -189,7 +204,7 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut node) in &mut nodes.p1() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_controlled_entity(meta.index) {
             if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
@@ -202,7 +217,7 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut node) in &mut nodes.p3() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_player_entity(meta.index) {
             if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
                 let hp_pct = if stats.max_hp > 0 {
                     ((stats.hp.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
@@ -215,7 +230,7 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut node) in &mut nodes.p4() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_player_entity(meta.index) {
             if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
                 let shield_pct = if stats.max_hp > 0 {
                     ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
@@ -228,8 +243,8 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p2() {
-        let exists = get_entity(meta.index).is_some();
-        let active = meta.index == player_team.0.active_index;
+        let exists = get_controlled_entity(meta.index).is_some();
+        let active = meta.index == controlled_team.active_index;
         node.display = if !exists || active {
             Display::None
         } else {
@@ -249,8 +264,8 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut node) in &mut nodes.p5() {
-        let exists = get_entity(meta.index).is_some();
-        let active = meta.index == player_team.0.active_index;
+        let exists = get_player_entity(meta.index).is_some();
+        let active = meta.index == player_team.active_index;
         node.display = if !exists || active {
             Display::None
         } else {
@@ -259,7 +274,7 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut vis) in &mut visibilities.p0() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_controlled_entity(meta.index) {
             if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
                 *vis = if shield.0 > 0 {
                     Visibility::Visible
@@ -273,9 +288,9 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut vis) in &mut visibilities.p1() {
-        if let Some(entity) = get_entity(meta.index) {
+        if let Some(entity) = get_player_entity(meta.index) {
             if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                *vis = if shield.0 > 0 && meta.index != player_team.0.active_index {
+                *vis = if shield.0 > 0 && meta.index != player_team.active_index {
                     Visibility::Visible
                 } else {
                     Visibility::Hidden

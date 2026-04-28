@@ -2,11 +2,14 @@ use bevy::prelude::*;
 use rand::seq::SliceRandom;
 
 use crate::{
+    battle::BattleControlMode,
     data::{BattleRules, MonsterPool, TeamSelections},
     game_state::GameState,
     team_selection::{
-        BackToLobbyButton, ConfirmSelectionButton, MonsterCardButton,
-        MonsterCardSelectionIndicator, SelectionCountText, SelectionOrderText, SelectionState,
+        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
+        SelectionCountText, SelectionEntryMode, SelectionInstructionsText, SelectionOrderText,
+        SelectionStage, SelectionState, SelectionTitleText,
     },
     ui::battle::theme::UiTheme,
 };
@@ -37,7 +40,8 @@ pub fn button_confirm_selection_system(
             With<ConfirmSelectionButton>,
         ),
     >,
-    selection_state: Res<SelectionState>,
+    mut selection_state: ResMut<SelectionState>,
+    entry_mode: Res<SelectionEntryMode>,
     monster_pool: Res<MonsterPool>,
     rules: Res<BattleRules>,
     mut commands: Commands,
@@ -45,43 +49,76 @@ pub fn button_confirm_selection_system(
 ) {
     for interaction in &mut interaction_query {
         let selected_count = selection_state.selected_indices.len();
-        if *interaction == Interaction::Pressed
-            && selection_state.can_confirm()
-            && selected_count <= rules.max_team_size
+        if *interaction != Interaction::Pressed
+            || !selection_state.can_confirm()
+            || selected_count > rules.max_team_size
         {
-            // Generate AI selection (same count as player, without duplicates)
-            let enemy_indices = generate_ai_selection(monster_pool.monsters.len(), selected_count);
+            continue;
+        }
 
-            // Log player selections
-            println!("=== 队伍选择 ===");
-            print!("玩家选择: ");
-            for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
-                if i > 0 {
-                    print!(", ");
+        match *entry_mode {
+            SelectionEntryMode::VsAi => {
+                let enemy_indices =
+                    generate_ai_selection(monster_pool.monsters.len(), selected_count);
+
+                println!("=== 队伍选择 ===");
+                print!("玩家选择: ");
+                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", monster_pool.monsters[idx].name);
                 }
-                print!("{}", monster_pool.monsters[idx].name);
-            }
-            println!();
-
-            // Log AI selections
-            print!("AI选择: ");
-            for (i, &idx) in enemy_indices.iter().enumerate() {
-                if i > 0 {
-                    print!(", ");
+                println!();
+                print!("AI选择: ");
+                for (i, &idx) in enemy_indices.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", monster_pool.monsters[idx].name);
                 }
-                print!("{}", monster_pool.monsters[idx].name);
+                println!();
+                println!("================");
+
+                commands.insert_resource(BattleControlMode::PlayerVsAi);
+                commands.insert_resource(TeamSelections {
+                    player_indices: selection_state.selected_indices.clone(),
+                    enemy_indices,
+                });
+                next_state.set(GameState::Battle);
             }
-            println!();
-            println!("================");
+            SelectionEntryMode::Debug if selection_state.stage == SelectionStage::Player => {
+                selection_state.player_indices = selection_state.selected_indices.clone();
+                selection_state.selected_indices.clear();
+                selection_state.stage = SelectionStage::Enemy;
+            }
+            SelectionEntryMode::Debug => {
+                println!("=== 调试模式队伍选择 ===");
+                print!("我方选择: ");
+                for (i, &idx) in selection_state.player_indices.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", monster_pool.monsters[idx].name);
+                }
+                println!();
+                print!("敌方选择: ");
+                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", monster_pool.monsters[idx].name);
+                }
+                println!();
+                println!("====================");
 
-            // Insert TeamSelections resource
-            commands.insert_resource(TeamSelections {
-                player_indices: selection_state.selected_indices.clone(),
-                enemy_indices,
-            });
-
-            // Transition to Battle state
-            next_state.set(GameState::Battle);
+                commands.insert_resource(BattleControlMode::DebugPlayerControlsBoth);
+                commands.insert_resource(TeamSelections {
+                    player_indices: selection_state.player_indices.clone(),
+                    enemy_indices: selection_state.selected_indices.clone(),
+                });
+                next_state.set(GameState::Battle);
+            }
         }
     }
 }
@@ -92,23 +129,41 @@ pub fn button_back_to_lobby_system(
         &Interaction,
         (Changed<Interaction>, With<Button>, With<BackToLobbyButton>),
     >,
+    entry_mode: Res<SelectionEntryMode>,
+    mut selection_state: ResMut<SelectionState>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut interaction_query {
-        if *interaction == Interaction::Pressed {
-            next_state.set(GameState::Lobby);
+        if *interaction != Interaction::Pressed {
+            continue;
         }
+        if *entry_mode == SelectionEntryMode::Debug
+            && selection_state.stage == SelectionStage::Enemy
+        {
+            selection_state.stage = SelectionStage::Player;
+            selection_state.selected_indices = selection_state.player_indices.clone();
+            selection_state.player_indices.clear();
+            continue;
+        }
+        next_state.set(GameState::Lobby);
     }
 }
 
 /// System to update selection UI based on current state.
 pub fn update_selection_ui_system(
     selection_state: Res<SelectionState>,
+    entry_mode: Res<SelectionEntryMode>,
     rules: Res<BattleRules>,
     theme: Res<UiTheme>,
-    mut count_text_query: Query<&mut Text, With<SelectionCountText>>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<SelectionTitleText>>,
+        Query<&mut Text, With<SelectionInstructionsText>>,
+        Query<&mut Text, With<SelectionCountText>>,
+        Query<&mut Text, With<ConfirmSelectionButtonText>>,
+        Query<&mut Text, With<BackToLobbyButtonText>>,
+        Query<(&SelectionOrderText, &mut Text), Without<SelectionCountText>>,
+    )>,
     mut indicator_query: Query<(&MonsterCardSelectionIndicator, &mut Visibility)>,
-    mut order_text_query: Query<(&SelectionOrderText, &mut Text), Without<SelectionCountText>>,
     mut card_query: Query<
         (
             &Interaction,
@@ -127,8 +182,42 @@ pub fn update_selection_ui_system(
         ),
     >,
 ) {
-    // Update selection count text
-    for mut text in &mut count_text_query {
+    let selecting_enemy =
+        *entry_mode == SelectionEntryMode::Debug && selection_state.stage == SelectionStage::Enemy;
+    let title = if selecting_enemy {
+        "选择敌方队伍"
+    } else {
+        "选择我方队伍"
+    };
+    let instructions = if selecting_enemy {
+        format!("选择 1-{} 个精灵组成敌方队伍", rules.max_team_size)
+    } else {
+        format!("选择 1-{} 个精灵组成我方队伍", rules.max_team_size)
+    };
+    let confirm_label = match (*entry_mode, selection_state.stage) {
+        (SelectionEntryMode::VsAi, _) => "确认选择",
+        (SelectionEntryMode::Debug, SelectionStage::Player) => "下一步",
+        (SelectionEntryMode::Debug, SelectionStage::Enemy) => "开始调试对战",
+    };
+    let back_label = if selecting_enemy {
+        "返回上一步"
+    } else {
+        "返回大厅"
+    };
+
+    for mut text in &mut text_queries.p0() {
+        **text = title.to_string();
+    }
+    for mut text in &mut text_queries.p1() {
+        **text = instructions.clone();
+    }
+    for mut text in &mut text_queries.p3() {
+        **text = confirm_label.to_string();
+    }
+    for mut text in &mut text_queries.p4() {
+        **text = back_label.to_string();
+    }
+    for mut text in &mut text_queries.p2() {
         **text = format!(
             "已选择: {} / {}",
             selection_state.selected_indices.len(),
@@ -150,7 +239,7 @@ pub fn update_selection_ui_system(
     }
 
     // Update order text to show 1/2/3 based on selection order
-    for (order_text, mut text) in &mut order_text_query {
+    for (order_text, mut text) in &mut text_queries.p5() {
         if let Some(position) = selection_state
             .selected_indices
             .iter()
@@ -202,5 +291,5 @@ fn generate_ai_selection(pool_size: usize, count: usize) -> Vec<usize> {
 
 /// System to clear selection state when entering TeamSelection state.
 pub fn clear_selection_state(mut selection_state: ResMut<SelectionState>) {
-    selection_state.selected_indices.clear();
+    selection_state.reset();
 }
