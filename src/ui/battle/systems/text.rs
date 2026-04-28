@@ -411,9 +411,12 @@ pub(crate) fn update_active_panel_tokens_system(
 }
 
 pub(crate) fn update_skill_text_system(
+    battle_phase: Res<State<BattlePhase>>,
+    ui_control_side: Res<crate::battle::UiControlSide>,
     mut text_q: Query<
         (
             &mut Text,
+            Option<&TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
@@ -459,6 +462,7 @@ pub(crate) fn update_skill_text_system(
 
     for (
         mut text,
+        is_turn_banner,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
@@ -467,7 +471,22 @@ pub(crate) fn update_skill_text_system(
         enemy_skill_icon,
     ) in &mut text_q
     {
-        if let (Some(button), Some((skills, count))) = (skill_button_text, player_skills) {
+        if is_turn_banner.is_some() {
+            text.0 = match *battle_phase.get() {
+                BattlePhase::PlayerTurn => "你的回合".to_string(),
+                BattlePhase::EnemyTurn if ui_control_side.0 == crate::battle::Side::Enemy => {
+                    "敌方操作回合".to_string()
+                }
+                BattlePhase::EnemyTurn => "对手的回合".to_string(),
+                _ => String::new(),
+            };
+            continue;
+        }
+        let control_skills = match ui_control_side.0 {
+            crate::battle::Side::Player => player_skills,
+            crate::battle::Side::Enemy => enemy_skills,
+        };
+        if let (Some(button), Some((skills, count))) = (skill_button_text, control_skills) {
             if button.index >= count {
                 text.0 = format!("{}号: 未配置", button.index + 1);
             } else {
@@ -480,7 +499,7 @@ pub(crate) fn update_skill_text_system(
             }
             continue;
         }
-        if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, player_skills) {
+        if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, control_skills) {
             if meta.index >= count {
                 text.0 = "AP消耗：--".to_string();
             } else {
@@ -494,7 +513,7 @@ pub(crate) fn update_skill_text_system(
             }
             continue;
         }
-        if let (Some(icon), Some((_skills, count))) = (skill_icon_text, player_skills) {
+        if let (Some(icon), Some((_skills, count))) = (skill_icon_text, control_skills) {
             text.0 = if icon.index >= count {
                 "-".to_string()
             } else {

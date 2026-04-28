@@ -8,9 +8,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
-        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog,
-        TurnCount, note_action_phase, note_structured_phase, push_battle_line,
-        push_named_action_trace,
+        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog, TurnCount,
+        note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -311,11 +310,11 @@ pub fn resolve_ko_system(
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
         battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
-            "平局！按 R 重新开始。".to_string()
+            "平局！按 R 返回大厅。".to_string()
         } else if pending_ko.enemy_defeated {
-            "胜利！全歼敌方。按 R 重新开始。".to_string()
+            "胜利！全歼敌方。按 R 返回大厅。".to_string()
         } else {
-            "失败！队伍全灭。按 R 重新开始。".to_string()
+            "失败！队伍全灭。按 R 返回大厅。".to_string()
         };
         note_structured_phase(
             &mut structured_log,
@@ -403,9 +402,13 @@ fn export_logs(
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut selection_state: ResMut<crate::team_selection::SelectionState>,
+    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
     team_selections: Option<ResMut<crate::data::TeamSelections>>,
     replay_log: Res<ReplayEventLog>,
     action_trace: Res<ActionTrace>,
+    mut battle_mode: ResMut<crate::battle::BattleControlMode>,
+    mut ui_control_side: ResMut<crate::battle::UiControlSide>,
+    mut selected_cards: ResMut<crate::battle::SelectedCards>,
     mut battle_result: ResMut<BattleResult>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -421,14 +424,18 @@ pub fn restart_from_result_system(
 
     if keyboard.just_pressed(KeyCode::KeyR) {
         battle_result.export_status = None;
-        selection_state.selected_indices.clear();
+        selection_state.reset();
+        *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+        *battle_mode = crate::battle::BattleControlMode::PlayerVsAi;
+        ui_control_side.0 = Side::Player;
+        *selected_cards = crate::battle::SelectedCards::default();
         if let Some(mut team_selections) = team_selections {
             team_selections.player_indices.clear();
             team_selections.enemy_indices.clear();
         }
 
         next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::TeamSelection);
+        next_game_state.set(GameState::Lobby);
     }
 }
 
@@ -619,14 +626,22 @@ mod tests {
 
         app.update();
 
-        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        let player_statuses = app
+            .world()
+            .entity(player_active)
+            .get::<StatusBoard>()
+            .unwrap();
         assert_eq!(player_statuses.entries.len(), 1);
         assert_eq!(player_statuses.entries[0].remaining_turns, 1);
 
         app.world_mut().resource_mut::<TurnCount>().0 = 2;
         app.update();
 
-        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        let player_statuses = app
+            .world()
+            .entity(player_active)
+            .get::<StatusBoard>()
+            .unwrap();
         assert!(player_statuses.entries.is_empty());
     }
 

@@ -21,6 +21,9 @@ pub(crate) struct ResultText;
 pub(crate) struct BattlePhaseText;
 
 #[derive(Component)]
+pub(crate) struct TurnBannerText;
+
+#[derive(Component)]
 pub(crate) struct ActionPointsText;
 
 #[derive(Component)]
@@ -59,6 +62,12 @@ pub(crate) struct DiscardButton;
 
 #[derive(Component)]
 pub(crate) struct EndTurnButton;
+
+#[derive(Component)]
+pub(crate) struct RetreatButton;
+
+#[derive(Component)]
+pub(crate) struct RetreatButtonText;
 
 #[derive(Component)]
 pub(crate) struct SwitchMonsterButton;

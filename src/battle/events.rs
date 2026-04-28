@@ -75,6 +75,7 @@ pub enum BattleEvent {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Message, Debug, Clone)]
 pub struct BattleTraceEvent {
     pub round: u32,
@@ -83,6 +84,7 @@ pub struct BattleTraceEvent {
     pub detail: String,
 }
 
+#[allow(dead_code)]
 #[derive(Message, Debug, Clone)]
 pub struct BattleStateEvent {
     pub round: u32,
@@ -98,6 +100,7 @@ pub struct BattleLifecycleEvent {
     pub detail: String,
 }
 
+#[allow(dead_code)]
 #[derive(Message, Debug, Clone)]
 pub struct BattleFormulaEvent {
     pub round: u32,
@@ -107,6 +110,7 @@ pub struct BattleFormulaEvent {
     pub detail: String,
 }
 
+#[allow(dead_code)]
 #[derive(Message, Debug, Clone)]
 pub struct BattleStatusEvent {
     pub round: u32,
@@ -116,6 +120,7 @@ pub struct BattleStatusEvent {
     pub detail: String,
 }
 
+#[allow(dead_code)]
 pub fn trace_from_turn_action(
     round: u32,
     side: Side,
@@ -134,6 +139,7 @@ pub fn trace_from_turn_action(
     }
 }
 
+#[allow(dead_code)]
 pub fn trace_named(
     round: u32,
     side: Side,
@@ -148,6 +154,7 @@ pub fn trace_named(
     }
 }
 
+#[allow(dead_code)]
 pub fn lifecycle_event(
     phase: impl Into<String>,
     summary: impl Into<String>,
@@ -160,6 +167,7 @@ pub fn lifecycle_event(
     }
 }
 
+#[allow(dead_code)]
 pub fn state_event(
     round: u32,
     subject: Side,
@@ -206,18 +214,22 @@ pub fn status_event(
     }
 }
 
+#[allow(dead_code)]
 pub fn lifecycle_phase_name(phase: &str) -> String {
     phase.to_string()
 }
 
+#[allow(dead_code)]
 pub fn trace_action_name(action: &str) -> String {
     action.to_string()
 }
 
+#[allow(dead_code)]
 pub fn trace_detail_text(detail: &str) -> String {
     detail.to_string()
 }
 
+#[allow(dead_code)]
 pub fn side_label(side: Side) -> &'static str {
     match side {
         Side::Player => "player",
@@ -225,14 +237,17 @@ pub fn side_label(side: Side) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub fn round_phase_label(round: u32, side: Side) -> String {
     format!("round-{round}-{}", side_label(side))
 }
 
+#[allow(dead_code)]
 pub fn round_label(round: u32) -> String {
     format!("round-{round}")
 }
 
+#[allow(dead_code)]
 pub fn trace_summary(event: &BattleTraceEvent) -> String {
     format!(
         "r{} {} {}",
@@ -242,6 +257,7 @@ pub fn trace_summary(event: &BattleTraceEvent) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub fn state_summary(event: &BattleStateEvent) -> String {
     format!(
         "r{} {} {}",
@@ -251,6 +267,7 @@ pub fn state_summary(event: &BattleStateEvent) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub fn formula_summary(event: &BattleFormulaEvent) -> String {
     format!(
         "r{} {}->{} {}",
@@ -261,6 +278,7 @@ pub fn formula_summary(event: &BattleFormulaEvent) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub fn status_summary(event: &BattleStatusEvent) -> String {
     format!(
         "r{} {} {} {}",
@@ -271,6 +289,7 @@ pub fn status_summary(event: &BattleStatusEvent) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub fn lifecycle_summary(event: &BattleLifecycleEvent) -> String {
     format!("{} {}", event.phase, event.summary)
 }

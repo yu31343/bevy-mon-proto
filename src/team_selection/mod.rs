@@ -15,6 +15,7 @@ pub struct TeamSelectionPlugin;
 impl Plugin for TeamSelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectionState>()
+            .init_resource::<SelectionEntryMode>()
             .add_systems(
                 Update,
                 setup_selection_ui.run_if(
@@ -30,6 +31,7 @@ impl Plugin for TeamSelectionPlugin {
                 (
                     button_select_monster_system,
                     button_confirm_selection_system,
+                    button_back_to_lobby_system,
                     update_selection_ui_system,
                 )
                     .run_if(in_state(GameState::TeamSelection)),

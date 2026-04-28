@@ -71,8 +71,10 @@ pub(super) fn spawn_monster_ui_visuals(
         );
 
         let (left, right, top, bottom) = match combatant.side {
-            Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(196.0), Val::Auto),
-            Side::Enemy => (Val::Auto, Val::Px(28.0), Val::Px(196.0), Val::Auto),
+            //Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(196.0), Val::Auto),
+            Side::Player => (Val::Px(28.0), Val::Auto, Val::Px(370.0), Val::Auto), //debug mode
+            //Side::Enemy => (Val::Auto, Val::Px(28.0), Val::Px(196.0), Val::Auto),
+            Side::Enemy => (Val::Auto, Val::Px(100.0), Val::Px(196.0), Val::Auto), //debug mode
         };
         let visual = visual_config(name.as_str(), combatant.side);
 
@@ -151,7 +153,7 @@ pub(super) fn sync_active_visibility_and_facing(
 fn trigger_death_animation(
     commands: &mut Commands,
     entity: Entity,
-    handle: &MonsterAnimationHandle,
+    _handle: &MonsterAnimationHandle,
     visual: &mut MonsterVisual,
     node: &mut Node,
     spine_ui: &mut SpineUiNode,
@@ -304,7 +306,7 @@ pub(super) fn handle_spine_animation_complete(
                 continue;
             }
 
-            let Ok((mut node, mut spine_ui)) = ui_nodes.get_mut(ui_entity) else {
+            let Ok((node, mut spine_ui)) = ui_nodes.get_mut(ui_entity) else {
                 continue;
             };
 
@@ -318,7 +320,10 @@ pub(super) fn handle_spine_animation_complete(
                         .remove::<PendingAnimationAction>();
                 }
                 AnimationCompleteAction::StartDeathFade => {
-                    spine_ui.tint = Color::WHITE;
+                    spine_ui.animation = None;
+                    if spine_ui.tint != Color::WHITE {
+                        spine_ui.tint = Color::WHITE;
+                    }
                     commands
                         .entity(ui_entity)
                         .remove::<PendingAnimationAction>()

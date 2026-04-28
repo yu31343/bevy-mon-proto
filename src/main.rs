@@ -2,6 +2,7 @@
 mod battle;
 mod data;
 mod game_state;
+mod lobby;
 mod spine_anim;
 mod team_selection;
 mod ui;
@@ -18,6 +19,7 @@ fn main() {
         .add_plugins((
             data::DataPlugin,
             ui::UiPlugin,
+            lobby::LobbyPlugin,
             team_selection::TeamSelectionPlugin,
             battle::BattlePlugin,
             spine_anim::SpineAnimPlugin,

@@ -2,11 +2,11 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, ActionTrace, BattleEvent, BattleFormulaEvent, BattleLog, BattleResult,
-        BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts, RoundOrder,
-        Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction, TurnContext,
-        TurnCount, next_phase_after_side_end, note_action_phase, push_named_action_trace,
-        push_turn_action_trace,
+        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
+        BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
+        RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
+        TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
+        push_named_action_trace, push_turn_action_trace,
     },
     data::{BattleDbs, CardEffect, SkillCategory, SkillDef, SkillEffect, SkillId},
     game_state::{BattlePhase, GameState},
@@ -19,7 +19,7 @@ use super::{
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 0.55;
+const ENEMY_AI_ACTION_DELAY: f32 = 1.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnemyAiSkillKind {
@@ -432,7 +432,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: Res<'w, crate::battle::PlayerTeam>,
-    enemy_team: Res<'w, crate::battle::EnemyTeam>,
+    enemy_team: ResMut<'w, crate::battle::EnemyTeam>,
     battle_log: ResMut<'w, BattleLog>,
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
@@ -461,7 +461,7 @@ fn finalize_enemy_turn(
         ),
         With<InBattle>,
     >,
-    ai_state: &mut Local<(f32, bool)>,
+    ai_state: &mut (f32, bool),
 ) {
     let team_entities = enemy_team.0.combatants.clone();
     for entity in team_entities {
@@ -557,8 +557,728 @@ fn try_play_boost_card_for_skill(
     true
 }
 
+pub fn enemy_turn_input_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    battle_mode: Res<BattleControlMode>,
+    mut selected: ResMut<crate::battle::SelectedCards>,
+    mut turn_ctx: ResMut<TurnContext>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut runtime: EnemyTurnRuntime,
+    mut logs: EnemyTurnLogs,
+    mut writers: EnemyTurnEventWriters,
+    mut exec_query: Query<
+        (
+            Entity,
+            &Combatant,
+            &mut Stats,
+            &SkillList,
+            &SkillCount,
+            &mut Shield,
+            &mut crate::battle::StatusBoard,
+            &mut ElementAura,
+            &Name,
+        ),
+        With<InBattle>,
+    >,
+) {
+    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+        return;
+    }
+
+    let round_order = &runtime.round_order;
+    let action_points = &mut runtime.action_points;
+    let hand = &mut runtime.hand;
+    let pending_boosts = &mut runtime.pending_boosts;
+    let dbs = &runtime.dbs;
+    let formula_rules = &runtime.formula_rules;
+    let accuracy_rng = &mut runtime.accuracy_rng;
+    let player_team = &runtime.player_team;
+    let enemy_team = &mut runtime.enemy_team;
+    let battle_log = &mut runtime.battle_log;
+    let battle_result = &mut runtime.battle_result;
+    let next_game_state = &mut runtime.next_game_state;
+
+    if turn_ctx.enemy_ended {
+        return;
+    }
+
+    let Some(p_entity) = player_team.0.active_combatant() else {
+        abort_battle(
+            "调试模式：玩家上场精灵无效。",
+            battle_log,
+            battle_result,
+            next_game_state,
+        );
+        return;
+    };
+    let Some(e_entity) = enemy_team.0.active_combatant() else {
+        abort_battle(
+            "调试模式：敌方上场精灵无效。",
+            battle_log,
+            battle_result,
+            next_game_state,
+        );
+        return;
+    };
+
+    let switch_target = if keyboard.just_pressed(KeyCode::Digit5) {
+        Some(0_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit6) {
+        Some(1_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit7) {
+        Some(2_usize)
+    } else {
+        None
+    };
+
+    if let Some(target_index) = switch_target {
+        if action_points.enemy >= 1
+            && target_index < enemy_team.0.combatants.len()
+            && target_index != enemy_team.0.active_index
+        {
+            let target_entity = enemy_team.0.combatants[target_index];
+            if let Ok((_, _, stats, _, _, _, _, _, name)) = exec_query.get(target_entity) {
+                if stats.hp > 0 {
+                    action_points.enemy -= 1;
+                    enemy_team.0.active_index = target_index;
+                    writers.event_writer.write(BattleEvent::Switched {
+                        side: Side::Enemy,
+                        name: name.to_string(),
+                    });
+                    note_action_phase(
+                        &mut logs.structured_log,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "敌方换人",
+                        format!("切换到 {}；敌方AP={}", name, action_points.enemy),
+                    );
+                    push_turn_action_trace(
+                        &mut logs.action_trace,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        TurnAction::Switch,
+                        format!("切换到 {}；剩余AP={}", name, action_points.enemy),
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::KeyF) {
+        if hand.enemy.is_empty() {
+            return;
+        }
+        let Some(target_index) = selected.enemy.index.filter(|&i| i < hand.enemy.len()) else {
+            selected.enemy.discard_armed = !selected.enemy.discard_armed;
+            return;
+        };
+        let card_id = hand.enemy.remove(target_index);
+        action_points.enemy += 1;
+        let card_name = dbs
+            .cards
+            .get(&card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| format!("{card_id:?}"));
+        writers.event_writer.write(BattleEvent::CardDiscarded {
+            side: Side::Enemy,
+            card_name: card_name.clone(),
+        });
+        note_action_phase(
+            &mut logs.structured_log,
+            logs.turn_count.0,
+            Side::Enemy,
+            "敌方弃牌",
+            format!(
+                "弃置卡牌={}；获得AP=1；当前AP={}",
+                card_name, action_points.enemy
+            ),
+        );
+        push_named_action_trace(
+            &mut logs.action_trace,
+            logs.turn_count.0,
+            Side::Enemy,
+            "discard_card",
+            format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+        );
+        selected.enemy.index = None;
+        selected.enemy.discard_armed = false;
+        return;
+    }
+
+    if let Some(TurnAction::Skill(skill_id)) = turn_ctx.enemy_action {
+        let Ok((_, _, _, skill_list, skill_count, _, _, _, _)) = exec_query.get(e_entity) else {
+            turn_ctx.enemy_action = None;
+            return;
+        };
+        let Some(slot) = skill_list
+            .0
+            .iter()
+            .take(skill_count.0)
+            .position(|&s| s == skill_id)
+        else {
+            turn_ctx.enemy_action = None;
+            return;
+        };
+        let Some(skill) = dbs.skills.get(&skill_id) else {
+            turn_ctx.enemy_action = None;
+            return;
+        };
+        let cost = skill.cost_ap;
+        if action_points.enemy < cost {
+            turn_ctx.enemy_action = None;
+            return;
+        }
+        action_points.enemy -= cost;
+        turn_ctx.enemy_action = None;
+
+        writers.event_writer.write(BattleEvent::SkillUsed {
+            side: Side::Enemy,
+            skill_name: skill.name.clone(),
+            slot,
+        });
+        note_action_phase(
+            &mut logs.structured_log,
+            logs.turn_count.0,
+            Side::Enemy,
+            "敌方使用技能",
+            format!(
+                "技能={}；槽位={}；消耗AP={}；剩余AP={}",
+                skill.name, slot, cost, action_points.enemy
+            ),
+        );
+        push_turn_action_trace(
+            &mut logs.action_trace,
+            logs.turn_count.0,
+            Side::Enemy,
+            TurnAction::Skill(skill_id),
+            format!(
+                "技能={}；槽位={}；剩余AP={}",
+                skill.name, slot, action_points.enemy
+            ),
+        );
+
+        if skill_execution_mode(skill) == SkillExecutionMode::WindSpread {
+            let player_backs = player_team
+                .0
+                .combatants
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, entity)| {
+                    (index != player_team.0.active_index && entity != p_entity).then_some(entity)
+                })
+                .collect::<Vec<_>>();
+            match player_backs.as_slice() {
+                [back_a, back_b, ..] => {
+                    let Ok(
+                        [
+                            (
+                                _,
+                                _e_combatant,
+                                mut e_stats_m,
+                                _,
+                                _,
+                                mut e_shield_m,
+                                mut e_statuses_m,
+                                _e_aura_m,
+                                _,
+                            ),
+                            (
+                                _,
+                                p_combatant,
+                                mut p_stats_m,
+                                _,
+                                _,
+                                mut p_shield_m,
+                                mut p_statuses_m,
+                                mut p_aura_m,
+                                _,
+                            ),
+                            (
+                                _,
+                                back_a_combatant,
+                                mut back_a_stats,
+                                _,
+                                _,
+                                mut back_a_shield,
+                                mut back_a_statuses,
+                                mut back_a_aura,
+                                _,
+                            ),
+                            (
+                                _,
+                                back_b_combatant,
+                                mut back_b_stats,
+                                _,
+                                _,
+                                mut back_b_shield,
+                                mut back_b_statuses,
+                                mut back_b_aura,
+                                _,
+                            ),
+                        ],
+                    ) = exec_query.get_many_mut([e_entity, p_entity, *back_a, *back_b])
+                    else {
+                        return;
+                    };
+                    apply_wind_effect(
+                        skill,
+                        Side::Enemy,
+                        Side::Player,
+                        &mut e_stats_m,
+                        &mut e_shield_m,
+                        &mut e_statuses_m,
+                        WindSpreadTarget {
+                            base_element: p_combatant.element,
+                            stats: &mut p_stats_m,
+                            shield: &mut p_shield_m,
+                            aura: &mut p_aura_m,
+                            statuses: &mut p_statuses_m,
+                        },
+                        Some(WindSpreadTarget {
+                            base_element: back_a_combatant.element,
+                            stats: &mut back_a_stats,
+                            shield: &mut back_a_shield,
+                            aura: &mut back_a_aura,
+                            statuses: &mut back_a_statuses,
+                        }),
+                        Some(WindSpreadTarget {
+                            base_element: back_b_combatant.element,
+                            stats: &mut back_b_stats,
+                            shield: &mut back_b_shield,
+                            aura: &mut back_b_aura,
+                            statuses: &mut back_b_statuses,
+                        }),
+                        pending_boosts,
+                        &formula_rules,
+                        accuracy_rng,
+                        &dbs.elements,
+                        &dbs.statuses,
+                        &dbs.reactions,
+                        &mut writers.event_writer,
+                        Some(&mut writers.formula_writer),
+                        Some(&mut writers.status_writer),
+                        Some(&mut logs.structured_log),
+                        Some(logs.turn_count.0),
+                        None,
+                    );
+                }
+                [back_a] => {
+                    let Ok(
+                        [
+                            (
+                                _,
+                                _e_combatant,
+                                mut e_stats_m,
+                                _,
+                                _,
+                                mut e_shield_m,
+                                mut e_statuses_m,
+                                _e_aura_m,
+                                _,
+                            ),
+                            (
+                                _,
+                                p_combatant,
+                                mut p_stats_m,
+                                _,
+                                _,
+                                mut p_shield_m,
+                                mut p_statuses_m,
+                                mut p_aura_m,
+                                _,
+                            ),
+                            (
+                                _,
+                                back_a_combatant,
+                                mut back_a_stats,
+                                _,
+                                _,
+                                mut back_a_shield,
+                                mut back_a_statuses,
+                                mut back_a_aura,
+                                _,
+                            ),
+                        ],
+                    ) = exec_query.get_many_mut([e_entity, p_entity, *back_a])
+                    else {
+                        return;
+                    };
+                    apply_wind_effect(
+                        skill,
+                        Side::Enemy,
+                        Side::Player,
+                        &mut e_stats_m,
+                        &mut e_shield_m,
+                        &mut e_statuses_m,
+                        WindSpreadTarget {
+                            base_element: p_combatant.element,
+                            stats: &mut p_stats_m,
+                            shield: &mut p_shield_m,
+                            aura: &mut p_aura_m,
+                            statuses: &mut p_statuses_m,
+                        },
+                        Some(WindSpreadTarget {
+                            base_element: back_a_combatant.element,
+                            stats: &mut back_a_stats,
+                            shield: &mut back_a_shield,
+                            aura: &mut back_a_aura,
+                            statuses: &mut back_a_statuses,
+                        }),
+                        None,
+                        pending_boosts,
+                        &formula_rules,
+                        accuracy_rng,
+                        &dbs.elements,
+                        &dbs.statuses,
+                        &dbs.reactions,
+                        &mut writers.event_writer,
+                        Some(&mut writers.formula_writer),
+                        Some(&mut writers.status_writer),
+                        Some(&mut logs.structured_log),
+                        Some(logs.turn_count.0),
+                        None,
+                    );
+                }
+                _ => {
+                    let Ok(
+                        [
+                            (
+                                _,
+                                _e_combatant,
+                                mut e_stats_m,
+                                _,
+                                _,
+                                mut e_shield_m,
+                                mut e_statuses_m,
+                                _e_aura_m,
+                                _,
+                            ),
+                            (
+                                _,
+                                p_combatant,
+                                mut p_stats_m,
+                                _,
+                                _,
+                                mut p_shield_m,
+                                mut p_statuses_m,
+                                mut p_aura_m,
+                                _,
+                            ),
+                        ],
+                    ) = exec_query.get_many_mut([e_entity, p_entity])
+                    else {
+                        return;
+                    };
+                    apply_wind_effect(
+                        skill,
+                        Side::Enemy,
+                        Side::Player,
+                        &mut e_stats_m,
+                        &mut e_shield_m,
+                        &mut e_statuses_m,
+                        WindSpreadTarget {
+                            base_element: p_combatant.element,
+                            stats: &mut p_stats_m,
+                            shield: &mut p_shield_m,
+                            aura: &mut p_aura_m,
+                            statuses: &mut p_statuses_m,
+                        },
+                        None,
+                        None,
+                        pending_boosts,
+                        &formula_rules,
+                        accuracy_rng,
+                        &dbs.elements,
+                        &dbs.statuses,
+                        &dbs.reactions,
+                        &mut writers.event_writer,
+                        Some(&mut writers.formula_writer),
+                        Some(&mut writers.status_writer),
+                        Some(&mut logs.structured_log),
+                        Some(logs.turn_count.0),
+                        None,
+                    );
+                }
+            }
+        } else {
+            let Ok(
+                [
+                    (
+                        _,
+                        _attacker_combatant,
+                        mut e_stats_m,
+                        _,
+                        _,
+                        mut e_shield_m,
+                        mut e_statuses_m,
+                        mut e_aura_m,
+                        _,
+                    ),
+                    (
+                        _,
+                        p_combatant,
+                        mut p_stats_m,
+                        _,
+                        _,
+                        mut p_shield_m,
+                        mut p_statuses_m,
+                        mut p_aura_m,
+                        _,
+                    ),
+                ],
+            ) = exec_query.get_many_mut([e_entity, p_entity])
+            else {
+                return;
+            };
+            match skill_target_mode(skill) {
+                SkillTargetMode::SelfOnly => apply_self_effect(
+                    skill,
+                    Side::Enemy,
+                    &mut e_stats_m,
+                    &mut e_shield_m,
+                    &mut e_aura_m,
+                    &mut e_statuses_m,
+                    pending_boosts,
+                    &formula_rules,
+                    accuracy_rng,
+                    &dbs.elements,
+                    &dbs.statuses,
+                    &dbs.reactions,
+                    &mut writers.event_writer,
+                    Some(&mut writers.formula_writer),
+                    Some(&mut writers.status_writer),
+                    Some(&mut logs.structured_log),
+                    Some(logs.turn_count.0),
+                ),
+                SkillTargetMode::Opponent => apply_effect(
+                    skill,
+                    Side::Enemy,
+                    Side::Player,
+                    p_combatant.element,
+                    &mut e_stats_m,
+                    &mut e_shield_m,
+                    &mut e_statuses_m,
+                    &mut p_stats_m,
+                    &mut p_shield_m,
+                    &mut p_aura_m,
+                    &mut p_statuses_m,
+                    pending_boosts,
+                    &formula_rules,
+                    accuracy_rng,
+                    &dbs.elements,
+                    &dbs.statuses,
+                    &dbs.reactions,
+                    &mut writers.event_writer,
+                    Some(&mut writers.formula_writer),
+                    Some(&mut writers.status_writer),
+                    Some(&mut logs.structured_log),
+                    Some(logs.turn_count.0),
+                ),
+            };
+        }
+
+        let should_go_check_end = exec_query
+            .get(p_entity)
+            .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+            .unwrap_or(false)
+            || exec_query
+                .get(e_entity)
+                .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                .unwrap_or(false);
+        if should_go_check_end {
+            turn_ctx.enemy_ended = true;
+            next_phase.set(BattlePhase::CheckEnd);
+            return;
+        }
+        return;
+    }
+
+    for (key, idx) in [
+        (KeyCode::KeyZ, 0_usize),
+        (KeyCode::KeyX, 1_usize),
+        (KeyCode::KeyC, 2_usize),
+        (KeyCode::KeyV, 3_usize),
+        (KeyCode::KeyB, 4_usize),
+    ] {
+        if keyboard.just_pressed(key) {
+            if idx >= hand.enemy.len() {
+                return;
+            }
+            if selected.enemy.discard_armed {
+                let card_id = hand.enemy.remove(idx);
+                action_points.enemy += 1;
+                let card_name = dbs
+                    .cards
+                    .get(&card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| format!("{card_id:?}"));
+                writers.event_writer.write(BattleEvent::CardDiscarded {
+                    side: Side::Enemy,
+                    card_name: card_name.clone(),
+                });
+                note_action_phase(
+                    &mut logs.structured_log,
+                    logs.turn_count.0,
+                    Side::Enemy,
+                    "敌方弃牌",
+                    format!(
+                        "弃置卡牌={}；获得AP=1；当前AP={}",
+                        card_name, action_points.enemy
+                    ),
+                );
+                push_named_action_trace(
+                    &mut logs.action_trace,
+                    logs.turn_count.0,
+                    Side::Enemy,
+                    "discard_card",
+                    format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+                );
+                selected.enemy.index = None;
+                selected.enemy.discard_armed = false;
+                return;
+            }
+            if selected.enemy.index != Some(idx) {
+                selected.enemy.index = Some(idx);
+                return;
+            }
+            let card_id = hand.enemy[idx];
+            if let Some(card) = dbs.cards.get(&card_id) {
+                if action_points.enemy >= card.cost_ap {
+                    hand.enemy.remove(idx);
+                    action_points.enemy -= card.cost_ap;
+
+                    let card_name = card.name.to_string();
+                    writers.event_writer.write(BattleEvent::CardUsed {
+                        side: Side::Enemy,
+                        card_name: card_name.clone(),
+                    });
+
+                    let effect_detail = match card.effect {
+                        CardEffect::GainAp { amount } => {
+                            action_points.enemy += amount;
+                            format!("获得AP={amount}")
+                        }
+                        CardEffect::NextAttackBoost { amount } => {
+                            pending_boosts.enemy.next_attack_bonus = amount;
+                            format!("下次攻击加成={amount}")
+                        }
+                        CardEffect::NextShieldBoost { amount } => {
+                            pending_boosts.enemy.next_shield_bonus = amount;
+                            format!("下次护盾加成={amount}")
+                        }
+                        CardEffect::NextHealBoost { amount } => {
+                            pending_boosts.enemy.next_heal_bonus = amount;
+                            format!("下次治疗加成={amount}")
+                        }
+                    };
+                    note_action_phase(
+                        &mut logs.structured_log,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "敌方使用卡牌",
+                        format!(
+                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                            card_name, card.cost_ap, effect_detail, action_points.enemy
+                        ),
+                    );
+                    push_named_action_trace(
+                        &mut logs.action_trace,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "use_card",
+                        format!(
+                            "卡牌={}；效果={}；当前AP={}",
+                            card_name, effect_detail, action_points.enemy
+                        ),
+                    );
+
+                    selected.enemy.index = None;
+                    selected.enemy.discard_armed = false;
+
+                    let should_go_check_end = exec_query
+                        .get(p_entity)
+                        .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                        .unwrap_or(false)
+                        || exec_query
+                            .get(e_entity)
+                            .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                            .unwrap_or(false);
+                    if should_go_check_end {
+                        turn_ctx.enemy_ended = true;
+                        next_phase.set(BattlePhase::CheckEnd);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+    }
+
+    let skill_slot = if keyboard.just_pressed(KeyCode::Digit1) {
+        Some(0_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit2) {
+        Some(1_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit3) {
+        Some(2_usize)
+    } else if keyboard.just_pressed(KeyCode::Digit4) {
+        Some(3_usize)
+    } else {
+        None
+    };
+
+    if let Some(skill_slot) = skill_slot {
+        let Ok((_, _, _, skill_list, skill_count, _, _, _, _)) = exec_query.get(e_entity) else {
+            return;
+        };
+        if skill_slot >= skill_count.0 {
+            return;
+        }
+        let skill_id = skill_list.0[skill_slot];
+        turn_ctx.enemy_action = Some(TurnAction::Skill(skill_id));
+        next_phase.set(BattlePhase::EnemyTurn);
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::KeyE) {
+        turn_ctx.enemy_end_requested = true;
+    }
+    if turn_ctx.enemy_end_requested || action_points.enemy <= 0 {
+        note_action_phase(
+            &mut logs.structured_log,
+            logs.turn_count.0,
+            Side::Enemy,
+            "敌方结束回合",
+            format!("敌方主动结束回合；剩余AP={}", action_points.enemy),
+        );
+        push_named_action_trace(
+            &mut logs.action_trace,
+            logs.turn_count.0,
+            Side::Enemy,
+            "end_turn",
+            format!("敌方主动结束回合；剩余AP={}", action_points.enemy),
+        );
+        turn_ctx.enemy_end_requested = false;
+        let mut ai_state = (0.0_f32, false);
+        finalize_enemy_turn(
+            e_entity,
+            enemy_team,
+            &mut turn_ctx,
+            &round_order,
+            &formula_rules,
+            &mut logs,
+            &mut writers,
+            &mut next_phase,
+            &mut exec_query,
+            &mut ai_state,
+        );
+    }
+}
+
 pub fn enemy_turn_ai_system(
     time: Res<Time>,
+    battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: EnemyTurnRuntime,
@@ -580,6 +1300,12 @@ pub fn enemy_turn_ai_system(
         With<InBattle>,
     >,
 ) {
+    if *battle_mode == BattleControlMode::DebugPlayerControlsBoth {
+        ai_state.0 = 0.0;
+        ai_state.1 = false;
+        return;
+    }
+
     let round_order = &runtime.round_order;
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
@@ -864,7 +1590,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
@@ -959,7 +1685,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
@@ -1037,7 +1763,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
@@ -1152,6 +1878,7 @@ pub fn enemy_turn_ai_system(
                 return;
             }
             acted_this_update = true;
+            break;
         } else {
             // 没有可用技能：弃牌换 AP（或直接结束）
             if !hand.enemy.is_empty() {
@@ -1184,34 +1911,15 @@ pub fn enemy_turn_ai_system(
                     format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
                 );
                 acted_this_update = true;
+                break;
             } else {
                 break;
             }
         }
-
-        let should_go_check_end = exec_query
-            .get(p_entity)
-            .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-            .unwrap_or(false)
-            || exec_query
-                .get(e_entity)
-                .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                .unwrap_or(false);
-        if should_go_check_end {
-            turn_ctx.enemy_ended = true;
-            ai_state.0 = 0.0;
-            ai_state.1 = false;
-            next_phase.set(BattlePhase::CheckEnd);
-            return;
-        }
-
-        if action_points.enemy <= 0 {
-            break;
-        }
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 缩短敌方思考/行动间隔，保持节奏更紧凑。
+        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 敌方每两个操作之间间隔 0.75 秒。
         return;
     }
 

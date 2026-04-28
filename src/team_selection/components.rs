@@ -26,14 +26,46 @@ pub struct SelectionOrderText {
 #[derive(Component)]
 pub struct ConfirmSelectionButton;
 
+#[derive(Component)]
+pub struct ConfirmSelectionButtonText;
+
+/// Back button to return to lobby.
+#[derive(Component)]
+pub struct BackToLobbyButton;
+
+#[derive(Component)]
+pub struct BackToLobbyButtonText;
+
+#[derive(Component)]
+pub struct SelectionTitleText;
+
+#[derive(Component)]
+pub struct SelectionInstructionsText;
+
 /// Text showing "已选择: X / 3".
 #[derive(Component)]
 pub struct SelectionCountText;
 
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionEntryMode {
+    #[default]
+    VsAi,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionStage {
+    #[default]
+    Player,
+    Enemy,
+}
+
 /// Resource tracking the current selection state.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct SelectionState {
+    pub stage: SelectionStage,
     pub selected_indices: Vec<usize>,
+    pub player_indices: Vec<usize>,
 }
 
 impl SelectionState {
@@ -51,5 +83,11 @@ impl SelectionState {
 
     pub fn can_confirm(&self) -> bool {
         !self.selected_indices.is_empty()
+    }
+
+    pub fn reset(&mut self) {
+        self.stage = SelectionStage::Player;
+        self.selected_indices.clear();
+        self.player_indices.clear();
     }
 }

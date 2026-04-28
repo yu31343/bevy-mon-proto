@@ -40,26 +40,22 @@ impl Plugin for UiPlugin {
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.init_resource::<SwitchOverlayOpen>()
         .init_resource::<PendingSwitchOverlayToggle>()
+        .init_resource::<RetreatConfirmState>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
+        .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
         .add_systems(
             Update,
             (
-                button_select_skill_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_discard_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_switch_member_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_play_card_two_step_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_toggle_switch_overlay_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                close_switch_overlay_on_switch_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                button_select_skill_system.run_if(in_state(GameState::Battle)),
+                button_discard_system.run_if(in_state(GameState::Battle)),
+                button_switch_member_system.run_if(in_state(GameState::Battle)),
+                button_play_card_two_step_system.run_if(in_state(GameState::Battle)),
+                button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
+                close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
                 apply_pending_switch_overlay_toggle_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                    .run_if(in_state(GameState::Battle))
                     .after(button_toggle_switch_overlay_system)
                     .after(close_switch_overlay_on_switch_system)
                     .after(spawn_button_click_flash)
@@ -94,8 +90,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.add_systems(
         Update,
         (
-            button_end_turn_system
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+            button_end_turn_system.run_if(in_state(GameState::Battle)),
+            button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
             update_discard_armed_visual_system
                 .run_if(in_state(GameState::Battle))
@@ -109,10 +105,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             tick_screen_flashes,
             tick_fx_lifetimes,
             spawn_button_click_flash
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                .run_if(in_state(GameState::Battle))
                 .after(update_player_roster_ui_system),
             keyboard_button_flash_system
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                .run_if(in_state(GameState::Battle))
                 .after(spawn_button_click_flash),
             tick_button_click_flash
                 .run_if(in_state(GameState::Battle))
