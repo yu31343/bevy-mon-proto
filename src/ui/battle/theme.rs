@@ -7,6 +7,7 @@ pub(crate) struct UiTheme {
     pub top_bar_start: Color,
     pub top_bar_end: Color,
     pub panel: Color,
+    #[allow(dead_code)]
     pub panel_inner: Color,
     pub button_idle: Color,
     pub button_hover: Color,

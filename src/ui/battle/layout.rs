@@ -529,7 +529,7 @@ pub(crate) fn setup_ui_system(
     mut commands: Commands,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
-    mut retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
+    retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
     existing_ui: Query<(), With<BattleUiRoot>>,
 ) {
     if !existing_ui.is_empty() {

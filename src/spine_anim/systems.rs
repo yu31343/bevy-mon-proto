@@ -153,7 +153,7 @@ pub(super) fn sync_active_visibility_and_facing(
 fn trigger_death_animation(
     commands: &mut Commands,
     entity: Entity,
-    handle: &MonsterAnimationHandle,
+    _handle: &MonsterAnimationHandle,
     visual: &mut MonsterVisual,
     node: &mut Node,
     spine_ui: &mut SpineUiNode,
@@ -306,7 +306,7 @@ pub(super) fn handle_spine_animation_complete(
                 continue;
             }
 
-            let Ok((mut node, mut spine_ui)) = ui_nodes.get_mut(ui_entity) else {
+            let Ok((node, mut spine_ui)) = ui_nodes.get_mut(ui_entity) else {
                 continue;
             };
 

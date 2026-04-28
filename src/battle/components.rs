@@ -118,6 +118,7 @@ impl ElementAura {
         removed
     }
 
+    #[allow(dead_code)]
     pub fn apply_attachment(&mut self, element: ElementType) {
         let mut current: Vec<_> = self
             .elements()
@@ -522,6 +523,7 @@ pub struct SelectedCards {
     pub enemy: SelectedCardState,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StructuredLogEntry {
     pub phase: String,
@@ -697,6 +699,7 @@ pub fn clear_turn_context(turn_ctx: &mut TurnContext) {
     turn_ctx.enemy_end_requested = false;
 }
 
+#[allow(dead_code)]
 pub fn reset_round_end_flags(turn_ctx: &mut TurnContext) {
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;

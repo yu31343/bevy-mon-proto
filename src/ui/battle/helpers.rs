@@ -389,6 +389,7 @@ pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn aura_and_status_label(aura: &[ElementType], statuses: &StatusBoard) -> String {
     format!(
         "附着: {} | 状态: {}",
@@ -397,6 +398,7 @@ pub(crate) fn aura_and_status_label(aura: &[ElementType], statuses: &StatusBoard
     )
 }
 
+#[allow(dead_code)]
 fn status_category_label(category: StatusCategory) -> &'static str {
     match category {
         StatusCategory::Aura => "附着",
@@ -406,6 +408,7 @@ fn status_category_label(category: StatusCategory) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn status_tick_timing_label(timing: Option<StatusTickTiming>) -> &'static str {
     match timing {
         Some(StatusTickTiming::OwnerActionEnd) => "行动后",
@@ -413,6 +416,7 @@ fn status_tick_timing_label(timing: Option<StatusTickTiming>) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn status_debug_label(statuses: &StatusBoard) -> String {
     let labels = statuses
         .entries
@@ -493,6 +497,7 @@ pub(crate) fn status_stage_label(stats: &Stats, statuses: &StatusBoard) -> Strin
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn combatant_debug_summary(
     name: &Name,
     stats: &Stats,
@@ -512,6 +517,7 @@ pub(crate) fn combatant_debug_summary(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn team_debug_summary(
     header: &str,
     team: &Team,

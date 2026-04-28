@@ -1590,7 +1590,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
@@ -1685,7 +1685,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
@@ -1763,7 +1763,7 @@ pub fn enemy_turn_ai_system(
                                     _,
                                     mut e_shield_m,
                                     mut e_statuses_m,
-                                    mut e_aura_m,
+                                    _e_aura_m,
                                     _,
                                 ),
                                 (
