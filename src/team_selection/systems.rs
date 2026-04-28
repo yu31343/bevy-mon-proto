@@ -5,8 +5,8 @@ use crate::{
     data::{BattleRules, MonsterPool, TeamSelections},
     game_state::GameState,
     team_selection::{
-        ConfirmSelectionButton, MonsterCardButton, MonsterCardSelectionIndicator,
-        SelectionCountText, SelectionOrderText, SelectionState,
+        BackToLobbyButton, ConfirmSelectionButton, MonsterCardButton,
+        MonsterCardSelectionIndicator, SelectionCountText, SelectionOrderText, SelectionState,
     },
     ui::battle::theme::UiTheme,
 };
@@ -82,6 +82,21 @@ pub fn button_confirm_selection_system(
 
             // Transition to Battle state
             next_state.set(GameState::Battle);
+        }
+    }
+}
+
+/// System to handle return-to-lobby button click.
+pub fn button_back_to_lobby_system(
+    mut interaction_query: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<BackToLobbyButton>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    for interaction in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            next_state.set(GameState::Lobby);
         }
     }
 }

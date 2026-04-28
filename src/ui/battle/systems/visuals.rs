@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::super::components::{
-    DiscardButton, EndTurnButton, PlayerCardButton, SkillButton, SwitchCancelButton,
+    DiscardButton, EndTurnButton, PlayerCardButton, RetreatButton, SkillButton, SwitchCancelButton,
     SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::ButtonClickFlash;
@@ -32,7 +32,11 @@ pub(crate) fn button_visual_state_system(
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (
             Changed<Interaction>,
-            Or<(With<EndTurnButton>, With<DiscardButton>)>,
+            Or<(
+                With<EndTurnButton>,
+                With<DiscardButton>,
+                With<RetreatButton>,
+            )>,
             Without<ButtonClickFlash>,
             Without<SkillButton>,
             Without<PlayerCardButton>,

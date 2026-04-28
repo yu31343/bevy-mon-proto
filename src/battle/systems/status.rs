@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         BattleEvent, BattleFormulaEvent, BattleStatusEvent, ElementAura, Shield, Side, Stats,
-        StatusBoard, StructuredBattleLog, decrement_status_durations_for_round,
-        note_action_phase, status_event, tick_statuses_for_timing,
+        StatusBoard, StructuredBattleLog, decrement_status_durations_for_round, note_action_phase,
+        status_event, tick_statuses_for_timing,
     },
     data::{BattleFormulaRules, ElementType, StatusTickTiming},
 };
@@ -164,7 +164,11 @@ pub(crate) fn process_round_end_status_durations(
             params.round,
             params.side,
             outcome.status_id.clone(),
-            if outcome.expired { "expired" } else { "duration_ticked" },
+            if outcome.expired {
+                "expired"
+            } else {
+                "duration_ticked"
+            },
             format!(
                 "remaining_turns={} status_name={}",
                 outcome.remaining_turns, outcome.status_name

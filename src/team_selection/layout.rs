@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     data::{BattleRules, MonsterPool},
     team_selection::{
-        ConfirmSelectionButton, MonsterCardButton, MonsterCardSelectionIndicator,
-        SelectionCountText, SelectionOrderText, SelectionUiRoot,
+        BackToLobbyButton, ConfirmSelectionButton, MonsterCardButton,
+        MonsterCardSelectionIndicator, SelectionCountText, SelectionOrderText, SelectionUiRoot,
     },
     ui::battle::{resources::UiFontHandle, theme::UiTheme},
 };
@@ -109,31 +109,61 @@ pub fn setup_selection_ui(
                 }
             });
 
-            // Confirm button
-            root.spawn((
-                Button,
-                Node {
-                    width: Val::Px(200.0),
-                    height: Val::Px(50.0),
-                    margin: UiRect::top(Val::Px(25.0)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(2.0)),
-                    border_radius: BorderRadius::all(theme.radius_button),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
-                BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
-                theme.button_shadow(),
-                ConfirmSelectionButton,
-            ))
-            .with_children(|button| {
-                button.spawn((
-                    Text::new("确认选择"),
-                    make_text_font(18.0, font_handle.as_ref()),
-                    TextColor(Color::WHITE),
-                ));
-            });
+            root.spawn((Node {
+                margin: UiRect::top(Val::Px(25.0)),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(12.0),
+                ..default()
+            },))
+                .with_children(|row| {
+                    row.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(200.0),
+                            height: Val::Px(50.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(theme.radius_button),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                        BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
+                        theme.button_shadow(),
+                        ConfirmSelectionButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("确认选择"),
+                            make_text_font(18.0, font_handle.as_ref()),
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                    row.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(200.0),
+                            height: Val::Px(50.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(theme.radius_button),
+                            ..default()
+                        },
+                        BackgroundColor(theme.button_idle),
+                        BorderColor::all(theme.button_border_idle),
+                        theme.button_shadow(),
+                        BackToLobbyButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("返回大厅"),
+                            make_text_font(18.0, font_handle.as_ref()),
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
         });
 }
 

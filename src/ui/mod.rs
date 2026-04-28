@@ -40,9 +40,11 @@ impl Plugin for UiPlugin {
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.init_resource::<SwitchOverlayOpen>()
         .init_resource::<PendingSwitchOverlayToggle>()
+        .init_resource::<RetreatConfirmState>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
+        .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
         .add_systems(
             Update,
             (
@@ -96,6 +98,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         (
             button_end_turn_system
                 .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+            button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
             update_discard_armed_visual_system
                 .run_if(in_state(GameState::Battle))

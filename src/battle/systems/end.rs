@@ -8,9 +8,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
-        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog,
-        TurnCount, note_action_phase, note_structured_phase, push_battle_line,
-        push_named_action_trace,
+        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog, TurnCount,
+        note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -311,11 +310,11 @@ pub fn resolve_ko_system(
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
         battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
-            "平局！按 R 重新开始。".to_string()
+            "平局！按 R 返回大厅。".to_string()
         } else if pending_ko.enemy_defeated {
-            "胜利！全歼敌方。按 R 重新开始。".to_string()
+            "胜利！全歼敌方。按 R 返回大厅。".to_string()
         } else {
-            "失败！队伍全灭。按 R 重新开始。".to_string()
+            "失败！队伍全灭。按 R 返回大厅。".to_string()
         };
         note_structured_phase(
             &mut structured_log,
@@ -428,7 +427,7 @@ pub fn restart_from_result_system(
         }
 
         next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::TeamSelection);
+        next_game_state.set(GameState::Lobby);
     }
 }
 
@@ -619,14 +618,22 @@ mod tests {
 
         app.update();
 
-        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        let player_statuses = app
+            .world()
+            .entity(player_active)
+            .get::<StatusBoard>()
+            .unwrap();
         assert_eq!(player_statuses.entries.len(), 1);
         assert_eq!(player_statuses.entries[0].remaining_turns, 1);
 
         app.world_mut().resource_mut::<TurnCount>().0 = 2;
         app.update();
 
-        let player_statuses = app.world().entity(player_active).get::<StatusBoard>().unwrap();
+        let player_statuses = app
+            .world()
+            .entity(player_active)
+            .get::<StatusBoard>()
+            .unwrap();
         assert!(player_statuses.entries.is_empty());
     }
 

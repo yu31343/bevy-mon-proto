@@ -1190,7 +1190,6 @@ pub fn enemy_turn_ai_system(
                 break;
             }
         }
-
     }
 
     if acted_this_update && action_points.enemy > 0 {

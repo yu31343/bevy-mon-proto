@@ -30,6 +30,7 @@ impl Plugin for TeamSelectionPlugin {
                 (
                     button_select_monster_system,
                     button_confirm_selection_system,
+                    button_back_to_lobby_system,
                     update_selection_ui_system,
                 )
                     .run_if(in_state(GameState::TeamSelection)),

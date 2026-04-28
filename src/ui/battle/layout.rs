@@ -529,10 +529,14 @@ pub(crate) fn setup_ui_system(
     mut commands: Commands,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
+    mut retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
     existing_ui: Query<(), With<BattleUiRoot>>,
 ) {
     if !existing_ui.is_empty() {
         return;
+    }
+    if let Some(mut retreat_confirm) = retreat_confirm {
+        retreat_confirm.armed = false;
     }
     let radius_panel = theme.radius_panel;
     let radius_button = theme.radius_button;
@@ -1045,6 +1049,30 @@ pub(crate) fn setup_ui_system(
                 ));
             });
 
+            // === Center Turn Banner ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(0.0),
+                    top: Val::Percent(36.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|banner| {
+                banner.spawn((
+                    Text::new(""),
+                    super::helpers::make_text_font(46.0, ui_font.as_deref()),
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.88)),
+                    TextShadow {
+                        offset: Vec2::new(2.0, 2.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.60),
+                    },
+                    TurnBannerText,
+                ));
+            });
 
             // === Bottom-Left: Control Buttons ===
             root.spawn((
@@ -1105,6 +1133,32 @@ pub(crate) fn setup_ui_system(
                         Text::new("结束回合（E）"),
                         body_font.clone(),
                         TextColor(theme.text_primary),
+                    ));
+                });
+
+                controls.spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(150.0),
+                        min_height: Val::Px(46.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_idle),
+                    BorderColor::all(theme.button_border_idle),
+                    theme.button_shadow(),
+                    RetreatButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("撤退"),
+                        body_font.clone(),
+                        TextColor(theme.text_primary),
+                        RetreatButtonText,
                     ));
                 });
             });

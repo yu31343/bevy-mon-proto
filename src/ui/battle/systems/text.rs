@@ -411,9 +411,11 @@ pub(crate) fn update_active_panel_tokens_system(
 }
 
 pub(crate) fn update_skill_text_system(
+    battle_phase: Res<State<BattlePhase>>,
     mut text_q: Query<
         (
             &mut Text,
+            Option<&TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
@@ -459,6 +461,7 @@ pub(crate) fn update_skill_text_system(
 
     for (
         mut text,
+        is_turn_banner,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
@@ -467,6 +470,14 @@ pub(crate) fn update_skill_text_system(
         enemy_skill_icon,
     ) in &mut text_q
     {
+        if is_turn_banner.is_some() {
+            text.0 = match *battle_phase.get() {
+                BattlePhase::PlayerTurn => "你的回合".to_string(),
+                BattlePhase::EnemyTurn => "对手的回合".to_string(),
+                _ => String::new(),
+            };
+            continue;
+        }
         if let (Some(button), Some((skills, count))) = (skill_button_text, player_skills) {
             if button.index >= count {
                 text.0 = format!("{}号: 未配置", button.index + 1);

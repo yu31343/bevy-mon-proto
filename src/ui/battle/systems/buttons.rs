@@ -14,6 +14,11 @@ use super::super::components::*;
 #[derive(Resource, Default)]
 pub(crate) struct SwitchOverlayOpen(pub bool);
 
+#[derive(Resource, Default)]
+pub(crate) struct RetreatConfirmState {
+    pub armed: bool,
+}
+
 #[derive(Resource)]
 pub(crate) struct PendingSwitchOverlayToggle {
     pub target: Option<bool>,
@@ -373,6 +378,37 @@ pub(crate) fn button_end_turn_system(
         if *interaction == Interaction::Pressed {
             turn_ctx.player_action = None;
             turn_ctx.player_end_requested = true;
+            break;
+        }
+    }
+}
+
+pub(crate) fn button_retreat_system(
+    mut interaction_query: Query<
+        (&Interaction, &RetreatButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut retreat_confirm: ResMut<RetreatConfirmState>,
+    mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut next_game_state: ResMut<NextState<GameState>>,
+) {
+    for (interaction, _) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            let Ok(mut retreat_text) = retreat_button_text_q.single_mut() else {
+                return;
+            };
+
+            if !retreat_confirm.armed {
+                retreat_confirm.armed = true;
+                retreat_text.0 = "确认撤退".to_string();
+                return;
+            }
+
+            retreat_confirm.armed = false;
+            retreat_text.0 = "撤退".to_string();
+            next_phase.set(BattlePhase::Init);
+            next_game_state.set(GameState::Lobby);
             break;
         }
     }

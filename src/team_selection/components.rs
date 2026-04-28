@@ -26,6 +26,10 @@ pub struct SelectionOrderText {
 #[derive(Component)]
 pub struct ConfirmSelectionButton;
 
+/// Back button to return to lobby.
+#[derive(Component)]
+pub struct BackToLobbyButton;
+
 /// Text showing "已选择: X / 3".
 #[derive(Component)]
 pub struct SelectionCountText;

@@ -360,7 +360,9 @@ pub fn decrement_status_durations_for_round(
         });
     }
 
-    status_board.entries.retain(|entry| entry.remaining_turns > 0);
+    status_board
+        .entries
+        .retain(|entry| entry.remaining_turns > 0);
     recalculate_stage_modifiers(stats, status_board);
     outcomes
 }
@@ -801,7 +803,8 @@ mod tests {
             }],
         };
 
-        let outcomes = tick_statuses_for_timing(&mut status_board, StatusTickTiming::OwnerActionEnd);
+        let outcomes =
+            tick_statuses_for_timing(&mut status_board, StatusTickTiming::OwnerActionEnd);
 
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].remaining_turns, 1);
