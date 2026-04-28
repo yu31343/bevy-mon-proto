@@ -1006,4 +1006,106 @@ mod tests {
 
         let _ = fs::remove_dir_all(&export_dir);
     }
+
+    #[test]
+    fn exported_full_round_logs_preserve_player_enemy_action_order() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let export_dir =
+            std::env::temp_dir().join(format!("bevy_mon_proto_round_sequence_export_{unique}"));
+
+        let mut app = App::new();
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleTraceEvent>>();
+        app.init_resource::<Messages<BattleStateEvent>>();
+        app.init_resource::<Messages<BattleLifecycleEvent>>();
+        app.init_resource::<Messages<BattleFormulaEvent>>();
+        app.init_resource::<Messages<BattleStatusEvent>>();
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ReplayEventLog::default());
+        app.insert_resource(BattleResult {
+            message: "胜利！全歼敌方。按 R 重新开始。".to_string(),
+            export_status: None,
+        });
+        app.insert_resource(TurnCount(2));
+        app.insert_resource(State::new(GameState::Battle));
+        app.add_systems(Update, consume_battle_events_system);
+
+        app.world_mut()
+            .resource_mut::<Messages<BattleTraceEvent>>()
+            .write(BattleTraceEvent {
+                round: 2,
+                side: Side::Player,
+                action: "player_skill:FirePunch".to_string(),
+                detail: "玩家在第2回合行动。".to_string(),
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleTraceEvent>>()
+            .write(BattleTraceEvent {
+                round: 2,
+                side: Side::Enemy,
+                action: "enemy_skill:WaterShot".to_string(),
+                detail: "敌方在第2回合行动。".to_string(),
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleLifecycleEvent>>()
+            .write(BattleLifecycleEvent {
+                phase: "round-end-r2".to_string(),
+                summary: "完整回合结束".to_string(),
+                detail: "玩家与敌方均已行动。".to_string(),
+            });
+
+        app.update();
+
+        let replay_log = app.world().resource::<ReplayEventLog>();
+        assert_eq!(replay_log.0.len(), 3);
+        assert_eq!(replay_log.0[0].seq, 1);
+        assert_eq!(replay_log.0[0].phase, "trace-r2");
+        assert_eq!(replay_log.0[0].summary, "player_skill:FirePunch");
+        assert_eq!(replay_log.0[1].seq, 2);
+        assert_eq!(replay_log.0[1].phase, "trace-r2");
+        assert_eq!(replay_log.0[1].summary, "enemy_skill:WaterShot");
+        assert_eq!(replay_log.0[2].seq, 3);
+        assert_eq!(replay_log.0[2].phase, "round-end-r2");
+        assert_eq!(replay_log.0[2].summary, "完整回合结束");
+
+        let action_trace = ActionTrace(vec![
+            ActionTraceEntry {
+                seq: 1,
+                round: 2,
+                side: Side::Player,
+                action: "player_skill:FirePunch".to_string(),
+                detail: "玩家在第2回合行动。".to_string(),
+            },
+            ActionTraceEntry {
+                seq: 2,
+                round: 2,
+                side: Side::Enemy,
+                action: "enemy_skill:WaterShot".to_string(),
+                detail: "敌方在第2回合行动。".to_string(),
+            },
+        ]);
+        let battle_result = app.world().resource::<BattleResult>();
+        write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+            .expect("export should succeed");
+
+        let slug = sanitize_filename_segment(&battle_result.message);
+        let replay_text = fs::read_to_string(export_dir.join(format!("{slug}_replay.ron")))
+            .expect("read replay export");
+        let action_text = fs::read_to_string(export_dir.join(format!("{slug}_action_trace.ron")))
+            .expect("read action export");
+
+        assert!(replay_text.contains("summary: \"player_skill:FirePunch\""));
+        assert!(replay_text.contains("summary: \"enemy_skill:WaterShot\""));
+        assert!(replay_text.contains("summary: \"完整回合结束\""));
+        assert!(action_text.contains("seq: 1"));
+        assert!(action_text.contains("side: Player"));
+        assert!(action_text.contains("seq: 2"));
+        assert!(action_text.contains("side: Enemy"));
+
+        let _ = fs::remove_dir_all(&export_dir);
+    }
 }
