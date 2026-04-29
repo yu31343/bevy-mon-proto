@@ -22,8 +22,17 @@ pub fn button_select_monster_system(
         (Changed<Interaction>, With<Button>),
     >,
     mut selection_state: ResMut<SelectionState>,
+    entry_mode: Res<SelectionEntryMode>,
+    pvp_team_state: Option<Res<PvpTeamState>>,
     rules: Res<BattleRules>,
 ) {
+    if *entry_mode == SelectionEntryMode::Pvp
+        && pvp_team_state
+            .as_ref()
+            .is_some_and(|team_state| team_state.local_indices.is_some())
+    {
+        return;
+    }
     for (interaction, button) in &mut interaction_query {
         if *interaction == Interaction::Pressed {
             selection_state.toggle(button.monster_index, rules.max_team_size);
@@ -57,6 +66,22 @@ pub fn button_confirm_selection_system(
             || selected_count > rules.max_team_size
         {
             continue;
+        }
+        if *entry_mode == SelectionEntryMode::Pvp {
+            if pvp_team_state
+                .as_ref()
+                .is_some_and(|team_state| team_state.local_indices.is_some())
+            {
+                continue;
+            }
+            if pvp_connection.as_ref().is_none_or(|connection| {
+                matches!(
+                    connection.status,
+                    PvpStatus::Disconnected(_) | PvpStatus::Failed(_)
+                )
+            }) {
+                continue;
+            }
         }
 
         match *entry_mode {
@@ -102,6 +127,9 @@ pub fn button_confirm_selection_system(
                 let Some(team_state) = pvp_team_state.as_mut() else {
                     continue;
                 };
+                if team_state.local_indices.is_some() {
+                    continue;
+                }
                 println!("=== PVP 队伍选择 ===");
                 print!("我方选择: ");
                 for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
@@ -177,7 +205,7 @@ pub fn button_back_to_lobby_system(
         }
         if *entry_mode == SelectionEntryMode::Pvp {
             if let Some(connection) = pvp_connection.as_mut() {
-                connection.stop();
+                connection.stop_with_leave(Some("对方已返回大厅，联机配队已取消。".to_string()));
                 connection.status = PvpStatus::Idle;
             }
             if let Some(team_state) = pvp_team_state.as_mut() {
@@ -195,6 +223,8 @@ pub fn button_back_to_lobby_system(
 pub fn update_selection_ui_system(
     selection_state: Res<SelectionState>,
     entry_mode: Res<SelectionEntryMode>,
+    pvp_connection: Option<Res<PvpConnection>>,
+    pvp_team_state: Option<Res<PvpTeamState>>,
     rules: Res<BattleRules>,
     theme: Res<UiTheme>,
     mut text_queries: ParamSet<(
@@ -226,18 +256,37 @@ pub fn update_selection_ui_system(
 ) {
     let selecting_enemy =
         *entry_mode == SelectionEntryMode::Debug && selection_state.stage == SelectionStage::Enemy;
+    let pvp_locked = *entry_mode == SelectionEntryMode::Pvp
+        && pvp_team_state
+            .as_ref()
+            .is_some_and(|team_state| team_state.local_indices.is_some());
+    let pvp_waiting_or_disconnected = if *entry_mode == SelectionEntryMode::Pvp {
+        pvp_connection
+            .as_ref()
+            .and_then(|connection| match &connection.status {
+                PvpStatus::Disconnected(reason) | PvpStatus::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            })
+    } else {
+        None
+    };
     let title = if selecting_enemy {
         "选择敌方队伍"
     } else {
         "选择我方队伍"
     };
-    let instructions = if selecting_enemy {
+    let instructions = if let Some(reason) = pvp_waiting_or_disconnected.as_ref() {
+        format!("联机已取消：{reason}。请返回大厅重新开始。")
+    } else if pvp_locked {
+        "已确认队伍，等待对方选择。确认后不可再修改精灵。".to_string()
+    } else if selecting_enemy {
         format!("选择 1-{} 个精灵组成敌方队伍", rules.max_team_size)
     } else {
         format!("选择 1-{} 个精灵组成我方队伍", rules.max_team_size)
     };
     let confirm_label = match (*entry_mode, selection_state.stage) {
         (SelectionEntryMode::VsAi, _) => "确认选择",
+        (SelectionEntryMode::Pvp, _) if pvp_locked => "等待对方中",
         (SelectionEntryMode::Pvp, _) => "确认并等待对方",
         (SelectionEntryMode::Debug, SelectionStage::Player) => "下一步",
         (SelectionEntryMode::Debug, SelectionStage::Enemy) => "开始调试对战",
@@ -298,8 +347,19 @@ pub fn update_selection_ui_system(
 
         // Apply selection colors immediately, regardless of interaction state
         if is_selected {
-            *bg = BackgroundColor(Color::srgb(0.2, 0.4, 0.6));
-            *border = BorderColor::all(Color::srgb(0.3, 0.6, 0.9));
+            *bg = if pvp_locked {
+                BackgroundColor(Color::srgb(0.14, 0.28, 0.40))
+            } else {
+                BackgroundColor(Color::srgb(0.2, 0.4, 0.6))
+            };
+            *border = if pvp_locked {
+                BorderColor::all(Color::srgb(0.22, 0.42, 0.58))
+            } else {
+                BorderColor::all(Color::srgb(0.3, 0.6, 0.9))
+            };
+        } else if pvp_locked {
+            *bg = BackgroundColor(Color::srgb(0.08, 0.10, 0.14));
+            *border = BorderColor::all(Color::srgb(0.18, 0.22, 0.28));
         } else {
             // Only apply default colors when not hovering/pressing
             if *interaction == Interaction::None {
@@ -312,8 +372,10 @@ pub fn update_selection_ui_system(
     // Update confirm button state
     for (interaction, mut bg, mut border) in &mut confirm_button_query {
         if *interaction == Interaction::None {
-            if selection_state.can_confirm()
+            if !pvp_locked
+                && selection_state.can_confirm()
                 && selection_state.selected_indices.len() <= rules.max_team_size
+                && pvp_waiting_or_disconnected.is_none()
             {
                 *bg = BackgroundColor(theme.button_idle);
                 *border = BorderColor::all(theme.button_border_idle);

@@ -23,12 +23,14 @@ mod team_selection;
 mod ui;
 
 use bevy::prelude::*;
+use bevy_egui::EguiPlugin;
 use game_state::{BattlePhase, GameState};
 
 fn main() {
     // 只在入口组装应用，业务逻辑全部放在各自插件中。
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin::default())
         .init_state::<GameState>()
         .init_state::<BattlePhase>()
         .add_plugins((

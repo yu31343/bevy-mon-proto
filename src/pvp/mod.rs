@@ -10,6 +10,7 @@ use std::{
 };
 
 use bevy::prelude::*;
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -39,7 +40,10 @@ impl Plugin for PvpPlugin {
             .add_systems(Update, pvp_poll_network_system)
             .add_systems(
                 Update,
-                setup_pvp_lobby_ui.run_if(in_state(GameState::PvpLobby)),
+                setup_pvp_lobby_ui.run_if(
+                    in_state(GameState::PvpLobby)
+                        .and(resource_exists::<crate::ui::battle::theme::UiTheme>),
+                ),
             )
             .add_systems(
                 Update,
@@ -47,11 +51,15 @@ impl Plugin for PvpPlugin {
             )
             .add_systems(
                 Update,
-                update_pvp_lobby_ui_system.run_if(in_state(GameState::PvpLobby)),
+                pvp_lobby_button_visual_system.run_if(in_state(GameState::PvpLobby)),
             )
             .add_systems(
                 Update,
-                pvp_connection_input_system.run_if(in_state(GameState::PvpLobby)),
+                update_pvp_lobby_ui_system.run_if(in_state(GameState::PvpLobby)),
+            )
+            .add_systems(
+                EguiPrimaryContextPass,
+                pvp_address_text_box_system.run_if(in_state(GameState::PvpLobby)),
             )
             .add_systems(
                 Update,
@@ -119,15 +127,27 @@ impl Default for PvpConnection {
 pub struct PvpLobbyInput {
     pub address: String,
     pub info: String,
+    pub screen: PvpLobbyScreen,
+    egui_font_registered: bool,
 }
 
 impl Default for PvpLobbyInput {
     fn default() -> Self {
         Self {
             address: format!("127.0.0.1:{DEFAULT_PORT}"),
-            info: "输入对方地址，或点击建房等待连接。".to_string(),
+            info: "选择建房或加入，开始联机对战。".to_string(),
+            screen: PvpLobbyScreen::Menu,
+            egui_font_registered: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PvpLobbyScreen {
+    #[default]
+    Menu,
+    HostRoom,
+    JoinAddress,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -150,6 +170,9 @@ pub struct PvpHostButton;
 pub struct PvpJoinButton;
 
 #[derive(Component)]
+pub struct PvpConfirmJoinButton;
+
+#[derive(Component)]
 pub struct PvpBackButton;
 
 #[derive(Component)]
@@ -157,6 +180,18 @@ pub struct PvpAddressText;
 
 #[derive(Component)]
 pub struct PvpStatusText;
+
+#[derive(Component)]
+pub struct PvpScreenTitleText;
+
+#[derive(Component)]
+pub struct PvpScreenHintText;
+
+#[derive(Component)]
+pub struct PvpRoomInfoText;
+
+#[derive(Component)]
+pub struct PvpLobbyButtonVisual;
 
 #[derive(Debug)]
 enum NetCommand {
@@ -226,7 +261,14 @@ impl PvpConnection {
     }
 
     pub fn stop(&mut self) {
+        self.stop_with_leave(None);
+    }
+
+    pub fn stop_with_leave(&mut self, reason: Option<String>) {
         if let Some(tx) = self.command_tx.take() {
+            if let Some(reason) = reason {
+                let _ = tx.send(NetCommand::Send(PvpMessage::Leave { reason }));
+            }
             let _ = tx.send(NetCommand::Stop);
         }
         self.event_rx = None;
@@ -347,16 +389,34 @@ fn host_thread(command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
         let port = DEFAULT_PORT.saturating_add(offset);
         match TcpListener::bind(("0.0.0.0", port)) {
             Ok(listener) => {
+                let _ = listener.set_nonblocking(true);
                 let _ = event_tx.send(NetEvent::Listening(port));
-                match listener.accept() {
-                    Ok((stream, _)) => run_stream(stream, command_rx, event_tx),
-                    Err(err) => {
-                        let _ = event_tx.send(NetEvent::Failed(format!("接受连接失败：{err}")));
+                loop {
+                    if matches!(command_rx.try_recv(), Ok(NetCommand::Stop)) {
+                        return;
+                    }
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            run_stream(stream, command_rx, event_tx);
+                            return;
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(16));
+                        }
+                        Err(err) => {
+                            let _ = event_tx.send(NetEvent::Failed(format!("接受连接失败：{err}")));
+                            return;
+                        }
                     }
                 }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+                last_error = Some(err.to_string());
+            }
+            Err(err) => {
+                let _ = event_tx.send(NetEvent::Failed(format!("建房失败：{err}")));
                 return;
             }
-            Err(err) => last_error = Some(err.to_string()),
         }
     }
     let reason = last_error.unwrap_or_else(|| "没有可用端口".to_string());
@@ -562,7 +622,8 @@ fn reset_pvp_lobby_ui_state(
 ) {
     connection.local_ip = local_lan_ip();
     if matches!(connection.status, PvpStatus::Idle) {
-        input.info = "输入对方地址，或点击建房等待连接。".to_string();
+        input.info = "选择建房或加入，开始联机对战。".to_string();
+        input.screen = PvpLobbyScreen::Menu;
     }
 }
 
@@ -584,12 +645,14 @@ fn cleanup_pvp_lobby_ui(mut commands: Commands, query: Query<Entity, With<PvpLob
 fn setup_pvp_lobby_ui(
     mut commands: Commands,
     existing: Query<(), With<PvpLobbyUiRoot>>,
+    theme: Res<crate::ui::battle::theme::UiTheme>,
     ui_font: Option<Res<crate::ui::battle::resources::UiFontHandle>>,
 ) {
     if !existing.is_empty() {
         return;
     }
     let title_font = make_text_font(42.0, ui_font.as_deref());
+    let subtitle_font = make_text_font(18.0, ui_font.as_deref());
     let body_font = make_text_font(20.0, ui_font.as_deref());
     let small_font = make_text_font(16.0, ui_font.as_deref());
     commands
@@ -600,37 +663,84 @@ fn setup_pvp_lobby_ui(
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(14.0),
+                row_gap: Val::Px(18.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.06, 0.08, 0.13)),
+            theme.root_background(),
             PvpLobbyUiRoot,
         ))
         .with_children(|root| {
             root.spawn((
                 Text::new("联机对战"),
                 title_font,
-                TextColor(Color::srgb(0.95, 0.96, 1.0)),
+                TextColor(theme.text_primary),
+                theme.title_text_shadow(),
             ));
             root.spawn((
-                Text::new("地址："),
-                body_font.clone(),
-                TextColor(Color::srgb(0.85, 0.88, 0.94)),
-                PvpAddressText,
+                Text::new("选择建房或加入对方房间"),
+                subtitle_font,
+                TextColor(theme.text_secondary),
+                PvpScreenTitleText,
             ));
             root.spawn((
-                Text::new("状态"),
-                small_font.clone(),
-                TextColor(Color::srgb(0.70, 0.75, 0.84)),
-                PvpStatusText,
-            ));
-            spawn_pvp_button(root, "建房", body_font.clone(), PvpHostButton);
-            spawn_pvp_button(root, "加入", body_font.clone(), PvpJoinButton);
-            spawn_pvp_button(root, "返回大厅", body_font, PvpBackButton);
+                Node {
+                    width: Val::Px(520.0),
+                    min_height: Val::Px(220.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(14.0),
+                    padding: UiRect::all(Val::Px(22.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(theme.radius_panel),
+                    ..default()
+                },
+                BackgroundColor(theme.panel),
+                BorderColor::all(theme.border_panel),
+                theme.panel_shadow(),
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new(""),
+                    body_font.clone(),
+                    TextColor(theme.text_primary),
+                    PvpRoomInfoText,
+                ));
+                panel.spawn((
+                    Text::new(""),
+                    body_font.clone(),
+                    TextColor(theme.text_primary),
+                    PvpAddressText,
+                ));
+                panel.spawn((
+                    Text::new(""),
+                    small_font.clone(),
+                    TextColor(theme.text_secondary),
+                    PvpStatusText,
+                ));
+            });
+            root.spawn((Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(12.0),
+                ..default()
+            },))
+                .with_children(|row| {
+                    spawn_pvp_button(row, "建房", body_font.clone(), PvpHostButton, &theme);
+                    spawn_pvp_button(row, "加入", body_font.clone(), PvpJoinButton, &theme);
+                    spawn_pvp_button(
+                        row,
+                        "确认加入",
+                        body_font.clone(),
+                        PvpConfirmJoinButton,
+                        &theme,
+                    );
+                    spawn_pvp_button(row, "返回", body_font, PvpBackButton, &theme);
+                });
             root.spawn((
-                Text::new("可直接键入地址；Enter 等同于加入。"),
+                Text::new(""),
                 small_font,
-                TextColor(Color::srgb(0.55, 0.60, 0.70)),
+                TextColor(theme.text_muted),
+                PvpScreenHintText,
             ));
         });
 }
@@ -640,24 +750,32 @@ fn spawn_pvp_button<T: Component>(
     label: &str,
     font: TextFont,
     marker: T,
+    theme: &crate::ui::battle::theme::UiTheme,
 ) {
     parent
         .spawn((
             Button,
             Node {
-                width: Val::Px(280.0),
+                width: Val::Px(140.0),
                 min_height: Val::Px(50.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(theme.radius_button),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.16, 0.20, 0.30)),
-            BorderColor::all(Color::srgb(0.32, 0.38, 0.50)),
+            BackgroundColor(theme.button_idle),
+            BorderColor::all(theme.button_border_idle),
+            theme.button_shadow(),
             marker,
+            PvpLobbyButtonVisual,
         ))
         .with_children(|button| {
-            button.spawn((Text::new(label.to_string()), font, TextColor(Color::WHITE)));
+            button.spawn((
+                Text::new(label.to_string()),
+                font,
+                TextColor(theme.text_primary),
+            ));
         });
 }
 
@@ -682,6 +800,10 @@ fn make_text_font(
 fn pvp_lobby_button_system(
     mut host_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpHostButton>)>,
     mut join_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpJoinButton>)>,
+    mut confirm_join_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<PvpConfirmJoinButton>),
+    >,
     mut back_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpBackButton>)>,
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
@@ -690,134 +812,247 @@ fn pvp_lobby_button_system(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut host_buttons {
-        if *interaction == Interaction::Pressed {
+        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::Menu {
             reset_session_state(&mut team_state, &mut incoming_intents);
+            input.screen = PvpLobbyScreen::HostRoom;
             input.info = "正在建房...".to_string();
             start_host(&mut connection);
             return;
         }
     }
     for interaction in &mut join_buttons {
-        if *interaction == Interaction::Pressed {
-            let address = input.address.trim().to_string();
-            if valid_address_like(&address) {
-                reset_session_state(&mut team_state, &mut incoming_intents);
-                input.info = format!("正在连接 {address} ...");
-                start_client(&mut connection, address);
-            } else {
-                input.info = "地址格式应为 ip:端口 或 域名:端口。".to_string();
-            }
+        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::Menu {
+            input.screen = PvpLobbyScreen::JoinAddress;
+            input.info = "输入对方 IP 或域名与端口，然后点击确认加入。".to_string();
+            return;
+        }
+    }
+    for interaction in &mut confirm_join_buttons {
+        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::JoinAddress {
+            submit_join_address(
+                &mut input,
+                &mut connection,
+                &mut team_state,
+                &mut incoming_intents,
+            );
             return;
         }
     }
     for interaction in &mut back_buttons {
         if *interaction == Interaction::Pressed {
-            connection.stop();
-            reset_session_state(&mut team_state, &mut incoming_intents);
-            connection.status = PvpStatus::Idle;
-            next_state.set(GameState::Lobby);
+            if input.screen != PvpLobbyScreen::Menu {
+                connection.stop_with_leave(Some("对方已返回联机菜单，房间已关闭。".to_string()));
+                reset_session_state(&mut team_state, &mut incoming_intents);
+                connection.status = PvpStatus::Idle;
+                input.screen = PvpLobbyScreen::Menu;
+                input.info = "选择建房或加入，开始联机对战。".to_string();
+            } else {
+                connection.stop_with_leave(Some("对方已返回大厅，联机已取消。".to_string()));
+                reset_session_state(&mut team_state, &mut incoming_intents);
+                connection.status = PvpStatus::Idle;
+                next_state.set(GameState::Lobby);
+            }
             return;
         }
+    }
+}
+
+fn submit_join_address(
+    input: &mut PvpLobbyInput,
+    connection: &mut PvpConnection,
+    team_state: &mut PvpTeamState,
+    incoming_intents: &mut PvpIncomingIntents,
+) {
+    let address = input.address.trim().to_string();
+    if valid_address_like(&address) {
+        reset_session_state(team_state, incoming_intents);
+        input.info = format!("正在连接 {address} ...");
+        start_client(connection, address);
+    } else {
+        input.info = "地址格式应为 ip:端口 或 域名:端口。".to_string();
     }
 }
 
 fn update_pvp_lobby_ui_system(
     connection: Res<PvpConnection>,
     input: Res<PvpLobbyInput>,
-    mut address_text: Query<&mut Text, (With<PvpAddressText>, Without<PvpStatusText>)>,
-    mut status_text: Query<&mut Text, (With<PvpStatusText>, Without<PvpAddressText>)>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<PvpScreenTitleText>>,
+        Query<&mut Text, With<PvpScreenHintText>>,
+        Query<&mut Text, With<PvpRoomInfoText>>,
+        Query<&mut Text, With<PvpAddressText>>,
+        Query<&mut Text, With<PvpStatusText>>,
+    )>,
 ) {
-    for mut text in &mut address_text {
-        **text = format!("对方地址：{}", input.address);
+    let (title, hint, room, address_label) = match input.screen {
+        PvpLobbyScreen::Menu => (
+            "选择联机方式",
+            "建房会显示房间地址；加入会进入地址输入界面。",
+            format!("本机局域网 IP：{}", connection.local_ip),
+            "等待选择".to_string(),
+        ),
+        PvpLobbyScreen::HostRoom => {
+            let address = match connection.status {
+                PvpStatus::Hosting { port } => format!("{}:{port}", connection.local_ip),
+                _ => format!("{}:{DEFAULT_PORT}", connection.local_ip),
+            };
+            (
+                "房间信息",
+                "把房间地址发给对方；连接成功后会自动进入配队。",
+                "已建房，等待对方加入".to_string(),
+                address,
+            )
+        }
+        PvpLobbyScreen::JoinAddress => (
+            "加入房间",
+            "输入示例：127.0.0.1:42043；输入框支持鼠标选中、光标移动和复制粘贴。",
+            "对方地址".to_string(),
+            "".to_string(),
+        ),
+    };
+    for mut text in &mut texts.p0() {
+        **text = title.to_string();
+    }
+    for mut text in &mut texts.p1() {
+        **text = hint.to_string();
+    }
+    for mut text in &mut texts.p2() {
+        **text = room.clone();
+    }
+    for mut text in &mut texts.p3() {
+        **text = address_label.clone();
     }
     let status = match &connection.status {
-        PvpStatus::Idle => format!("本机局域网 IP：{}。{}", connection.local_ip, input.info),
-        PvpStatus::Hosting { port } => format!(
-            "本机局域网 IP：{}，端口：{}。{}",
-            connection.local_ip, port, input.info
-        ),
+        PvpStatus::Idle => input.info.clone(),
+        PvpStatus::Hosting { port } => format!("端口：{port}。{}", input.info),
         PvpStatus::Connecting => input.info.clone(),
         PvpStatus::Connected => input.info.clone(),
         PvpStatus::Failed(reason) => reason.clone(),
         PvpStatus::Disconnected(reason) => reason.clone(),
     };
-    for mut text in &mut status_text {
+    for mut text in &mut texts.p4() {
         **text = status.clone();
     }
 }
 
-fn pvp_connection_input_system(
-    keyboard: Res<ButtonInput<KeyCode>>,
+fn pvp_lobby_button_visual_system(
+    theme: Res<crate::ui::battle::theme::UiTheme>,
+    input: Res<PvpLobbyInput>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &mut Visibility,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Option<&PvpHostButton>,
+            Option<&PvpJoinButton>,
+            Option<&PvpConfirmJoinButton>,
+            Option<&PvpBackButton>,
+        ),
+        With<PvpLobbyButtonVisual>,
+    >,
+) {
+    for (interaction, mut visibility, mut bg, mut border, host, join, confirm, _back) in
+        &mut buttons
+    {
+        let hidden = match input.screen {
+            PvpLobbyScreen::Menu => confirm.is_some(),
+            PvpLobbyScreen::HostRoom => host.is_some() || join.is_some() || confirm.is_some(),
+            PvpLobbyScreen::JoinAddress => host.is_some() || join.is_some(),
+        };
+        *visibility = if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
+        if hidden {
+            continue;
+        }
+        *bg = match *interaction {
+            Interaction::Pressed => BackgroundColor(theme.button_pressed),
+            Interaction::Hovered => BackgroundColor(theme.button_hover),
+            Interaction::None => BackgroundColor(theme.button_idle),
+        };
+        *border = match *interaction {
+            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+            Interaction::None => BorderColor::all(theme.button_border_idle),
+        };
+    }
+}
+
+fn pvp_address_text_box_system(
+    mut contexts: EguiContexts,
     mut input: ResMut<PvpLobbyInput>,
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
-) {
-    if keyboard.just_pressed(KeyCode::Backspace) {
-        input.address.pop();
+) -> Result {
+    if input.screen != PvpLobbyScreen::JoinAddress {
+        return Ok(());
     }
-    if keyboard.just_pressed(KeyCode::Space) {
-        input.address.push(' ');
-    }
-    for (key, ch) in address_key_map() {
-        if keyboard.just_pressed(key) {
-            input.address.push(ch);
-        }
-    }
-    if keyboard.just_pressed(KeyCode::Enter) {
-        let address = input.address.trim().to_string();
-        if valid_address_like(&address) {
-            reset_session_state(&mut team_state, &mut incoming_intents);
-            input.info = format!("正在连接 {address} ...");
-            start_client(&mut connection, address);
-        } else {
-            input.info = "地址格式应为 ip:端口 或 域名:端口。".to_string();
-        }
-    }
+    let ctx = contexts.ctx_mut()?;
+    register_egui_cjk_font(ctx, &mut input);
+    egui::Area::new(egui::Id::new("pvp_address_text_box"))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 3.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let mut style = (*ctx.style()).clone();
+            style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(20, 36, 61);
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(77, 140, 209, 180),
+            );
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(115, 184, 245, 230),
+            );
+            ui.set_style(style);
+            ui.set_width(360.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut input.address)
+                    .hint_text("ip/域名:端口")
+                    .desired_width(360.0)
+                    .font(egui::TextStyle::Heading),
+            );
+            response.request_focus();
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                submit_join_address(
+                    &mut input,
+                    &mut connection,
+                    &mut team_state,
+                    &mut incoming_intents,
+                );
+            }
+        });
+    Ok(())
 }
 
-fn address_key_map() -> [(KeyCode, char); 39] {
-    [
-        (KeyCode::Digit0, '0'),
-        (KeyCode::Digit1, '1'),
-        (KeyCode::Digit2, '2'),
-        (KeyCode::Digit3, '3'),
-        (KeyCode::Digit4, '4'),
-        (KeyCode::Digit5, '5'),
-        (KeyCode::Digit6, '6'),
-        (KeyCode::Digit7, '7'),
-        (KeyCode::Digit8, '8'),
-        (KeyCode::Digit9, '9'),
-        (KeyCode::Numpad0, '0'),
-        (KeyCode::Numpad1, '1'),
-        (KeyCode::Numpad2, '2'),
-        (KeyCode::Numpad3, '3'),
-        (KeyCode::Numpad4, '4'),
-        (KeyCode::Numpad5, '5'),
-        (KeyCode::Numpad6, '6'),
-        (KeyCode::Numpad7, '7'),
-        (KeyCode::Numpad8, '8'),
-        (KeyCode::Numpad9, '9'),
-        (KeyCode::Period, '.'),
-        (KeyCode::NumpadDecimal, '.'),
-        (KeyCode::Minus, '-'),
-        (KeyCode::KeyA, 'a'),
-        (KeyCode::KeyB, 'b'),
-        (KeyCode::KeyC, 'c'),
-        (KeyCode::KeyD, 'd'),
-        (KeyCode::KeyE, 'e'),
-        (KeyCode::KeyF, 'f'),
-        (KeyCode::KeyG, 'g'),
-        (KeyCode::KeyH, 'h'),
-        (KeyCode::KeyI, 'i'),
-        (KeyCode::KeyJ, 'j'),
-        (KeyCode::KeyK, 'k'),
-        (KeyCode::KeyL, 'l'),
-        (KeyCode::KeyM, 'm'),
-        (KeyCode::KeyN, 'n'),
-        (KeyCode::KeyO, 'o'),
-        (KeyCode::KeyP, 'p'),
-    ]
+fn register_egui_cjk_font(ctx: &egui::Context, input: &mut PvpLobbyInput) {
+    if input.egui_font_registered {
+        return;
+    }
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "cjk".to_string(),
+        egui::FontData::from_static(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/embedded_ui_font.bin"
+        )))
+        .into(),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "cjk".to_string());
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "cjk".to_string());
+    ctx.set_fonts(fonts);
+    input.egui_font_registered = true;
 }
 
 fn valid_address_like(address: &str) -> bool {
@@ -909,6 +1144,7 @@ fn pvp_poll_network_system(
                     connection.status = PvpStatus::Disconnected("对方已撤退/战斗中止".to_string());
                 }
                 PvpMessage::Leave { reason } => {
+                    input.info = reason.clone();
                     connection.status = PvpStatus::Disconnected(reason);
                 }
                 PvpMessage::Ping { .. } | PvpMessage::Pong { .. } => {}
