@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, ElementAura,
-        EnemyTeam, Hand, InBattle, PendingBoosts, PlayerTeam, PvpTurnOrder, RoundOrder,
-        SelectedCards, Side, Stats, StatusBoard, StatusInstance, TurnAction, TurnContext,
-        TurnCount, push_battle_line, transfer_status_by_id,
+        EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
+        RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
+        TurnContext, TurnCount, push_battle_line, transfer_status_by_id,
     },
     data::{
         BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardEffect, CardId,
@@ -43,6 +43,8 @@ impl Plugin for PvpPlugin {
             .init_resource::<PvpIncomingIntents>()
             .init_resource::<PvpIncomingSnapshots>()
             .init_resource::<PvpIncomingFeedbacks>()
+            .init_resource::<PvpPendingLocalIntent>()
+            .init_resource::<PvpLastRemoteIntentSeq>()
             .add_systems(Update, pvp_poll_network_system)
             .add_systems(
                 Update,
@@ -167,13 +169,19 @@ pub struct PvpTeamState {
 }
 
 #[derive(Resource, Debug, Default)]
-pub struct PvpIncomingIntents(pub Vec<BattleIntent>);
+pub struct PvpIncomingIntents(pub Vec<(u32, BattleIntent)>);
 
 #[derive(Resource, Debug, Default)]
 struct PvpIncomingSnapshots(Vec<PvpBattleSnapshot>);
 
 #[derive(Resource, Debug, Default)]
 struct PvpIncomingFeedbacks(Vec<PvpBattleFeedback>);
+
+#[derive(Resource, Debug, Default)]
+pub struct PvpPendingLocalIntent(pub Option<u32>);
+
+#[derive(Resource, Debug, Default)]
+pub struct PvpLastRemoteIntentSeq(pub u32);
 
 #[derive(Component)]
 pub struct PvpLobbyUiRoot;
@@ -239,7 +247,7 @@ enum PvpMessage {
     BattleReady {
         seed: u64,
     },
-    BattleSnapshot(PvpBattleSnapshot),
+    BattleSnapshot(Box<PvpBattleSnapshot>),
     BattleFeedback(PvpBattleFeedback),
     Intent {
         seq: u32,
@@ -318,6 +326,8 @@ struct PvpBattleSnapshot {
     enemy_active_index: usize,
     player_hp: Vec<i32>,
     enemy_hp: Vec<i32>,
+    player_shields: Vec<i32>,
+    enemy_shields: Vec<i32>,
     player_auras: Vec<[Option<crate::data::ElementType>; 2]>,
     enemy_auras: Vec<[Option<crate::data::ElementType>; 2]>,
     player_statuses: Vec<Vec<StatusInstance>>,
@@ -326,6 +336,7 @@ struct PvpBattleSnapshot {
     enemy_ap: i32,
     player_hand: Vec<CardId>,
     enemy_hand: Vec<CardId>,
+    acknowledged_intent_seq: u32,
     player_defeated: bool,
     enemy_defeated: bool,
     result_message: Option<String>,
@@ -408,6 +419,15 @@ pub fn send_intent(connection: &mut PvpConnection, intent: BattleIntent) {
         seq: connection.seq,
         intent,
     });
+}
+
+pub fn send_local_intent(
+    connection: &mut PvpConnection,
+    pending: &mut PvpPendingLocalIntent,
+    intent: BattleIntent,
+) {
+    send_intent(connection, intent);
+    pending.0 = Some(connection.seq);
 }
 
 pub fn surrender(connection: &PvpConnection) {
@@ -1287,9 +1307,9 @@ fn pvp_poll_network_system(
                     team_state.remote_indices = Some(monster_indices);
                 }
                 PvpMessage::BattleReady { .. } => {}
-                PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(snapshot),
+                PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(*snapshot),
                 PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
-                PvpMessage::Intent { intent, .. } => incoming_intents.0.push(intent),
+                PvpMessage::Intent { seq, intent } => incoming_intents.0.push((seq, intent)),
                 PvpMessage::Surrender => {
                     connection.status = PvpStatus::Disconnected("对方已撤退/战斗中止".to_string());
                 }
@@ -1356,6 +1376,13 @@ fn team_hp(team: &crate::battle::Team, query: &Query<&Stats, With<InBattle>>) ->
         .collect()
 }
 
+fn team_shields(team: &crate::battle::Team, query: &Query<&Shield, With<InBattle>>) -> Vec<i32> {
+    team.combatants
+        .iter()
+        .map(|&entity| query.get(entity).map(|shield| shield.0).unwrap_or(0))
+        .collect()
+}
+
 fn team_auras(
     team: &crate::battle::Team,
     query: &Query<&ElementAura, With<InBattle>>,
@@ -1389,6 +1416,18 @@ fn apply_team_hp(
     for (&entity, hp) in team.combatants.iter().zip(hp_values.iter().copied()) {
         if let Ok(mut stats) = query.get_mut(entity) {
             stats.hp = hp.clamp(0, stats.max_hp);
+        }
+    }
+}
+
+fn apply_team_shields(
+    team: &crate::battle::Team,
+    shield_values: &[i32],
+    query: &mut Query<&mut Shield, With<InBattle>>,
+) {
+    for (&entity, shield) in team.combatants.iter().zip(shield_values.iter().copied()) {
+        if let Ok(mut shield_value) = query.get_mut(entity) {
+            shield_value.0 = shield.max(0);
         }
     }
 }
@@ -1505,18 +1544,7 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
 }
 
 fn should_replay_pvp_feedback_on_client(feedback: &PvpBattleFeedback) -> bool {
-    match feedback {
-        PvpBattleFeedback::TurnStarted(_) => false,
-        PvpBattleFeedback::CardUsed { side, .. }
-        | PvpBattleFeedback::CardDiscarded { side, .. }
-        | PvpBattleFeedback::SkillUsed { side, .. }
-        | PvpBattleFeedback::ShieldAbsorbed { side, .. }
-        | PvpBattleFeedback::Healed { side, .. }
-        | PvpBattleFeedback::ShieldGained { side, .. }
-        | PvpBattleFeedback::Switched { side, .. } => *side == Side::Player,
-        PvpBattleFeedback::DamageDealt { source, .. }
-        | PvpBattleFeedback::AttackMissed { source, .. } => *source == Side::Player,
-    }
+    !matches!(feedback, PvpBattleFeedback::TurnStarted(_))
 }
 
 fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
@@ -1573,6 +1601,7 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
 
 fn pvp_send_host_snapshot_system(
     connection: Res<PvpConnection>,
+    last_remote_intent_seq: Res<PvpLastRemoteIntentSeq>,
     battle_mode: Res<BattleControlMode>,
     game_state: Res<State<GameState>>,
     battle_phase: Res<State<BattlePhase>>,
@@ -1584,6 +1613,7 @@ fn pvp_send_host_snapshot_system(
     action_points: Res<ActionPoints>,
     battle_result: Res<BattleResult>,
     stats_query: Query<&Stats, With<InBattle>>,
+    shield_query: Query<&Shield, With<InBattle>>,
     aura_query: Query<&ElementAura, With<InBattle>>,
     status_query: Query<&StatusBoard, With<InBattle>>,
 ) {
@@ -1598,13 +1628,15 @@ fn pvp_send_host_snapshot_system(
     };
     let player_hp = team_hp(&player_team.0, &stats_query);
     let enemy_hp = team_hp(&enemy_team.0, &stats_query);
+    let player_shields = team_shields(&player_team.0, &shield_query);
+    let enemy_shields = team_shields(&enemy_team.0, &shield_query);
     let player_auras = team_auras(&player_team.0, &aura_query);
     let enemy_auras = team_auras(&enemy_team.0, &aura_query);
     let player_statuses = team_statuses(&player_team.0, &status_query);
     let enemy_statuses = team_statuses(&enemy_team.0, &status_query);
     let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
     let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
-    connection.send(PvpMessage::BattleSnapshot(PvpBattleSnapshot {
+    connection.send(PvpMessage::BattleSnapshot(Box::new(PvpBattleSnapshot {
         turn: turn_count.0,
         phase: *battle_phase.get(),
         first_side: round_order.first,
@@ -1612,6 +1644,8 @@ fn pvp_send_host_snapshot_system(
         enemy_active_index: player_team.0.active_index,
         player_hp: enemy_hp,
         enemy_hp: player_hp,
+        player_shields: enemy_shields,
+        enemy_shields: player_shields,
         player_auras: enemy_auras,
         enemy_auras: player_auras,
         player_statuses: enemy_statuses,
@@ -1620,17 +1654,19 @@ fn pvp_send_host_snapshot_system(
         enemy_ap: action_points.player,
         player_hand: hand.enemy.clone(),
         enemy_hand: hand.player.clone(),
+        acknowledged_intent_seq: last_remote_intent_seq.0,
         player_defeated: host_enemy_defeated,
         enemy_defeated: host_player_defeated,
         result_message: (!battle_result.message.is_empty())
             .then(|| mirror_result_message(&battle_result.message)),
-    }));
+    })));
 }
 
 #[derive(SystemParam)]
 struct PvpApplySnapshotResources<'w> {
     incoming: ResMut<'w, PvpIncomingSnapshots>,
     incoming_feedbacks: ResMut<'w, PvpIncomingFeedbacks>,
+    pending_local_intent: ResMut<'w, PvpPendingLocalIntent>,
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
     player_team: Option<ResMut<'w, PlayerTeam>>,
@@ -1638,6 +1674,7 @@ struct PvpApplySnapshotResources<'w> {
     hand: ResMut<'w, Hand>,
     action_points: ResMut<'w, ActionPoints>,
     battle_result: ResMut<'w, BattleResult>,
+    pending_ko: ResMut<'w, PendingKoResolution>,
     next_phase: ResMut<'w, NextState<BattlePhase>>,
     next_state: ResMut<'w, NextState<GameState>>,
 }
@@ -1648,6 +1685,7 @@ fn pvp_apply_host_snapshot_system(
     battle_mode: Res<BattleControlMode>,
     battle_phase: Res<State<BattlePhase>>,
     mut stats_query: Query<&mut Stats, With<InBattle>>,
+    mut shield_query: Query<&mut Shield, With<InBattle>>,
     mut aura_query: Query<&mut ElementAura, With<InBattle>>,
     mut status_query: Query<&mut StatusBoard, With<InBattle>>,
     mut event_writer: MessageWriter<BattleEvent>,
@@ -1673,12 +1711,25 @@ fn pvp_apply_host_snapshot_system(
     };
     runtime.action_points.player = snapshot.player_ap;
     runtime.action_points.enemy = snapshot.enemy_ap;
+    if runtime
+        .pending_local_intent
+        .0
+        .is_some_and(|seq| snapshot.acknowledged_intent_seq >= seq)
+    {
+        runtime.pending_local_intent.0 = None;
+    }
+    runtime.pending_ko.timer.reset();
+    runtime.pending_ko.player_switch_index = None;
+    runtime.pending_ko.enemy_switch_index = None;
+    runtime.pending_ko.player_defeated = snapshot.player_defeated;
+    runtime.pending_ko.enemy_defeated = snapshot.enemy_defeated;
 
     if let Some(player_team) = runtime.player_team.as_mut() {
         player_team.0.active_index = snapshot
             .player_active_index
             .min(player_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&player_team.0, &snapshot.player_hp, &mut stats_query);
+        apply_team_shields(&player_team.0, &snapshot.player_shields, &mut shield_query);
         apply_team_auras(&player_team.0, &snapshot.player_auras, &mut aura_query);
         apply_team_statuses(&player_team.0, &snapshot.player_statuses, &mut status_query);
     }
@@ -1687,6 +1738,7 @@ fn pvp_apply_host_snapshot_system(
             .enemy_active_index
             .min(enemy_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&enemy_team.0, &snapshot.enemy_hp, &mut stats_query);
+        apply_team_shields(&enemy_team.0, &snapshot.enemy_shields, &mut shield_query);
         apply_team_auras(&enemy_team.0, &snapshot.enemy_auras, &mut aura_query);
         apply_team_statuses(&enemy_team.0, &snapshot.enemy_statuses, &mut status_query);
     }
@@ -1699,15 +1751,6 @@ fn pvp_apply_host_snapshot_system(
 
     if let Some(message) = snapshot.result_message {
         runtime.battle_result.message = message;
-        runtime.next_state.set(GameState::Result);
-    } else if snapshot.player_defeated || snapshot.enemy_defeated {
-        runtime.battle_result.message = if snapshot.player_defeated && snapshot.enemy_defeated {
-            "平局！按 R 返回大厅。".to_string()
-        } else if snapshot.enemy_defeated {
-            "胜利！全歼敌方。按 R 返回大厅。".to_string()
-        } else {
-            "失败！队伍全灭。按 R 返回大厅。".to_string()
-        };
         runtime.next_state.set(GameState::Result);
     } else {
         let mirrored_phase = host_phase_for_local_phase(snapshot.phase);
@@ -1727,6 +1770,7 @@ fn host_phase_for_local_phase(phase: BattlePhase) -> BattlePhase {
 
 fn pvp_apply_remote_intents_system(
     mut incoming: ResMut<PvpIncomingIntents>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
     connection: Res<PvpConnection>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
@@ -1747,10 +1791,11 @@ fn pvp_apply_remote_intents_system(
     {
         return;
     }
-    let Some(intent) = incoming.0.first().cloned() else {
+    let Some((seq, intent)) = incoming.0.first().cloned() else {
         return;
     };
     incoming.0.remove(0);
+    last_remote_intent_seq.0 = last_remote_intent_seq.0.max(seq);
     match intent {
         BattleIntent::UseSkill { slot } => {
             let Some(enemy_team) = enemy_team.as_ref() else {

@@ -8,6 +8,7 @@ use crate::{
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
+    pvp::{PvpConnection, PvpRole},
 };
 
 fn hand_names(hand: &[crate::data::CardId], dbs: &BattleDbs) -> String {
@@ -185,11 +186,20 @@ pub fn round_start_system(
 pub fn sync_ui_control_side_system(
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
+    pvp_connection: Option<Res<PvpConnection>>,
     mut ui_control_side: ResMut<UiControlSide>,
 ) {
     ui_control_side.0 = match *battle_phase.get() {
         BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::DebugPlayerControlsBoth => {
             Side::Enemy
+        }
+        BattlePhase::EnemyTurn
+            if *battle_mode == BattleControlMode::PlayerVsRemote
+                && pvp_connection
+                    .as_ref()
+                    .is_some_and(|connection| connection.role == Some(PvpRole::Client)) =>
+        {
+            Side::Player
         }
         _ => Side::Player,
     };

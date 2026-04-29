@@ -50,18 +50,28 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     selected: ResMut<'w, SelectedCards>,
     battle_mode: Res<'w, BattleControlMode>,
     pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+    pvp_pending_intent: Option<ResMut<'w, pvp::PvpPendingLocalIntent>>,
 }
 
 fn send_pvp_intent(
     battle_mode: &BattleControlMode,
     connection: &mut Option<ResMut<pvp::PvpConnection>>,
+    pending_intent: &mut Option<ResMut<pvp::PvpPendingLocalIntent>>,
     intent: pvp::BattleIntent,
-) {
-    if *battle_mode == BattleControlMode::PlayerVsRemote
-        && let Some(connection) = connection.as_mut()
-    {
-        pvp::send_intent(connection, intent);
+) -> bool {
+    if *battle_mode != BattleControlMode::PlayerVsRemote {
+        return false;
     }
+    let Some(connection) = connection.as_mut() else {
+        return false;
+    };
+    if connection.role != Some(pvp::PvpRole::Client) {
+        return false;
+    }
+    if let Some(pending_intent) = pending_intent.as_mut() {
+        pvp::send_local_intent(connection, pending_intent, intent);
+    }
+    true
 }
 
 fn finalize_player_turn(
@@ -157,6 +167,13 @@ pub fn player_turn_input_system(
     let selected = &mut runtime.selected;
     let battle_mode = &runtime.battle_mode;
     let pvp_connection = &mut runtime.pvp_connection;
+    let pvp_pending_intent = &mut runtime.pvp_pending_intent;
+
+    if pvp_pending_intent.as_ref().is_some_and(|pending| {
+        pending.0.is_some() && **battle_mode == BattleControlMode::PlayerVsRemote
+    }) {
+        return;
+    }
 
     if turn_ctx.player_ended {
         return;
@@ -216,6 +233,14 @@ pub fn player_turn_input_system(
             ) = query.get_many_mut([current_entity, target_entity])
             {
                 if target_stats.hp > 0 {
+                    if send_pvp_intent(
+                        battle_mode,
+                        pvp_connection,
+                        pvp_pending_intent,
+                        pvp::BattleIntent::Switch { target_index },
+                    ) {
+                        return;
+                    }
                     transfer_status_by_id(
                         &mut current_statuses,
                         &mut current_stats,
@@ -225,11 +250,6 @@ pub fn player_turn_input_system(
                     );
                     action_points.player -= 1;
                     player_team.0.active_index = target_index;
-                    send_pvp_intent(
-                        battle_mode,
-                        pvp_connection,
-                        pvp::BattleIntent::Switch { target_index },
-                    );
                     writers.event_writer.write(BattleEvent::Switched {
                         side: Side::Player,
                         name: name.to_string(),
@@ -282,11 +302,15 @@ pub fn player_turn_input_system(
             return;
         }
 
-        send_pvp_intent(
+        if send_pvp_intent(
             battle_mode,
             pvp_connection,
+            pvp_pending_intent,
             pvp::BattleIntent::UseSkill { slot },
-        );
+        ) {
+            turn_ctx.player_action = None;
+            return;
+        }
         action_points.player -= cost;
         turn_ctx.player_action = None;
 
@@ -625,7 +649,15 @@ pub fn player_turn_input_system(
     }
 
     if turn_ctx.player_end_requested {
-        send_pvp_intent(battle_mode, pvp_connection, pvp::BattleIntent::EndTurn);
+        if send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp_pending_intent,
+            pvp::BattleIntent::EndTurn,
+        ) {
+            turn_ctx.player_end_requested = false;
+            return;
+        }
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -665,15 +697,20 @@ pub fn player_turn_input_system(
             selected.player.discard_armed = !selected.player.discard_armed;
             return;
         };
-        let card_id = hand.player.remove(target_index);
-        action_points.player += 1;
-        send_pvp_intent(
+        if send_pvp_intent(
             battle_mode,
             pvp_connection,
+            pvp_pending_intent,
             pvp::BattleIntent::DiscardCard {
                 card_index: target_index,
             },
-        );
+        ) {
+            selected.player.index = None;
+            selected.player.discard_armed = false;
+            return;
+        }
+        let card_id = hand.player.remove(target_index);
+        action_points.player += 1;
         let card_name = dbs
             .cards
             .get(&card_id)
@@ -720,13 +757,18 @@ pub fn player_turn_input_system(
             }
             // 若已武装弃牌模式（由点击"弃牌"按钮触发），直接弃置该牌
             if selected.player.discard_armed {
-                let card_id = hand.player.remove(idx);
-                action_points.player += 1;
-                send_pvp_intent(
+                if send_pvp_intent(
                     battle_mode,
                     pvp_connection,
+                    pvp_pending_intent,
                     pvp::BattleIntent::DiscardCard { card_index: idx },
-                );
+                ) {
+                    selected.player.index = None;
+                    selected.player.discard_armed = false;
+                    return;
+                }
+                let card_id = hand.player.remove(idx);
+                action_points.player += 1;
                 let card_name = dbs
                     .cards
                     .get(&card_id)
@@ -766,13 +808,18 @@ pub fn player_turn_input_system(
             let card_id = hand.player[idx];
             if let Some(card) = dbs.cards.get(&card_id) {
                 if action_points.player >= card.cost_ap {
-                    hand.player.remove(idx);
-                    action_points.player -= card.cost_ap;
-                    send_pvp_intent(
+                    if send_pvp_intent(
                         battle_mode,
                         pvp_connection,
+                        pvp_pending_intent,
                         pvp::BattleIntent::UseCard { card_index: idx },
-                    );
+                    ) {
+                        selected.player.index = None;
+                        selected.player.discard_armed = false;
+                        return;
+                    }
+                    hand.player.remove(idx);
+                    action_points.player -= card.cost_ap;
 
                     let card_name = card.name.to_string();
                     writers.event_writer.write(BattleEvent::CardUsed {
@@ -872,12 +919,15 @@ pub fn player_turn_input_system(
         return;
     }
 
-    action_points.player -= cost;
-    send_pvp_intent(
+    if send_pvp_intent(
         battle_mode,
         pvp_connection,
+        pvp_pending_intent,
         pvp::BattleIntent::UseSkill { slot: skill_slot },
-    );
+    ) {
+        return;
+    }
+    action_points.player -= cost;
 
     // 事件：技能使用（用于 UI 闪白）。
     writers.event_writer.write(BattleEvent::SkillUsed {
