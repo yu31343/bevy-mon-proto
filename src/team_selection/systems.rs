@@ -5,7 +5,7 @@ use crate::{
     battle::BattleControlMode,
     data::{BattleRules, MonsterPool, TeamSelections},
     game_state::GameState,
-    pvp::{PvpConnection, PvpTeamState, submit_local_team},
+    pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
     team_selection::{
         BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
@@ -159,6 +159,9 @@ pub fn button_back_to_lobby_system(
     entry_mode: Res<SelectionEntryMode>,
     mut selection_state: ResMut<SelectionState>,
     mut next_state: ResMut<NextState<GameState>>,
+    mut pvp_connection: Option<ResMut<PvpConnection>>,
+    mut pvp_team_state: Option<ResMut<PvpTeamState>>,
+    mut pvp_incoming_intents: Option<ResMut<PvpIncomingIntents>>,
 ) {
     for interaction in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -171,6 +174,18 @@ pub fn button_back_to_lobby_system(
             selection_state.selected_indices = selection_state.player_indices.clone();
             selection_state.player_indices.clear();
             continue;
+        }
+        if *entry_mode == SelectionEntryMode::Pvp {
+            if let Some(connection) = pvp_connection.as_mut() {
+                connection.stop();
+                connection.status = PvpStatus::Idle;
+            }
+            if let Some(team_state) = pvp_team_state.as_mut() {
+                **team_state = PvpTeamState::default();
+            }
+            if let Some(incoming_intents) = pvp_incoming_intents.as_mut() {
+                incoming_intents.0.clear();
+            }
         }
         next_state.set(GameState::Lobby);
     }

@@ -413,6 +413,11 @@ pub enum BattleControlMode {
     PlayerVsRemote,
 }
 
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PvpTurnOrder {
+    pub local_first: bool,
+}
+
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct UiControlSide(pub Side);
 

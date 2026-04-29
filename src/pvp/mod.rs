@@ -1,6 +1,4 @@
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     io::{Read, Write},
     net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     sync::{
@@ -16,11 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        BattleControlMode, BattleEvent, BattleLog, BattleResult, Hand, PendingBoosts,
-        SelectedCards, Side, TurnAction, TurnContext, push_battle_line,
+        BattleControlMode, BattleEvent, BattleLog, BattleResult, Hand, PendingBoosts, PvpTurnOrder,
+        SelectedCards, Side, Stats, StatusBoard, TurnAction, TurnContext, push_battle_line,
+        transfer_status_by_id,
     },
-    data::{BattleDbs, CardEffect, MonsterPool, TeamSelections},
-    game_state::GameState,
+    data::{BattleDbs, CardDef, CardEffect, MonsterPool, SkillDef, TeamSelections},
+    game_state::{BattlePhase, GameState},
 };
 
 const DEFAULT_PORT: u16 = 42043;
@@ -246,6 +245,7 @@ pub fn start_host(connection: &mut PvpConnection) {
     connection.status = PvpStatus::Hosting { port: DEFAULT_PORT };
     connection.command_tx = Some(command_tx);
     connection.event_rx = Some(Mutex::new(event_rx));
+    connection.seq = 0;
     connection.protocol_ready = false;
     connection.remote_data_hash = None;
 }
@@ -259,6 +259,7 @@ pub fn start_client(connection: &mut PvpConnection, address: String) {
     connection.status = PvpStatus::Connecting;
     connection.command_tx = Some(command_tx);
     connection.event_rx = Some(Mutex::new(event_rx));
+    connection.seq = 0;
     connection.protocol_ready = false;
     connection.remote_data_hash = None;
 }
@@ -290,11 +291,54 @@ pub fn surrender(connection: &PvpConnection) {
 }
 
 pub fn data_hash(dbs: &BattleDbs, monsters: &MonsterPool) -> String {
-    let mut hasher = DefaultHasher::new();
-    format!("{:?}", dbs.skills.keys().collect::<Vec<_>>()).hash(&mut hasher);
-    format!("{:?}", dbs.cards.keys().collect::<Vec<_>>()).hash(&mut hasher);
-    format!("{:?}", monsters.monsters).hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut parts = Vec::new();
+
+    let mut skills = dbs.skills.values().collect::<Vec<_>>();
+    skills.sort_by_key(|skill| format!("{:?}", skill.id));
+    for skill in skills {
+        parts.push(skill_hash_part(skill));
+    }
+
+    let mut cards = dbs.cards.values().collect::<Vec<_>>();
+    cards.sort_by_key(|card| format!("{:?}", card.id));
+    for card in cards {
+        parts.push(card_hash_part(card));
+    }
+
+    for (index, monster) in monsters.monsters.iter().enumerate() {
+        parts.push(format!("monster:{index}:{monster:?}"));
+    }
+
+    stable_hash(&parts.join("\n"))
+}
+
+fn skill_hash_part(skill: &SkillDef) -> String {
+    format!(
+        "skill:{:?}:{}:{:?}:{}:{:?}:{:?}:{:?}",
+        skill.id,
+        skill.name,
+        skill.category,
+        skill.cost_ap,
+        skill.effect,
+        skill.element,
+        skill.base_accuracy
+    )
+}
+
+fn card_hash_part(card: &CardDef) -> String {
+    format!(
+        "card:{:?}:{}:{}:{:?}",
+        card.id, card.name, card.cost_ap, card.effect
+    )
+}
+
+fn stable_hash(input: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn host_thread(command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
@@ -352,6 +396,7 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
     let mut last_rx = Instant::now();
     let mut last_ping = Instant::now();
     let mut nonce = 0_u64;
+    let mut read_buffer = Vec::new();
 
     loop {
         while let Ok(command) = command_rx.try_recv() {
@@ -374,20 +419,23 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
             }
         }
 
-        match read_message(&mut stream) {
-            Ok(Some(message)) => {
-                last_rx = Instant::now();
-                match message {
-                    PvpMessage::Ping { nonce } => {
-                        let _ = write_message(&mut stream, &PvpMessage::Pong { nonce });
-                    }
-                    PvpMessage::Pong { .. } => {}
-                    other => {
-                        let _ = event_tx.send(NetEvent::Message(other));
+        match read_messages(&mut stream, &mut read_buffer) {
+            Ok((messages, received_bytes)) => {
+                if received_bytes {
+                    last_rx = Instant::now();
+                }
+                for message in messages {
+                    match message {
+                        PvpMessage::Ping { nonce } => {
+                            let _ = write_message(&mut stream, &PvpMessage::Pong { nonce });
+                        }
+                        PvpMessage::Pong { .. } => {}
+                        other => {
+                            let _ = event_tx.send(NetEvent::Message(other));
+                        }
                     }
                 }
             }
-            Ok(None) => {}
             Err(err) => {
                 let _ = event_tx.send(NetEvent::Disconnected(format!("连接断开：{err}")));
                 return;
@@ -416,38 +464,86 @@ fn write_message(stream: &mut TcpStream, message: &PvpMessage) -> std::io::Resul
     let bytes = payload.as_bytes();
     let len = u32::try_from(bytes.len())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "消息过长"))?;
-    stream.write_all(&len.to_be_bytes())?;
-    stream.write_all(bytes)?;
+    let mut framed = Vec::with_capacity(4 + bytes.len());
+    framed.extend_from_slice(&len.to_be_bytes());
+    framed.extend_from_slice(bytes);
+    write_all_nonblocking(stream, &framed)
+}
+
+fn write_all_nonblocking(stream: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()> {
+    let start = Instant::now();
+    let mut written = 0;
+    while written < bytes.len() {
+        match stream.write(&bytes[written..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "连接已关闭",
+                ));
+            }
+            Ok(count) => written += count,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if start.elapsed() >= HEARTBEAT_TIMEOUT {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "发送超时",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(err) => return Err(err),
+        }
+    }
     Ok(())
 }
 
-fn read_message(stream: &mut TcpStream) -> std::io::Result<Option<PvpMessage>> {
-    let mut len_buf = [0_u8; 4];
-    match stream.read_exact(&mut len_buf) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+fn read_messages(
+    stream: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+) -> std::io::Result<(Vec<PvpMessage>, bool)> {
+    let mut temp = [0_u8; 4096];
+    let mut received_bytes = false;
+    loop {
+        match stream.read(&mut temp) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "对方已关闭连接",
+                ));
+            }
+            Ok(count) => {
+                received_bytes = true;
+                buffer.extend_from_slice(&temp[..count]);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    let mut messages = Vec::new();
+    loop {
+        if buffer.len() < 4 {
+            break;
+        }
+        let len = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        if len > 64 * 1024 {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "对方已关闭连接",
+                std::io::ErrorKind::InvalidData,
+                "消息过长",
             ));
         }
-        Err(err) => return Err(err),
+        if buffer.len() < 4 + len {
+            break;
+        }
+        let payload = buffer[4..4 + len].to_vec();
+        buffer.drain(..4 + len);
+        let text = String::from_utf8(payload)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        let message = ron::from_str(&text)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        messages.push(message);
     }
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 64 * 1024 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "消息过长",
-        ));
-    }
-    let mut payload = vec![0_u8; len];
-    stream.read_exact(&mut payload)?;
-    let text = String::from_utf8(payload)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
-    ron::from_str(&text)
-        .map(Some)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))
+    Ok((messages, received_bytes))
 }
 
 fn local_lan_ip() -> String {
@@ -472,6 +568,11 @@ fn reset_pvp_lobby_ui_state(
 
 fn clear_pending_error_on_exit(mut input: ResMut<PvpLobbyInput>) {
     input.info.clear();
+}
+
+fn reset_session_state(team_state: &mut PvpTeamState, incoming_intents: &mut PvpIncomingIntents) {
+    *team_state = PvpTeamState::default();
+    incoming_intents.0.clear();
 }
 
 fn cleanup_pvp_lobby_ui(mut commands: Commands, query: Query<Entity, With<PvpLobbyUiRoot>>) {
@@ -583,11 +684,14 @@ fn pvp_lobby_button_system(
     mut join_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpJoinButton>)>,
     mut back_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpBackButton>)>,
     mut connection: ResMut<PvpConnection>,
+    mut team_state: ResMut<PvpTeamState>,
+    mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut input: ResMut<PvpLobbyInput>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut host_buttons {
         if *interaction == Interaction::Pressed {
+            reset_session_state(&mut team_state, &mut incoming_intents);
             input.info = "正在建房...".to_string();
             start_host(&mut connection);
             return;
@@ -597,6 +701,7 @@ fn pvp_lobby_button_system(
         if *interaction == Interaction::Pressed {
             let address = input.address.trim().to_string();
             if valid_address_like(&address) {
+                reset_session_state(&mut team_state, &mut incoming_intents);
                 input.info = format!("正在连接 {address} ...");
                 start_client(&mut connection, address);
             } else {
@@ -608,6 +713,7 @@ fn pvp_lobby_button_system(
     for interaction in &mut back_buttons {
         if *interaction == Interaction::Pressed {
             connection.stop();
+            reset_session_state(&mut team_state, &mut incoming_intents);
             connection.status = PvpStatus::Idle;
             next_state.set(GameState::Lobby);
             return;
@@ -644,6 +750,8 @@ fn pvp_connection_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut input: ResMut<PvpLobbyInput>,
     mut connection: ResMut<PvpConnection>,
+    mut team_state: ResMut<PvpTeamState>,
+    mut incoming_intents: ResMut<PvpIncomingIntents>,
 ) {
     if keyboard.just_pressed(KeyCode::Backspace) {
         input.address.pop();
@@ -659,6 +767,7 @@ fn pvp_connection_input_system(
     if keyboard.just_pressed(KeyCode::Enter) {
         let address = input.address.trim().to_string();
         if valid_address_like(&address) {
+            reset_session_state(&mut team_state, &mut incoming_intents);
             input.info = format!("正在连接 {address} ...");
             start_client(&mut connection, address);
         } else {
@@ -843,6 +952,9 @@ fn pvp_apply_remote_team_system(
         return;
     };
     commands.insert_resource(BattleControlMode::PlayerVsRemote);
+    commands.insert_resource(PvpTurnOrder {
+        local_first: connection.role == Some(PvpRole::Host),
+    });
     commands.insert_resource(TeamSelections {
         player_indices: local_indices,
         enemy_indices: remote_indices,
@@ -853,18 +965,22 @@ fn pvp_apply_remote_team_system(
 
 fn pvp_apply_remote_intents_system(
     mut incoming: ResMut<PvpIncomingIntents>,
+    battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut selected: ResMut<SelectedCards>,
     mut hand: ResMut<Hand>,
     mut action_points: ResMut<crate::battle::ActionPoints>,
     mut pending_boosts: ResMut<PendingBoosts>,
-    enemy_team: Option<Res<crate::battle::EnemyTeam>>,
+    mut enemy_team: Option<ResMut<crate::battle::EnemyTeam>>,
     skill_query: Query<&crate::battle::SkillList, With<crate::battle::InBattle>>,
+    mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<crate::battle::InBattle>>,
     dbs: Res<BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if *battle_mode != BattleControlMode::PlayerVsRemote {
+    if *battle_mode != BattleControlMode::PlayerVsRemote
+        || *battle_phase.get() != BattlePhase::EnemyTurn
+    {
         return;
     }
     let Some(intent) = incoming.0.first().cloned() else {
@@ -873,7 +989,7 @@ fn pvp_apply_remote_intents_system(
     incoming.0.remove(0);
     match intent {
         BattleIntent::UseSkill { slot } => {
-            let Some(enemy_team) = enemy_team else {
+            let Some(enemy_team) = enemy_team.as_ref() else {
                 return;
             };
             let Some(entity) = enemy_team.0.active_combatant() else {
@@ -888,7 +1004,16 @@ fn pvp_apply_remote_intents_system(
             turn_ctx.enemy_action = Some(TurnAction::Skill(skill_id));
         }
         BattleIntent::Switch { target_index } => {
-            selected.enemy.index = Some(target_index);
+            if let Some(enemy_team) = enemy_team.as_mut() {
+                apply_remote_switch(
+                    target_index,
+                    enemy_team,
+                    &mut action_points,
+                    &mut combat_query,
+                    &mut event_writer,
+                );
+            }
+            selected.enemy.index = None;
         }
         BattleIntent::UseCard { card_index } => {
             apply_remote_card(
@@ -918,6 +1043,49 @@ fn pvp_apply_remote_intents_system(
     }
 }
 
+fn apply_remote_switch(
+    target_index: usize,
+    enemy_team: &mut crate::battle::EnemyTeam,
+    action_points: &mut crate::battle::ActionPoints,
+    combat_query: &mut Query<(&mut Stats, &Name, &mut StatusBoard), With<crate::battle::InBattle>>,
+    event_writer: &mut MessageWriter<BattleEvent>,
+) {
+    if action_points.enemy < 1
+        || target_index >= enemy_team.0.combatants.len()
+        || target_index == enemy_team.0.active_index
+    {
+        return;
+    }
+    let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
+    let target_entity = enemy_team.0.combatants[target_index];
+    let Ok(
+        [
+            (mut current_stats, _, mut current_statuses),
+            (target_stats, name, target_statuses),
+        ],
+    ) = combat_query.get_many_mut([current_entity, target_entity])
+    else {
+        return;
+    };
+    if target_stats.hp <= 0 {
+        return;
+    }
+
+    transfer_status_by_id(
+        &mut current_statuses,
+        &mut current_stats,
+        target_statuses.into_inner(),
+        target_stats.into_inner(),
+        "nature_regen",
+    );
+    action_points.enemy -= 1;
+    enemy_team.0.active_index = target_index;
+    event_writer.write(BattleEvent::Switched {
+        side: Side::Enemy,
+        name: name.to_string(),
+    });
+}
+
 fn apply_remote_card(
     card_index: usize,
     discard: bool,
@@ -930,13 +1098,14 @@ fn apply_remote_card(
     if card_index >= hand.enemy.len() {
         return;
     }
-    let card_id = hand.enemy.remove(card_index);
+    let card_id = hand.enemy[card_index];
     let card_name = dbs
         .cards
         .get(&card_id)
         .map(|card| card.name.clone())
         .unwrap_or_else(|| format!("{card_id:?}"));
     if discard {
+        hand.enemy.remove(card_index);
         action_points.enemy += 1;
         event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
@@ -950,6 +1119,7 @@ fn apply_remote_card(
     if action_points.enemy < card.cost_ap {
         return;
     }
+    hand.enemy.remove(card_index);
     action_points.enemy -= card.cost_ap;
     match card.effect {
         CardEffect::GainAp { amount } => action_points.enemy += amount,

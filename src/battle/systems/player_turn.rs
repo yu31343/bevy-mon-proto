@@ -2,14 +2,15 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, ActionTrace, BattleEvent, BattleFormulaEvent, BattleLog, BattleResult,
-        BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts, RoundOrder,
-        SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
-        TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
+        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
+        BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
+        RoundOrder, SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog,
+        TurnAction, TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
         push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{BattleDbs, CardEffect},
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::{
@@ -47,6 +48,20 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     selected: ResMut<'w, SelectedCards>,
+    battle_mode: Res<'w, BattleControlMode>,
+    pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+}
+
+fn send_pvp_intent(
+    battle_mode: &BattleControlMode,
+    connection: &mut Option<ResMut<pvp::PvpConnection>>,
+    intent: pvp::BattleIntent,
+) {
+    if *battle_mode == BattleControlMode::PlayerVsRemote
+        && let Some(connection) = connection.as_mut()
+    {
+        pvp::send_intent(connection, intent);
+    }
 }
 
 fn finalize_player_turn(
@@ -140,6 +155,8 @@ pub fn player_turn_input_system(
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
     let selected = &mut runtime.selected;
+    let battle_mode = &runtime.battle_mode;
+    let pvp_connection = &mut runtime.pvp_connection;
 
     if turn_ctx.player_ended {
         return;
@@ -208,6 +225,11 @@ pub fn player_turn_input_system(
                     );
                     action_points.player -= 1;
                     player_team.0.active_index = target_index;
+                    send_pvp_intent(
+                        battle_mode,
+                        pvp_connection,
+                        pvp::BattleIntent::Switch { target_index },
+                    );
                     writers.event_writer.write(BattleEvent::Switched {
                         side: Side::Player,
                         name: name.to_string(),
@@ -260,6 +282,11 @@ pub fn player_turn_input_system(
             return;
         }
 
+        send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp::BattleIntent::UseSkill { slot },
+        );
         action_points.player -= cost;
         turn_ctx.player_action = None;
 
@@ -598,6 +625,7 @@ pub fn player_turn_input_system(
     }
 
     if turn_ctx.player_end_requested {
+        send_pvp_intent(battle_mode, pvp_connection, pvp::BattleIntent::EndTurn);
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -639,6 +667,13 @@ pub fn player_turn_input_system(
         };
         let card_id = hand.player.remove(target_index);
         action_points.player += 1;
+        send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp::BattleIntent::DiscardCard {
+                card_index: target_index,
+            },
+        );
         let card_name = dbs
             .cards
             .get(&card_id)
@@ -687,6 +722,11 @@ pub fn player_turn_input_system(
             if selected.player.discard_armed {
                 let card_id = hand.player.remove(idx);
                 action_points.player += 1;
+                send_pvp_intent(
+                    battle_mode,
+                    pvp_connection,
+                    pvp::BattleIntent::DiscardCard { card_index: idx },
+                );
                 let card_name = dbs
                     .cards
                     .get(&card_id)
@@ -728,6 +768,11 @@ pub fn player_turn_input_system(
                 if action_points.player >= card.cost_ap {
                     hand.player.remove(idx);
                     action_points.player -= card.cost_ap;
+                    send_pvp_intent(
+                        battle_mode,
+                        pvp_connection,
+                        pvp::BattleIntent::UseCard { card_index: idx },
+                    );
 
                     let card_name = card.name.to_string();
                     writers.event_writer.write(BattleEvent::CardUsed {
@@ -828,6 +873,11 @@ pub fn player_turn_input_system(
     }
 
     action_points.player -= cost;
+    send_pvp_intent(
+        battle_mode,
+        pvp_connection,
+        pvp::BattleIntent::UseSkill { slot: skill_slot },
+    );
 
     // 事件：技能使用（用于 UI 闪白）。
     writers.event_writer.write(BattleEvent::SkillUsed {

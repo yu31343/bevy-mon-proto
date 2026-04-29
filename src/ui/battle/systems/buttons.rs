@@ -181,7 +181,6 @@ pub(crate) fn button_select_skill_system(
     ui_control_side: Res<UiControlSide>,
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
-    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
@@ -218,14 +217,6 @@ pub(crate) fn button_select_skill_system(
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id));
-                if *battle_mode == BattleControlMode::PlayerVsRemote {
-                    if let Some(connection) = pvp_connection.as_mut() {
-                        pvp::send_intent(
-                            connection,
-                            pvp::BattleIntent::UseSkill { slot: button.index },
-                        );
-                    }
-                }
             }
             Side::Enemy => turn_ctx.enemy_action = Some(crate::battle::TurnAction::Skill(skill_id)),
         }
@@ -603,7 +594,6 @@ pub(crate) fn button_end_turn_system(
         (Changed<Interaction>, With<Button>),
     >,
     ui_control_side: Res<UiControlSide>,
-    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut turn_ctx: ResMut<TurnContext>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
@@ -617,11 +607,6 @@ pub(crate) fn button_end_turn_system(
             Side::Player => {
                 turn_ctx.player_action = None;
                 turn_ctx.player_end_requested = true;
-                if *battle_mode == BattleControlMode::PlayerVsRemote {
-                    if let Some(connection) = pvp_connection.as_mut() {
-                        pvp::send_intent(connection, pvp::BattleIntent::EndTurn);
-                    }
-                }
             }
             Side::Enemy => {
                 turn_ctx.enemy_action = None;
