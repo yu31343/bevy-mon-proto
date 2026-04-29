@@ -168,7 +168,7 @@ fn effect_summary(effect: &SkillEffect, dbs: &BattleDbs) -> String {
             lifesteal_ratio,
             ignore_shield,
         } => {
-            let mut parts = vec![format!("{:.2}*Ack", (*power as f32 / 10.0).max(0.0))];
+            let mut parts = vec![format!("{:.2}*Atk", (*power as f32 / 10.0).max(0.0))];
             if *ignore_shield {
                 parts.push("无视护盾".to_string());
             }
