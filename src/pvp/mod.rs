@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        BattleControlMode, BattleEvent, BattleLog, BattleResult, Hand, PendingBoosts, PvpTurnOrder,
-        SelectedCards, Side, Stats, StatusBoard, TurnAction, TurnContext, push_battle_line,
-        transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, EnemyTeam, Hand,
+        InBattle, PendingBoosts, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Side, Stats,
+        StatusBoard, TurnAction, TurnContext, TurnCount, push_battle_line, transfer_status_by_id,
     },
-    data::{BattleDbs, CardDef, CardEffect, MonsterPool, SkillDef, TeamSelections},
+    data::{BattleDbs, CardDef, CardEffect, CardId, MonsterPool, SkillDef, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
 
@@ -37,6 +37,7 @@ impl Plugin for PvpPlugin {
             .init_resource::<PvpLobbyInput>()
             .init_resource::<PvpTeamState>()
             .init_resource::<PvpIncomingIntents>()
+            .init_resource::<PvpIncomingSnapshots>()
             .add_systems(Update, pvp_poll_network_system)
             .add_systems(
                 Update,
@@ -73,6 +74,8 @@ impl Plugin for PvpPlugin {
                 Update,
                 pvp_apply_remote_intents_system.run_if(in_state(GameState::Battle)),
             )
+            .add_systems(Update, pvp_send_host_snapshot_system)
+            .add_systems(Update, pvp_apply_host_snapshot_system)
             .add_systems(Update, pvp_handle_battle_disconnect_system)
             .add_systems(OnEnter(GameState::PvpLobby), reset_pvp_lobby_ui_state)
             .add_systems(OnExit(GameState::PvpLobby), cleanup_pvp_lobby_ui)
@@ -160,6 +163,9 @@ pub struct PvpTeamState {
 #[derive(Resource, Debug, Default)]
 pub struct PvpIncomingIntents(pub Vec<BattleIntent>);
 
+#[derive(Resource, Debug, Default)]
+struct PvpIncomingSnapshots(Vec<PvpBattleSnapshot>);
+
 #[derive(Component)]
 pub struct PvpLobbyUiRoot;
 
@@ -224,6 +230,7 @@ enum PvpMessage {
     BattleReady {
         seed: u64,
     },
+    BattleSnapshot(PvpBattleSnapshot),
     Intent {
         seq: u32,
         intent: BattleIntent,
@@ -247,6 +254,24 @@ pub enum BattleIntent {
     UseCard { card_index: usize },
     DiscardCard { card_index: usize },
     EndTurn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PvpBattleSnapshot {
+    turn: u32,
+    phase: BattlePhase,
+    first_side: Side,
+    player_active_index: usize,
+    enemy_active_index: usize,
+    player_hp: Vec<i32>,
+    enemy_hp: Vec<i32>,
+    player_ap: i32,
+    enemy_ap: i32,
+    player_hand: Vec<CardId>,
+    enemy_hand: Vec<CardId>,
+    player_defeated: bool,
+    enemy_defeated: bool,
+    result_message: Option<String>,
 }
 
 impl PvpConnection {
@@ -1066,6 +1091,7 @@ fn pvp_poll_network_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
     mut input: ResMut<PvpLobbyInput>,
     dbs: Option<Res<BattleDbs>>,
     monsters: Option<Res<MonsterPool>>,
@@ -1139,6 +1165,7 @@ fn pvp_poll_network_system(
                     team_state.remote_indices = Some(monster_indices);
                 }
                 PvpMessage::BattleReady { .. } => {}
+                PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(snapshot),
                 PvpMessage::Intent { intent, .. } => incoming_intents.0.push(intent),
                 PvpMessage::Surrender => {
                     connection.status = PvpStatus::Disconnected("对方已撤退/战斗中止".to_string());
@@ -1199,8 +1226,167 @@ fn pvp_apply_remote_team_system(
     next_state.set(GameState::Battle);
 }
 
+fn team_hp(team: &crate::battle::Team, query: &Query<&Stats, With<InBattle>>) -> Vec<i32> {
+    team.combatants
+        .iter()
+        .map(|&entity| query.get(entity).map(|stats| stats.hp).unwrap_or(0))
+        .collect()
+}
+
+fn apply_team_hp(
+    team: &crate::battle::Team,
+    hp_values: &[i32],
+    query: &mut Query<&mut Stats, With<InBattle>>,
+) {
+    for (&entity, hp) in team.combatants.iter().zip(hp_values.iter().copied()) {
+        if let Ok(mut stats) = query.get_mut(entity) {
+            stats.hp = hp.clamp(0, stats.max_hp);
+        }
+    }
+}
+
+fn mirror_side(side: Side) -> Side {
+    match side {
+        Side::Player => Side::Enemy,
+        Side::Enemy => Side::Player,
+    }
+}
+
+fn mirror_result_message(message: &str) -> String {
+    if message.starts_with("胜利！") {
+        message.replacen("胜利！", "失败！", 1)
+    } else if message.starts_with("失败！") {
+        message.replacen("失败！", "胜利！", 1)
+    } else {
+        message.to_string()
+    }
+}
+
+fn pvp_send_host_snapshot_system(
+    connection: Res<PvpConnection>,
+    battle_mode: Res<BattleControlMode>,
+    game_state: Res<State<GameState>>,
+    battle_phase: Res<State<BattlePhase>>,
+    turn_count: Res<TurnCount>,
+    round_order: Res<RoundOrder>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    hand: Res<Hand>,
+    action_points: Res<ActionPoints>,
+    battle_result: Res<BattleResult>,
+    stats_query: Query<&Stats, With<InBattle>>,
+) {
+    if *battle_mode != BattleControlMode::PlayerVsRemote
+        || connection.role != Some(PvpRole::Host)
+        || !matches!(*game_state.get(), GameState::Battle | GameState::Result)
+    {
+        return;
+    }
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+    let player_hp = team_hp(&player_team.0, &stats_query);
+    let enemy_hp = team_hp(&enemy_team.0, &stats_query);
+    let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
+    let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
+    connection.send(PvpMessage::BattleSnapshot(PvpBattleSnapshot {
+        turn: turn_count.0,
+        phase: *battle_phase.get(),
+        first_side: round_order.first,
+        player_active_index: enemy_team.0.active_index,
+        enemy_active_index: player_team.0.active_index,
+        player_hp: enemy_hp,
+        enemy_hp: player_hp,
+        player_ap: action_points.enemy,
+        enemy_ap: action_points.player,
+        player_hand: hand.enemy.clone(),
+        enemy_hand: hand.player.clone(),
+        player_defeated: host_enemy_defeated,
+        enemy_defeated: host_player_defeated,
+        result_message: (!battle_result.message.is_empty())
+            .then(|| mirror_result_message(&battle_result.message)),
+    }));
+}
+
+fn pvp_apply_host_snapshot_system(
+    mut incoming: ResMut<PvpIncomingSnapshots>,
+    connection: Res<PvpConnection>,
+    battle_mode: Res<BattleControlMode>,
+    battle_phase: Res<State<BattlePhase>>,
+    mut turn_count: ResMut<TurnCount>,
+    mut round_order: ResMut<RoundOrder>,
+    mut player_team: Option<ResMut<PlayerTeam>>,
+    mut enemy_team: Option<ResMut<EnemyTeam>>,
+    mut hand: ResMut<Hand>,
+    mut action_points: ResMut<ActionPoints>,
+    mut battle_result: ResMut<BattleResult>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut stats_query: Query<&mut Stats, With<InBattle>>,
+) {
+    if *battle_mode != BattleControlMode::PlayerVsRemote || connection.role != Some(PvpRole::Client)
+    {
+        incoming.0.clear();
+        return;
+    }
+    let Some(snapshot) = incoming.0.pop() else {
+        return;
+    };
+    incoming.0.clear();
+
+    turn_count.0 = snapshot.turn;
+    round_order.set_first(mirror_side(snapshot.first_side));
+    *hand = Hand {
+        player: snapshot.player_hand,
+        enemy: snapshot.enemy_hand,
+    };
+    action_points.player = snapshot.player_ap;
+    action_points.enemy = snapshot.enemy_ap;
+
+    if let Some(player_team) = player_team.as_mut() {
+        player_team.0.active_index = snapshot
+            .player_active_index
+            .min(player_team.0.combatants.len().saturating_sub(1));
+        apply_team_hp(&player_team.0, &snapshot.player_hp, &mut stats_query);
+    }
+    if let Some(enemy_team) = enemy_team.as_mut() {
+        enemy_team.0.active_index = snapshot
+            .enemy_active_index
+            .min(enemy_team.0.combatants.len().saturating_sub(1));
+        apply_team_hp(&enemy_team.0, &snapshot.enemy_hp, &mut stats_query);
+    }
+
+    if let Some(message) = snapshot.result_message {
+        battle_result.message = message;
+        next_state.set(GameState::Result);
+    } else if snapshot.player_defeated || snapshot.enemy_defeated {
+        battle_result.message = if snapshot.player_defeated && snapshot.enemy_defeated {
+            "平局！按 R 返回大厅。".to_string()
+        } else if snapshot.enemy_defeated {
+            "胜利！全歼敌方。按 R 返回大厅。".to_string()
+        } else {
+            "失败！队伍全灭。按 R 返回大厅。".to_string()
+        };
+        next_state.set(GameState::Result);
+    } else {
+        let mirrored_phase = host_phase_for_local_phase(snapshot.phase);
+        if mirrored_phase != *battle_phase.get() {
+            next_phase.set(mirrored_phase);
+        }
+    }
+}
+
+fn host_phase_for_local_phase(phase: BattlePhase) -> BattlePhase {
+    match phase {
+        BattlePhase::PlayerTurn => BattlePhase::EnemyTurn,
+        BattlePhase::EnemyTurn => BattlePhase::PlayerTurn,
+        other => other,
+    }
+}
+
 fn pvp_apply_remote_intents_system(
     mut incoming: ResMut<PvpIncomingIntents>,
+    connection: Res<PvpConnection>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -1215,6 +1401,7 @@ fn pvp_apply_remote_intents_system(
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
     if *battle_mode != BattleControlMode::PlayerVsRemote
+        || connection.role != Some(PvpRole::Host)
         || *battle_phase.get() != BattlePhase::EnemyTurn
     {
         return;
@@ -1276,6 +1463,32 @@ fn pvp_apply_remote_intents_system(
         BattleIntent::EndTurn => {
             turn_ctx.enemy_end_requested = true;
         }
+    }
+}
+
+pub fn pvp_host_first_side(
+    player_spd: i32,
+    enemy_spd: i32,
+    local_is_host: bool,
+    previous_first: Option<Side>,
+) -> Side {
+    let host_spd = if local_is_host { player_spd } else { enemy_spd };
+    let client_spd = if local_is_host { enemy_spd } else { player_spd };
+    let host_was_previous_first = previous_first
+        .map(|side| side == Side::Player && local_is_host || side == Side::Enemy && !local_is_host);
+    let host_first = if host_spd > client_spd {
+        true
+    } else if client_spd > host_spd {
+        false
+    } else {
+        host_was_previous_first
+            .map(|was_first| !was_first)
+            .unwrap_or(true)
+    };
+    if host_first == local_is_host {
+        Side::Player
+    } else {
+        Side::Enemy
     }
 }
 

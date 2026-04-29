@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, fmt};
 
 use bevy::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     data::{
@@ -13,7 +13,7 @@ use crate::{
     game_state::BattlePhase,
 };
 
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Side {
     Player,
     Enemy,

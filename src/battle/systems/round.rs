@@ -131,25 +131,12 @@ pub fn round_start_system(
         let local_is_host = pvp_turn_order
             .as_ref()
             .is_some_and(|order| order.local_first);
-        let host_spd = if local_is_host { player_spd } else { enemy_spd };
-        let client_spd = if local_is_host { enemy_spd } else { player_spd };
-        let host_was_previous_first = round_order.previous_first.map(|side| {
-            side == Side::Player && local_is_host || side == Side::Enemy && !local_is_host
-        });
-        let host_first = if host_spd > client_spd {
-            true
-        } else if client_spd > host_spd {
-            false
-        } else {
-            host_was_previous_first
-                .map(|was_first| !was_first)
-                .unwrap_or(true)
-        };
-        if host_first == local_is_host {
-            Side::Player
-        } else {
-            Side::Enemy
-        }
+        crate::pvp::pvp_host_first_side(
+            player_spd,
+            enemy_spd,
+            local_is_host,
+            round_order.previous_first,
+        )
     } else if player_spd > enemy_spd {
         Side::Player
     } else if enemy_spd > player_spd {
@@ -204,7 +191,6 @@ pub fn sync_ui_control_side_system(
         BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::DebugPlayerControlsBoth => {
             Side::Enemy
         }
-        BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::PlayerVsRemote => Side::Enemy,
         _ => Side::Player,
     };
 }
