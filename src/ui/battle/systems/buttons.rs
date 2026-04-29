@@ -8,6 +8,7 @@ use crate::{
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::super::components::*;
@@ -180,6 +181,7 @@ pub(crate) fn button_select_skill_system(
     ui_control_side: Res<UiControlSide>,
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
@@ -215,7 +217,15 @@ pub(crate) fn button_select_skill_system(
         }
         match ui_control_side.0 {
             Side::Player => {
-                turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id))
+                turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id));
+                if *battle_mode == BattleControlMode::PlayerVsRemote {
+                    if let Some(connection) = pvp_connection.as_mut() {
+                        pvp::send_intent(
+                            connection,
+                            pvp::BattleIntent::UseSkill { slot: button.index },
+                        );
+                    }
+                }
             }
             Side::Enemy => turn_ctx.enemy_action = Some(crate::battle::TurnAction::Skill(skill_id)),
         }
@@ -237,6 +247,7 @@ pub(crate) fn button_switch_member_system(
     player_team: Option<ResMut<PlayerTeam>>,
     enemy_team: Option<ResMut<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<InBattle>>,
 ) {
@@ -296,6 +307,11 @@ pub(crate) fn button_switch_member_system(
         );
         *ap -= 1;
         team.active_index = target_index;
+        if side == Side::Player && *battle_mode == BattleControlMode::PlayerVsRemote {
+            if let Some(connection) = pvp_connection.as_mut() {
+                pvp::send_intent(connection, pvp::BattleIntent::Switch { target_index });
+            }
+        }
         event_writer.write(BattleEvent::Switched {
             side,
             name: name.to_string(),
@@ -316,6 +332,7 @@ pub(crate) fn button_play_card_two_step_system(
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
@@ -351,6 +368,14 @@ pub(crate) fn button_play_card_two_step_system(
                         side: Side::Player,
                         card_name,
                     });
+                    if *battle_mode == BattleControlMode::PlayerVsRemote {
+                        if let Some(connection) = pvp_connection.as_mut() {
+                            pvp::send_intent(
+                                connection,
+                                pvp::BattleIntent::DiscardCard { card_index: idx },
+                            );
+                        }
+                    }
                     turn_ctx.player_action = None;
                     selected_state.index = None;
                     selected_state.discard_armed = false;
@@ -373,6 +398,14 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Player,
                     card_name: card.name.to_string(),
                 });
+                if *battle_mode == BattleControlMode::PlayerVsRemote {
+                    if let Some(connection) = pvp_connection.as_mut() {
+                        pvp::send_intent(
+                            connection,
+                            pvp::BattleIntent::UseCard { card_index: idx },
+                        );
+                    }
+                }
                 match card.effect {
                     crate::data::CardEffect::GainAp { amount } => *ap += amount,
                     crate::data::CardEffect::NextAttackBoost { amount } => {
@@ -473,6 +506,7 @@ pub(crate) fn button_discard_system(
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
@@ -511,6 +545,16 @@ pub(crate) fn button_discard_system(
                     side: Side::Player,
                     card_name,
                 });
+                if *battle_mode == BattleControlMode::PlayerVsRemote {
+                    if let Some(connection) = pvp_connection.as_mut() {
+                        pvp::send_intent(
+                            connection,
+                            pvp::BattleIntent::DiscardCard {
+                                card_index: target_index,
+                            },
+                        );
+                    }
+                }
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -559,6 +603,7 @@ pub(crate) fn button_end_turn_system(
         (Changed<Interaction>, With<Button>),
     >,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut turn_ctx: ResMut<TurnContext>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
@@ -572,6 +617,11 @@ pub(crate) fn button_end_turn_system(
             Side::Player => {
                 turn_ctx.player_action = None;
                 turn_ctx.player_end_requested = true;
+                if *battle_mode == BattleControlMode::PlayerVsRemote {
+                    if let Some(connection) = pvp_connection.as_mut() {
+                        pvp::send_intent(connection, pvp::BattleIntent::EndTurn);
+                    }
+                }
             }
             Side::Enemy => {
                 turn_ctx.enemy_action = None;
@@ -589,6 +639,8 @@ pub(crate) fn button_retreat_system(
     >,
     mut retreat_confirm: ResMut<RetreatConfirmState>,
     mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
+    battle_mode: Res<BattleControlMode>,
+    pvp_connection: Option<Res<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
@@ -606,6 +658,11 @@ pub(crate) fn button_retreat_system(
 
             retreat_confirm.armed = false;
             retreat_text.0 = "撤退".to_string();
+            if *battle_mode == BattleControlMode::PlayerVsRemote {
+                if let Some(connection) = pvp_connection.as_ref() {
+                    pvp::surrender(connection);
+                }
+            }
             next_phase.set(BattlePhase::Init);
             next_game_state.set(GameState::Lobby);
             break;

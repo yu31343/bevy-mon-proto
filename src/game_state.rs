@@ -6,6 +6,7 @@ pub enum GameState {
     #[default]
     Lobby,
     MonsterDex,
+    PvpLobby,
     TeamSelection,
     Battle,
     Result,

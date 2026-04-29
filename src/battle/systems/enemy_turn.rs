@@ -783,7 +783,10 @@ pub fn enemy_turn_input_system(
         With<InBattle>,
     >,
 ) {
-    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+    if !matches!(
+        *battle_mode,
+        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
+    ) {
         return;
     }
 
@@ -1700,7 +1703,10 @@ pub fn enemy_turn_ai_system(
         With<InBattle>,
     >,
 ) {
-    if *battle_mode == BattleControlMode::DebugPlayerControlsBoth {
+    if matches!(
+        *battle_mode,
+        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
+    ) {
         ai_state.0 = 0.0;
         ai_state.1 = false;
         ai_state.2 = false;

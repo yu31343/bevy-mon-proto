@@ -5,6 +5,7 @@ use crate::{
     battle::BattleControlMode,
     data::{BattleRules, MonsterPool, TeamSelections},
     game_state::GameState,
+    pvp::{PvpConnection, PvpTeamState, submit_local_team},
     team_selection::{
         BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
@@ -46,6 +47,8 @@ pub fn button_confirm_selection_system(
     rules: Res<BattleRules>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
+    pvp_connection: Option<Res<PvpConnection>>,
+    mut pvp_team_state: Option<ResMut<PvpTeamState>>,
 ) {
     for interaction in &mut interaction_query {
         let selected_count = selection_state.selected_indices.len();
@@ -91,6 +94,30 @@ pub fn button_confirm_selection_system(
                 selection_state.player_indices = selection_state.selected_indices.clone();
                 selection_state.selected_indices.clear();
                 selection_state.stage = SelectionStage::Enemy;
+            }
+            SelectionEntryMode::Pvp => {
+                let Some(connection) = pvp_connection.as_ref() else {
+                    continue;
+                };
+                let Some(team_state) = pvp_team_state.as_mut() else {
+                    continue;
+                };
+                println!("=== PVP 队伍选择 ===");
+                print!("我方选择: ");
+                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", monster_pool.monsters[idx].name);
+                }
+                println!();
+                println!("等待对方队伍...");
+                println!("================");
+                submit_local_team(
+                    connection,
+                    team_state,
+                    selection_state.selected_indices.clone(),
+                );
             }
             SelectionEntryMode::Debug => {
                 println!("=== 调试模式队伍选择 ===");
@@ -196,6 +223,7 @@ pub fn update_selection_ui_system(
     };
     let confirm_label = match (*entry_mode, selection_state.stage) {
         (SelectionEntryMode::VsAi, _) => "确认选择",
+        (SelectionEntryMode::Pvp, _) => "确认并等待对方",
         (SelectionEntryMode::Debug, SelectionStage::Player) => "下一步",
         (SelectionEntryMode::Debug, SelectionStage::Enemy) => "开始调试对战",
     };

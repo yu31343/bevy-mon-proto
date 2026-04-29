@@ -410,6 +410,7 @@ pub enum BattleControlMode {
     #[default]
     PlayerVsAi,
     DebugPlayerControlsBoth,
+    PlayerVsRemote,
 }
 
 #[derive(Resource, Debug, Clone, Copy)]
