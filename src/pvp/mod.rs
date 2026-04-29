@@ -31,6 +31,8 @@ use crate::{
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
 const PROTOCOL_VERSION: u32 = 1;
+const RELAY_PROTOCOL_VERSION: u32 = 1;
+const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -104,6 +106,9 @@ pub enum PvpStatus {
     Idle,
     Hosting { port: u16 },
     Connecting,
+    ConnectingRelay,
+    WaitingRelayPeer { room_code: String },
+    JoiningRelayRoom { room_code: String },
     Connected,
     Failed(String),
     Disconnected(String),
@@ -139,6 +144,8 @@ impl Default for PvpConnection {
 #[derive(Resource, Debug)]
 pub struct PvpLobbyInput {
     pub address: String,
+    pub relay_address: String,
+    pub room_code: String,
     pub info: String,
     pub screen: PvpLobbyScreen,
     egui_font_registered: bool,
@@ -148,7 +155,9 @@ impl Default for PvpLobbyInput {
     fn default() -> Self {
         Self {
             address: format!("127.0.0.1:{DEFAULT_PORT}"),
-            info: "选择建房或加入，开始联机对战。".to_string(),
+            relay_address: format!("127.0.0.1:{DEFAULT_PORT}"),
+            room_code: String::new(),
+            info: "选择局域网联机或服务器联机。".to_string(),
             screen: PvpLobbyScreen::Menu,
             egui_font_registered: false,
         }
@@ -159,8 +168,12 @@ impl Default for PvpLobbyInput {
 pub enum PvpLobbyScreen {
     #[default]
     Menu,
+    DirectMenu,
+    RelayMenu,
     HostRoom,
     JoinAddress,
+    RelayHostRoom,
+    RelayJoinRoom,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -195,6 +208,12 @@ pub struct PvpHostButton;
 pub struct PvpJoinButton;
 
 #[derive(Component)]
+pub struct PvpRelayHostButton;
+
+#[derive(Component)]
+pub struct PvpRelayJoinButton;
+
+#[derive(Component)]
 pub struct PvpConfirmJoinButton;
 
 #[derive(Component)]
@@ -227,6 +246,8 @@ enum NetCommand {
 #[derive(Debug)]
 enum NetEvent {
     Listening(u16),
+    RelayRoomCreated(String),
+    RelayWaitingPeer(String),
     Connected,
     Message(PvpMessage),
     Failed(String),
@@ -391,6 +412,42 @@ pub fn start_client(connection: &mut PvpConnection, address: String) {
     thread::spawn(move || client_thread(address, command_rx, event_tx));
     connection.role = Some(PvpRole::Client);
     connection.status = PvpStatus::Connecting;
+    connection.command_tx = Some(command_tx);
+    connection.event_rx = Some(Mutex::new(event_rx));
+    connection.seq = 0;
+    connection.protocol_ready = false;
+    connection.remote_data_hash = None;
+}
+
+pub fn start_relay_host(connection: &mut PvpConnection, relay_address: String) {
+    connection.stop();
+    let (command_tx, command_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    thread::spawn(move || relay_host_thread(relay_address, command_rx, event_tx));
+    connection.role = Some(PvpRole::Host);
+    connection.status = PvpStatus::ConnectingRelay;
+    connection.command_tx = Some(command_tx);
+    connection.event_rx = Some(Mutex::new(event_rx));
+    connection.seq = 0;
+    connection.protocol_ready = false;
+    connection.remote_data_hash = None;
+}
+
+pub fn start_relay_client(
+    connection: &mut PvpConnection,
+    relay_address: String,
+    room_code: String,
+) {
+    connection.stop();
+    let room_code = normalize_room_code(&room_code);
+    let (command_tx, command_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    let thread_room_code = room_code.clone();
+    thread::spawn(move || {
+        relay_client_thread(relay_address, thread_room_code, command_rx, event_tx)
+    });
+    connection.role = Some(PvpRole::Client);
+    connection.status = PvpStatus::JoiningRelayRoom { room_code };
     connection.command_tx = Some(command_tx);
     connection.event_rx = Some(Mutex::new(event_rx));
     connection.seq = 0;
@@ -573,29 +630,117 @@ fn host_thread(command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
 }
 
 fn client_thread(address: String, command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
-    let addrs = match address.to_socket_addrs() {
-        Ok(addrs) => addrs.collect::<Vec<_>>(),
-        Err(err) => {
-            let _ = event_tx.send(NetEvent::Failed(format!("地址解析失败：{err}")));
+    match connect_to_address(&address) {
+        Ok(stream) => run_stream(stream, command_rx, event_tx),
+        Err(reason) => {
+            let _ = event_tx.send(NetEvent::Failed(reason));
+        }
+    }
+}
+
+fn relay_host_thread(
+    relay_address: String,
+    command_rx: Receiver<NetCommand>,
+    event_tx: Sender<NetEvent>,
+) {
+    let mut stream = match connect_to_address(&relay_address) {
+        Ok(stream) => stream,
+        Err(reason) => {
+            let _ = event_tx.send(NetEvent::Failed(format!("中继服务器连接失败：{reason}")));
             return;
         }
     };
-    if addrs.is_empty() {
-        let _ = event_tx.send(NetEvent::Failed("地址解析失败：没有可用地址".to_string()));
+    if let Err(err) = write_relay_command(&mut stream, "CREATE") {
+        let _ = event_tx.send(NetEvent::Failed(format!("中继建房失败：{err}")));
         return;
+    }
+    run_relay_setup(stream, command_rx, event_tx);
+}
+
+fn relay_client_thread(
+    relay_address: String,
+    room_code: String,
+    command_rx: Receiver<NetCommand>,
+    event_tx: Sender<NetEvent>,
+) {
+    let mut stream = match connect_to_address(&relay_address) {
+        Ok(stream) => stream,
+        Err(reason) => {
+            let _ = event_tx.send(NetEvent::Failed(format!("中继服务器连接失败：{reason}")));
+            return;
+        }
+    };
+    if let Err(err) = write_relay_command(&mut stream, &format!("JOIN {room_code}")) {
+        let _ = event_tx.send(NetEvent::Failed(format!("中继加入失败：{err}")));
+        return;
+    }
+    run_relay_setup(stream, command_rx, event_tx);
+}
+
+fn connect_to_address(address: &str) -> Result<TcpStream, String> {
+    let addrs = address
+        .to_socket_addrs()
+        .map_err(|err| format!("地址解析失败：{err}"))?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err("地址解析失败：没有可用地址".to_string());
     }
     let mut last_error = None;
     for addr in addrs {
         match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
-            Ok(stream) => {
-                run_stream(stream, command_rx, event_tx);
-                return;
-            }
+            Ok(stream) => return Ok(stream),
             Err(err) => last_error = Some(err.to_string()),
         }
     }
-    let reason = last_error.unwrap_or_else(|| "连接失败".to_string());
-    let _ = event_tx.send(NetEvent::Failed(format!("连接失败：{reason}")));
+    Err(format!(
+        "连接失败：{}",
+        last_error.unwrap_or_else(|| "连接失败".to_string())
+    ))
+}
+
+fn run_relay_setup(
+    mut stream: TcpStream,
+    command_rx: Receiver<NetCommand>,
+    event_tx: Sender<NetEvent>,
+) {
+    let _ = stream.set_nonblocking(true);
+    let mut read_buffer = Vec::new();
+    loop {
+        if matches!(command_rx.try_recv(), Ok(NetCommand::Stop { .. })) {
+            return;
+        }
+        match read_relay_lines(&mut stream, &mut read_buffer) {
+            Ok(lines) => {
+                for line in lines {
+                    match parse_relay_line(&line) {
+                        Ok(RelayLine::RoomCreated(room_code)) => {
+                            let _ = event_tx.send(NetEvent::RelayRoomCreated(room_code));
+                        }
+                        Ok(RelayLine::WaitingForPeer(room_code)) => {
+                            let _ = event_tx.send(NetEvent::RelayWaitingPeer(room_code));
+                        }
+                        Ok(RelayLine::PeerConnected) => {
+                            run_stream(stream, command_rx, event_tx);
+                            return;
+                        }
+                        Ok(RelayLine::Error(reason)) => {
+                            let _ = event_tx.send(NetEvent::Failed(reason));
+                            return;
+                        }
+                        Err(reason) => {
+                            let _ = event_tx.send(NetEvent::Failed(reason));
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = event_tx.send(NetEvent::Failed(format!("中继握手失败：{err}")));
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(16));
+    }
 }
 
 fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
@@ -676,6 +821,46 @@ fn write_message(stream: &mut TcpStream, message: &PvpMessage) -> std::io::Resul
     write_all_nonblocking(stream, &framed)
 }
 
+enum RelayLine {
+    RoomCreated(String),
+    WaitingForPeer(String),
+    PeerConnected,
+    Error(String),
+}
+
+fn write_relay_command(stream: &mut TcpStream, command: &str) -> std::io::Result<()> {
+    stream.write_all(format!("RELAY {RELAY_PROTOCOL_VERSION} {command}\n").as_bytes())
+}
+
+fn read_relay_lines(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<Vec<String>> {
+    read_available_bytes(stream, buffer)?;
+    let mut lines = Vec::new();
+    while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
+        let line_bytes = buffer.drain(..=newline_index).collect::<Vec<_>>();
+        let line = String::from_utf8(line_bytes)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        lines.push(line.trim().to_string());
+    }
+    Ok(lines)
+}
+
+fn parse_relay_line(line: &str) -> Result<RelayLine, String> {
+    let mut parts = line.splitn(3, ' ');
+    let tag = parts.next().unwrap_or_default();
+    let code = parts.next().unwrap_or_default();
+    let value = parts.next().unwrap_or_default().trim().to_string();
+    if tag != "RELAY" {
+        return Err("中继服务器返回了无效响应".to_string());
+    }
+    Ok(match code {
+        "ROOM" => RelayLine::RoomCreated(value),
+        "WAIT" => RelayLine::WaitingForPeer(value),
+        "PEER" => RelayLine::PeerConnected,
+        "ERR" => RelayLine::Error(value),
+        _ => return Err("中继服务器返回了未知响应".to_string()),
+    })
+}
+
 fn write_all_nonblocking(stream: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()> {
     let start = Instant::now();
     let mut written = 0;
@@ -707,6 +892,34 @@ fn read_messages(
     stream: &mut TcpStream,
     buffer: &mut Vec<u8>,
 ) -> std::io::Result<(Vec<PvpMessage>, bool)> {
+    let received_bytes = read_available_bytes(stream, buffer)?;
+    let mut messages = Vec::new();
+    loop {
+        if buffer.len() < 4 {
+            break;
+        }
+        let len = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        if len > MAX_FRAME_LEN {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "消息过长",
+            ));
+        }
+        if buffer.len() < 4 + len {
+            break;
+        }
+        let payload = buffer[4..4 + len].to_vec();
+        buffer.drain(..4 + len);
+        let text = String::from_utf8(payload)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        let message = ron::from_str(&text)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        messages.push(message);
+    }
+    Ok((messages, received_bytes))
+}
+
+fn read_available_bytes(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<bool> {
     let mut temp = [0_u8; 4096];
     let mut received_bytes = false;
     loop {
@@ -725,31 +938,7 @@ fn read_messages(
             Err(err) => return Err(err),
         }
     }
-
-    let mut messages = Vec::new();
-    loop {
-        if buffer.len() < 4 {
-            break;
-        }
-        let len = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
-        if len > 64 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "消息过长",
-            ));
-        }
-        if buffer.len() < 4 + len {
-            break;
-        }
-        let payload = buffer[4..4 + len].to_vec();
-        buffer.drain(..4 + len);
-        let text = String::from_utf8(payload)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
-        let message = ron::from_str(&text)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
-        messages.push(message);
-    }
-    Ok((messages, received_bytes))
+    Ok(received_bytes)
 }
 
 fn local_lan_ip() -> String {
@@ -799,8 +988,9 @@ fn clear_pending_error_on_exit(mut input: ResMut<PvpLobbyInput>) {
 }
 
 fn reset_lobby_input(input: &mut PvpLobbyInput) {
-    input.info = "选择建房或加入，开始联机对战。".to_string();
+    input.info = "选择局域网联机或服务器联机。".to_string();
     input.screen = PvpLobbyScreen::Menu;
+    input.room_code.clear();
 }
 
 fn reset_session_state(team_state: &mut PvpTeamState, incoming_intents: &mut PvpIncomingIntents) {
@@ -892,21 +1082,66 @@ fn setup_pvp_lobby_ui(
                 ));
             });
             root.spawn((Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(12.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                align_items: AlignItems::Center,
                 ..default()
             },))
-                .with_children(|row| {
-                    spawn_pvp_button(row, "建房", body_font.clone(), PvpHostButton, &theme);
-                    spawn_pvp_button(row, "加入", body_font.clone(), PvpJoinButton, &theme);
-                    spawn_pvp_button(
-                        row,
-                        "确认加入",
-                        body_font.clone(),
-                        PvpConfirmJoinButton,
-                        &theme,
-                    );
-                    spawn_pvp_button(row, "返回", body_font, PvpBackButton, &theme);
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(12.0),
+                            ..default()
+                        },))
+                        .with_children(|row| {
+                            spawn_pvp_button(
+                                row,
+                                "局域网联机",
+                                body_font.clone(),
+                                PvpHostButton,
+                                &theme,
+                            );
+                            spawn_pvp_button(
+                                row,
+                                "服务器联机",
+                                body_font.clone(),
+                                PvpRelayHostButton,
+                                &theme,
+                            );
+                        });
+                    buttons
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(12.0),
+                            ..default()
+                        },))
+                        .with_children(|row| {
+                            spawn_pvp_button(row, "建房", body_font.clone(), PvpJoinButton, &theme);
+                            spawn_pvp_button(
+                                row,
+                                "加入",
+                                body_font.clone(),
+                                PvpRelayJoinButton,
+                                &theme,
+                            );
+                        });
+                    buttons
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(12.0),
+                            ..default()
+                        },))
+                        .with_children(|row| {
+                            spawn_pvp_button(
+                                row,
+                                "确认",
+                                body_font.clone(),
+                                PvpConfirmJoinButton,
+                                &theme,
+                            );
+                            spawn_pvp_button(row, "返回", body_font, PvpBackButton, &theme);
+                        });
                 });
             root.spawn((
                 Text::new(""),
@@ -972,6 +1207,8 @@ fn make_text_font(
 fn pvp_lobby_button_system(
     mut host_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpHostButton>)>,
     mut join_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpJoinButton>)>,
+    mut relay_host_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpRelayHostButton>)>,
+    mut relay_join_buttons: Query<&Interaction, (Changed<Interaction>, With<PvpRelayJoinButton>)>,
     mut confirm_join_buttons: Query<
         &Interaction,
         (Changed<Interaction>, With<PvpConfirmJoinButton>),
@@ -985,39 +1222,116 @@ fn pvp_lobby_button_system(
 ) {
     for interaction in &mut host_buttons {
         if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::Menu {
-            reset_session_state(&mut team_state, &mut incoming_intents);
-            input.screen = PvpLobbyScreen::HostRoom;
-            input.info = "正在建房...".to_string();
-            start_host(&mut connection);
+            input.screen = PvpLobbyScreen::DirectMenu;
+            input.info = "选择局域网建房或加入。".to_string();
+            return;
+        }
+    }
+    for interaction in &mut relay_host_buttons {
+        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::Menu {
+            input.screen = PvpLobbyScreen::RelayMenu;
+            input.room_code.clear();
+            input.info = "选择服务器建房或加入。".to_string();
             return;
         }
     }
     for interaction in &mut join_buttons {
-        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::Menu {
-            input.screen = PvpLobbyScreen::JoinAddress;
-            input.info = "输入对方 IP 或域名与端口，然后点击确认加入。".to_string();
-            return;
+        if *interaction == Interaction::Pressed {
+            match input.screen {
+                PvpLobbyScreen::DirectMenu => {
+                    reset_session_state(&mut team_state, &mut incoming_intents);
+                    input.screen = PvpLobbyScreen::HostRoom;
+                    input.info = "正在局域网建房...".to_string();
+                    start_host(&mut connection);
+                    return;
+                }
+                PvpLobbyScreen::RelayMenu => {
+                    input.screen = PvpLobbyScreen::RelayHostRoom;
+                    input.room_code.clear();
+                    input.info = "输入服务器地址，然后点击确认。".to_string();
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+    for interaction in &mut relay_join_buttons {
+        if *interaction == Interaction::Pressed {
+            match input.screen {
+                PvpLobbyScreen::DirectMenu => {
+                    input.screen = PvpLobbyScreen::JoinAddress;
+                    input.info = "输入对方 IP 或域名与端口，然后点击确认。".to_string();
+                    return;
+                }
+                PvpLobbyScreen::RelayMenu => {
+                    input.screen = PvpLobbyScreen::RelayJoinRoom;
+                    input.room_code.clear();
+                    input.info = "输入服务器地址和房间码，然后点击确认。".to_string();
+                    return;
+                }
+                _ => {}
+            }
         }
     }
     for interaction in &mut confirm_join_buttons {
-        if *interaction == Interaction::Pressed && input.screen == PvpLobbyScreen::JoinAddress {
-            submit_join_address(
-                &mut input,
-                &mut connection,
-                &mut team_state,
-                &mut incoming_intents,
-            );
-            return;
+        if *interaction == Interaction::Pressed {
+            match input.screen {
+                PvpLobbyScreen::JoinAddress => {
+                    submit_join_address(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    );
+                    return;
+                }
+                PvpLobbyScreen::RelayHostRoom => {
+                    submit_relay_host(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    );
+                    return;
+                }
+                PvpLobbyScreen::RelayJoinRoom => {
+                    submit_relay_join(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    );
+                    return;
+                }
+                _ => {}
+            }
         }
     }
     for interaction in &mut back_buttons {
         if *interaction == Interaction::Pressed {
-            if input.screen != PvpLobbyScreen::Menu {
+            if matches!(
+                input.screen,
+                PvpLobbyScreen::DirectMenu | PvpLobbyScreen::RelayMenu
+            ) {
+                input.screen = PvpLobbyScreen::Menu;
+                input.room_code.clear();
+                input.info = "选择局域网联机或服务器联机。".to_string();
+            } else if input.screen != PvpLobbyScreen::Menu {
                 connection.stop_with_leave(Some("对方已返回联机菜单，房间已关闭。".to_string()));
                 reset_session_state(&mut team_state, &mut incoming_intents);
                 connection.status = PvpStatus::Idle;
-                input.screen = PvpLobbyScreen::Menu;
-                input.info = "选择建房或加入，开始联机对战。".to_string();
+                match input.screen {
+                    PvpLobbyScreen::HostRoom | PvpLobbyScreen::JoinAddress => {
+                        input.screen = PvpLobbyScreen::DirectMenu;
+                        input.info = "选择局域网建房或加入。".to_string();
+                    }
+                    PvpLobbyScreen::RelayHostRoom | PvpLobbyScreen::RelayJoinRoom => {
+                        input.screen = PvpLobbyScreen::RelayMenu;
+                        input.room_code.clear();
+                        input.info = "选择服务器建房或加入。".to_string();
+                    }
+                    _ => {}
+                }
             } else {
                 connection.stop_with_leave(Some("对方已返回大厅，联机已取消。".to_string()));
                 reset_session_state(&mut team_state, &mut incoming_intents);
@@ -1038,11 +1352,50 @@ fn submit_join_address(
     let address = input.address.trim().to_string();
     if valid_address_like(&address) {
         reset_session_state(team_state, incoming_intents);
-        input.info = format!("正在连接 {address} ...");
+        input.info = format!("正在加入局域网房间 {address} ...");
         start_client(connection, address);
     } else {
         input.info = "地址格式应为 ip:端口 或 域名:端口。".to_string();
     }
+}
+
+fn submit_relay_host(
+    input: &mut PvpLobbyInput,
+    connection: &mut PvpConnection,
+    team_state: &mut PvpTeamState,
+    incoming_intents: &mut PvpIncomingIntents,
+) {
+    let relay_address = input.relay_address.trim().to_string();
+    if valid_address_like(&relay_address) {
+        reset_session_state(team_state, incoming_intents);
+        input.room_code.clear();
+        input.info = format!("正在连接服务器 {relay_address} ...");
+        start_relay_host(connection, relay_address);
+    } else {
+        input.info = "服务器地址格式应为 ip:端口 或 域名:端口。".to_string();
+    }
+}
+
+fn submit_relay_join(
+    input: &mut PvpLobbyInput,
+    connection: &mut PvpConnection,
+    team_state: &mut PvpTeamState,
+    incoming_intents: &mut PvpIncomingIntents,
+) {
+    let relay_address = input.relay_address.trim().to_string();
+    let room_code = normalize_room_code(&input.room_code);
+    if !valid_address_like(&relay_address) {
+        input.info = "服务器地址格式应为 ip:端口 或 域名:端口。".to_string();
+        return;
+    }
+    if room_code.is_empty() {
+        input.info = "请输入房间码。".to_string();
+        return;
+    }
+    reset_session_state(team_state, incoming_intents);
+    input.room_code = room_code.clone();
+    input.info = format!("正在通过服务器加入房间 {room_code} ...");
+    start_relay_client(connection, relay_address, room_code);
 }
 
 fn update_pvp_lobby_ui_system(
@@ -1059,9 +1412,21 @@ fn update_pvp_lobby_ui_system(
     let (title, hint, room, address_label) = match input.screen {
         PvpLobbyScreen::Menu => (
             "选择联机方式",
-            "建房会显示房间地址；加入会进入地址输入界面。",
+            "局域网联机适合同一网络或端口映射；服务器联机适合双方都连接公网服务器。",
             format!("本机局域网 IP：{}", connection.local_ip),
             "等待选择".to_string(),
+        ),
+        PvpLobbyScreen::DirectMenu => (
+            "局域网联机",
+            "建房会监听本机端口；加入需要输入对方给你的地址。",
+            format!("本机局域网 IP：{}", connection.local_ip),
+            "选择建房或加入".to_string(),
+        ),
+        PvpLobbyScreen::RelayMenu => (
+            "服务器联机",
+            "双方连接同一个中继服务器；建房后用房间码加入。",
+            "通过服务器匹配房间".to_string(),
+            "选择建房或加入".to_string(),
         ),
         PvpLobbyScreen::HostRoom => {
             let address = match connection.status {
@@ -1069,17 +1434,36 @@ fn update_pvp_lobby_ui_system(
                 _ => format!("{}:{DEFAULT_PORT}", connection.local_ip),
             };
             (
-                "房间信息",
-                "把房间地址发给对方；连接成功后会自动进入配队。",
-                "已建房，等待对方加入".to_string(),
+                "局域网房间",
+                "把局域网地址发给对方；连接成功后会自动进入配队。",
+                "局域网建房，等待对方加入".to_string(),
                 address,
             )
         }
         PvpLobbyScreen::JoinAddress => (
-            "加入房间",
+            "局域网加入",
             "输入示例：127.0.0.1:42043；输入框支持鼠标选中、光标移动和复制粘贴。",
             "对方地址".to_string(),
             "".to_string(),
+        ),
+        PvpLobbyScreen::RelayHostRoom => {
+            let room = if input.room_code.is_empty() {
+                "服务器建房：等待生成房间码".to_string()
+            } else {
+                format!("服务器房间码：{}", input.room_code)
+            };
+            (
+                "服务器建房",
+                "输入服务器地址；建房后把房间码发给对方。",
+                room,
+                "服务器地址".to_string(),
+            )
+        }
+        PvpLobbyScreen::RelayJoinRoom => (
+            "服务器加入",
+            "输入同一个服务器地址和对方给你的房间码。",
+            "服务器房间".to_string(),
+            "服务器地址 / 房间码".to_string(),
         ),
     };
     for mut text in &mut texts.p0() {
@@ -1098,6 +1482,13 @@ fn update_pvp_lobby_ui_system(
         PvpStatus::Idle => input.info.clone(),
         PvpStatus::Hosting { port } => format!("端口：{port}。{}", input.info),
         PvpStatus::Connecting => input.info.clone(),
+        PvpStatus::ConnectingRelay => input.info.clone(),
+        PvpStatus::WaitingRelayPeer { room_code } => {
+            format!("房间码：{room_code}。{}", input.info)
+        }
+        PvpStatus::JoiningRelayRoom { room_code } => {
+            format!("正在加入房间 {room_code}。{}", input.info)
+        }
         PvpStatus::Connected => input.info.clone(),
         PvpStatus::Failed(reason) => reason.clone(),
         PvpStatus::Disconnected(reason) => reason.clone(),
@@ -1118,19 +1509,38 @@ fn pvp_lobby_button_visual_system(
             &mut BorderColor,
             Option<&PvpHostButton>,
             Option<&PvpJoinButton>,
+            Option<&PvpRelayHostButton>,
+            Option<&PvpRelayJoinButton>,
             Option<&PvpConfirmJoinButton>,
             Option<&PvpBackButton>,
         ),
         With<PvpLobbyButtonVisual>,
     >,
 ) {
-    for (interaction, mut visibility, mut bg, mut border, host, join, confirm, _back) in
-        &mut buttons
+    for (
+        interaction,
+        mut visibility,
+        mut bg,
+        mut border,
+        host,
+        join,
+        relay_host,
+        relay_join,
+        confirm,
+        _back,
+    ) in &mut buttons
     {
+        let mode_button = host.is_some() || relay_host.is_some();
+        let room_action_button = join.is_some() || relay_join.is_some();
         let hidden = match input.screen {
-            PvpLobbyScreen::Menu => confirm.is_some(),
-            PvpLobbyScreen::HostRoom => host.is_some() || join.is_some() || confirm.is_some(),
-            PvpLobbyScreen::JoinAddress => host.is_some() || join.is_some(),
+            PvpLobbyScreen::Menu => room_action_button || confirm.is_some(),
+            PvpLobbyScreen::DirectMenu | PvpLobbyScreen::RelayMenu => {
+                mode_button || confirm.is_some()
+            }
+            PvpLobbyScreen::HostRoom => mode_button || room_action_button || confirm.is_some(),
+            PvpLobbyScreen::JoinAddress
+            | PvpLobbyScreen::RelayHostRoom
+            | PvpLobbyScreen::RelayJoinRoom => mode_button || room_action_button,
         };
         *visibility = if hidden {
             Visibility::Hidden
@@ -1160,7 +1570,10 @@ fn pvp_address_text_box_system(
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
 ) -> Result {
-    if input.screen != PvpLobbyScreen::JoinAddress {
+    if !matches!(
+        input.screen,
+        PvpLobbyScreen::JoinAddress | PvpLobbyScreen::RelayHostRoom | PvpLobbyScreen::RelayJoinRoom
+    ) {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
@@ -1181,20 +1594,71 @@ fn pvp_address_text_box_system(
             );
             ui.set_style(style);
             ui.set_width(360.0);
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut input.address)
-                    .hint_text("ip/域名:端口")
-                    .desired_width(360.0)
-                    .font(egui::TextStyle::Heading),
-            );
-            response.request_focus();
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                submit_join_address(
-                    &mut input,
-                    &mut connection,
-                    &mut team_state,
-                    &mut incoming_intents,
-                );
+            let enter_pressed = match input.screen {
+                PvpLobbyScreen::JoinAddress => {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut input.address)
+                            .hint_text("对方 ip/域名:端口")
+                            .desired_width(360.0)
+                            .font(egui::TextStyle::Heading),
+                    );
+                    response.request_focus();
+                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                }
+                PvpLobbyScreen::RelayHostRoom => {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut input.relay_address)
+                            .hint_text("服务器 ip/域名:端口")
+                            .desired_width(360.0)
+                            .font(egui::TextStyle::Heading),
+                    );
+                    response.request_focus();
+                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                }
+                PvpLobbyScreen::RelayJoinRoom => {
+                    let address_response = ui.add(
+                        egui::TextEdit::singleline(&mut input.relay_address)
+                            .hint_text("服务器 ip/域名:端口")
+                            .desired_width(360.0)
+                            .font(egui::TextStyle::Heading),
+                    );
+                    ui.add_space(8.0);
+                    let room_response = ui.add(
+                        egui::TextEdit::singleline(&mut input.room_code)
+                            .hint_text("房间码")
+                            .desired_width(360.0)
+                            .font(egui::TextStyle::Heading),
+                    );
+                    if input.room_code.is_empty() {
+                        room_response.request_focus();
+                    }
+                    (address_response.lost_focus() || room_response.lost_focus())
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                }
+                _ => false,
+            };
+            if enter_pressed {
+                match input.screen {
+                    PvpLobbyScreen::JoinAddress => submit_join_address(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    ),
+                    PvpLobbyScreen::RelayHostRoom => submit_relay_host(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    ),
+                    PvpLobbyScreen::RelayJoinRoom => submit_relay_join(
+                        &mut input,
+                        &mut connection,
+                        &mut team_state,
+                        &mut incoming_intents,
+                    ),
+                    _ => {}
+                }
             }
         });
     Ok(())
@@ -1234,6 +1698,10 @@ fn valid_address_like(address: &str) -> bool {
     !host.trim().is_empty() && port.parse::<u16>().is_ok()
 }
 
+fn normalize_room_code(room_code: &str) -> String {
+    room_code.trim().to_ascii_uppercase()
+}
+
 fn pvp_poll_network_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
@@ -1260,7 +1728,17 @@ fn pvp_poll_network_system(
         match event {
             NetEvent::Listening(port) => {
                 connection.status = PvpStatus::Hosting { port };
-                input.info = format!("建房成功：{}:{port}，等待对方加入。", connection.local_ip);
+                input.info = format!(
+                    "局域网建房成功：{}:{port}，等待对方加入。",
+                    connection.local_ip
+                );
+            }
+            NetEvent::RelayRoomCreated(room_code) | NetEvent::RelayWaitingPeer(room_code) => {
+                input.room_code = room_code.clone();
+                connection.status = PvpStatus::WaitingRelayPeer {
+                    room_code: room_code.clone(),
+                };
+                input.info = format!("服务器房间码：{room_code}，等待对方加入。");
             }
             NetEvent::Connected => {
                 connection.status = PvpStatus::Connected;
