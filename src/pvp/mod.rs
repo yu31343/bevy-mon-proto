@@ -18,7 +18,8 @@ use crate::{
         ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, ElementAura,
         EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
         RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
-        TurnContext, TurnCount, push_battle_line, transfer_status_by_id,
+        TurnContext, TurnCount, push_battle_line, recalculate_stage_modifiers,
+        transfer_status_by_id,
     },
     data::{
         BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardEffect, CardId,
@@ -1472,11 +1473,16 @@ fn apply_team_auras(
 fn apply_team_statuses(
     team: &crate::battle::Team,
     status_values: &[Vec<StatusInstance>],
-    query: &mut Query<&mut StatusBoard, With<InBattle>>,
+    stats_query: &mut Query<&mut Stats, With<InBattle>>,
+    status_query: &mut Query<&mut StatusBoard, With<InBattle>>,
 ) {
     for (&entity, entries) in team.combatants.iter().zip(status_values.iter()) {
-        if let Ok(mut statuses) = query.get_mut(entity) {
-            statuses.entries = entries.clone();
+        let Ok(mut statuses) = status_query.get_mut(entity) else {
+            continue;
+        };
+        statuses.entries = entries.clone();
+        if let Ok(mut stats) = stats_query.get_mut(entity) {
+            recalculate_stage_modifiers(&mut stats, &statuses);
         }
     }
 }
@@ -1756,7 +1762,12 @@ fn pvp_apply_host_snapshot_system(
         apply_team_hp(&player_team.0, &snapshot.player_hp, &mut stats_query);
         apply_team_shields(&player_team.0, &snapshot.player_shields, &mut shield_query);
         apply_team_auras(&player_team.0, &snapshot.player_auras, &mut aura_query);
-        apply_team_statuses(&player_team.0, &snapshot.player_statuses, &mut status_query);
+        apply_team_statuses(
+            &player_team.0,
+            &snapshot.player_statuses,
+            &mut stats_query,
+            &mut status_query,
+        );
     }
     if let Some(enemy_team) = runtime.enemy_team.as_mut() {
         enemy_team.0.active_index = snapshot
@@ -1765,7 +1776,12 @@ fn pvp_apply_host_snapshot_system(
         apply_team_hp(&enemy_team.0, &snapshot.enemy_hp, &mut stats_query);
         apply_team_shields(&enemy_team.0, &snapshot.enemy_shields, &mut shield_query);
         apply_team_auras(&enemy_team.0, &snapshot.enemy_auras, &mut aura_query);
-        apply_team_statuses(&enemy_team.0, &snapshot.enemy_statuses, &mut status_query);
+        apply_team_statuses(
+            &enemy_team.0,
+            &snapshot.enemy_statuses,
+            &mut stats_query,
+            &mut status_query,
+        );
     }
 
     for feedback in runtime.incoming_feedbacks.0.drain(..) {
