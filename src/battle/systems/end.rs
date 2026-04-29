@@ -460,6 +460,7 @@ pub fn restart_from_result_system(
     }
 
     if keyboard.just_pressed(KeyCode::KeyR) {
+        battle_result.message.clear();
         battle_result.export_status = None;
         selection_state.reset();
         *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;

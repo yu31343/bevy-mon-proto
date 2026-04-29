@@ -132,7 +132,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         ),
     );
 
-    app.add_systems(Update, update_result_ui_system);
+    app.add_systems(
+        Update,
+        update_result_ui_system.run_if(in_state(GameState::Result)),
+    );
 }
 
 fn cleanup_battle_ui_system(mut commands: Commands, query: Query<Entity, With<BattleUiRoot>>) {

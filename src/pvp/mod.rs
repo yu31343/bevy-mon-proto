@@ -85,6 +85,7 @@ impl Plugin for PvpPlugin {
             .add_systems(Update, pvp_send_host_snapshot_system)
             .add_systems(Update, pvp_apply_host_snapshot_system)
             .add_systems(Update, pvp_handle_battle_disconnect_system)
+            .add_systems(OnEnter(GameState::Lobby), reset_pvp_state_on_lobby)
             .add_systems(OnEnter(GameState::PvpLobby), reset_pvp_lobby_ui_state)
             .add_systems(OnExit(GameState::PvpLobby), cleanup_pvp_lobby_ui)
             .add_systems(OnExit(GameState::PvpLobby), clear_pending_error_on_exit);
@@ -219,7 +220,7 @@ pub struct PvpLobbyButtonVisual;
 #[derive(Debug)]
 enum NetCommand {
     Send(PvpMessage),
-    Stop,
+    Stop { reason: Option<String> },
 }
 
 #[derive(Debug)]
@@ -359,10 +360,7 @@ impl PvpConnection {
 
     pub fn stop_with_leave(&mut self, reason: Option<String>) {
         if let Some(tx) = self.command_tx.take() {
-            if let Some(reason) = reason {
-                let _ = tx.send(NetCommand::Send(PvpMessage::Leave { reason }));
-            }
-            let _ = tx.send(NetCommand::Stop);
+            let _ = tx.send(NetCommand::Stop { reason });
         }
         self.event_rx = None;
         self.role = None;
@@ -542,7 +540,7 @@ fn host_thread(command_rx: Receiver<NetCommand>, event_tx: Sender<NetEvent>) {
                 let _ = listener.set_nonblocking(true);
                 let _ = event_tx.send(NetEvent::Listening(port));
                 loop {
-                    if matches!(command_rx.try_recv(), Ok(NetCommand::Stop)) {
+                    if matches!(command_rx.try_recv(), Ok(NetCommand::Stop { .. })) {
                         return;
                     }
                     match listener.accept() {
@@ -617,13 +615,10 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
                         return;
                     }
                 }
-                NetCommand::Stop => {
-                    let _ = write_message(
-                        &mut stream,
-                        &PvpMessage::Leave {
-                            reason: "本方已离开".to_string(),
-                        },
-                    );
+                NetCommand::Stop { reason } => {
+                    if let Some(reason) = reason {
+                        let _ = write_message(&mut stream, &PvpMessage::Leave { reason });
+                    }
                     return;
                 }
             }
@@ -772,13 +767,39 @@ fn reset_pvp_lobby_ui_state(
 ) {
     connection.local_ip = local_lan_ip();
     if matches!(connection.status, PvpStatus::Idle) {
-        input.info = "选择建房或加入，开始联机对战。".to_string();
-        input.screen = PvpLobbyScreen::Menu;
+        reset_lobby_input(&mut input);
     }
+}
+
+fn reset_pvp_state_on_lobby(
+    mut connection: ResMut<PvpConnection>,
+    mut input: ResMut<PvpLobbyInput>,
+    mut team_state: ResMut<PvpTeamState>,
+    mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
+    mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
+    mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+) {
+    connection.stop();
+    connection.status = PvpStatus::Idle;
+    connection.seq = 0;
+    connection.local_ip = local_lan_ip();
+    reset_lobby_input(&mut input);
+    reset_session_state(&mut team_state, &mut incoming_intents);
+    incoming_snapshots.0.clear();
+    incoming_feedbacks.0.clear();
+    *pending_local_intent = PvpPendingLocalIntent::default();
+    *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
 }
 
 fn clear_pending_error_on_exit(mut input: ResMut<PvpLobbyInput>) {
     input.info.clear();
+}
+
+fn reset_lobby_input(input: &mut PvpLobbyInput) {
+    input.info = "选择建房或加入，开始联机对战。".to_string();
+    input.screen = PvpLobbyScreen::Menu;
 }
 
 fn reset_session_state(team_state: &mut PvpTeamState, incoming_intents: &mut PvpIncomingIntents) {
@@ -1311,7 +1332,9 @@ fn pvp_poll_network_system(
                 PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
                 PvpMessage::Intent { seq, intent } => incoming_intents.0.push((seq, intent)),
                 PvpMessage::Surrender => {
-                    connection.status = PvpStatus::Disconnected("对方已撤退/战斗中止".to_string());
+                    let reason = "对方已撤退/战斗中止".to_string();
+                    input.info = reason.clone();
+                    connection.status = PvpStatus::Disconnected(reason);
                 }
                 PvpMessage::Leave { reason } => {
                     input.info = reason.clone();
@@ -1324,8 +1347,10 @@ fn pvp_poll_network_system(
                 connection.status = PvpStatus::Failed(reason);
             }
             NetEvent::Disconnected(reason) => {
-                input.info = reason.clone();
-                connection.status = PvpStatus::Disconnected(reason);
+                if !matches!(connection.status, PvpStatus::Disconnected(_)) {
+                    input.info = reason.clone();
+                    connection.status = PvpStatus::Disconnected(reason);
+                }
             }
         }
     }
