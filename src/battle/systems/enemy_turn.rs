@@ -1467,7 +1467,8 @@ pub fn enemy_turn_input_system(
             turn_ctx.enemy_end_requested = true;
         }
     }
-    if turn_ctx.enemy_end_requested || action_points.enemy <= 0 {
+    let should_auto_end_without_ap = !remote_controlled && action_points.enemy <= 0;
+    if turn_ctx.enemy_end_requested || should_auto_end_without_ap {
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
