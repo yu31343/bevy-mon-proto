@@ -20,7 +20,10 @@ use crate::{
         SelectedCards, Side, Stats, StatusBoard, StatusInstance, TurnAction, TurnContext,
         TurnCount, push_battle_line, transfer_status_by_id,
     },
-    data::{BattleDbs, CardDef, CardEffect, CardId, MonsterPool, SkillDef, TeamSelections},
+    data::{
+        BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardEffect, CardId,
+        MonsterPool, SkillDef, TeamSelections,
+    },
     game_state::{BattlePhase, GameState},
 };
 
@@ -411,8 +414,35 @@ pub fn surrender(connection: &PvpConnection) {
     connection.send(PvpMessage::Surrender);
 }
 
-pub fn data_hash(dbs: &BattleDbs, monsters: &MonsterPool) -> String {
+pub fn data_hash(
+    dbs: &BattleDbs,
+    monsters: &MonsterPool,
+    rules: &BattleRules,
+    formulas: &BattleFormulaRules,
+    deck: &CardDeck,
+) -> String {
     let mut parts = Vec::new();
+
+    parts.push(rules_hash_part(rules));
+    parts.push(formulas_hash_part(formulas));
+
+    let mut elements = dbs.elements.entries();
+    elements.sort_by_key(|(attacker, defender, _)| format!("{attacker:?}:{defender:?}"));
+    for (attacker, defender, multiplier) in elements {
+        parts.push(format!("element:{attacker:?}:{defender:?}:{multiplier}"));
+    }
+
+    let mut statuses = dbs.statuses.statuses.values().collect::<Vec<_>>();
+    statuses.sort_by_key(|status| status.id.as_str());
+    for status in statuses {
+        parts.push(format!("status:{status:?}"));
+    }
+
+    let mut reactions = dbs.reactions.reactions.iter().collect::<Vec<_>>();
+    reactions.sort_by_key(|reaction| reaction.id.as_str());
+    for reaction in reactions {
+        parts.push(format!("reaction:{reaction:?}"));
+    }
 
     let mut skills = dbs.skills.values().collect::<Vec<_>>();
     skills.sort_by_key(|skill| format!("{:?}", skill.id));
@@ -430,7 +460,28 @@ pub fn data_hash(dbs: &BattleDbs, monsters: &MonsterPool) -> String {
         parts.push(format!("monster:{index}:{monster:?}"));
     }
 
+    parts.push(format!("deck:{:?}", deck.0));
+
     stable_hash(&parts.join("\n"))
+}
+
+fn rules_hash_part(rules: &BattleRules) -> String {
+    format!(
+        "rules:{}:{}:{}",
+        rules.max_team_size, rules.cards_per_round, rules.ap_per_round
+    )
+}
+
+fn formulas_hash_part(formulas: &BattleFormulaRules) -> String {
+    format!(
+        "formulas:{}:{}:{}:{}:{}:{}",
+        formulas.attribute_stage_bounds.min,
+        formulas.attribute_stage_bounds.max,
+        formulas.accuracy.min,
+        formulas.accuracy.max,
+        formulas.accuracy.stage_step,
+        formulas.damage.min_damage
+    )
 }
 
 fn skill_hash_part(skill: &SkillDef) -> String {
@@ -1150,6 +1201,9 @@ fn pvp_poll_network_system(
     mut input: ResMut<PvpLobbyInput>,
     dbs: Option<Res<BattleDbs>>,
     monsters: Option<Res<MonsterPool>>,
+    rules: Option<Res<BattleRules>>,
+    formulas: Option<Res<BattleFormulaRules>>,
+    deck: Option<Res<CardDeck>>,
 ) {
     let mut events = Vec::new();
     if let Some(rx) = &connection.event_rx {
@@ -1169,10 +1223,16 @@ fn pvp_poll_network_system(
             NetEvent::Connected => {
                 connection.status = PvpStatus::Connected;
                 input.info = "已连接，正在握手。".to_string();
-                if let (Some(dbs), Some(monsters)) = (dbs.as_ref(), monsters.as_ref()) {
+                if let (Some(dbs), Some(monsters), Some(rules), Some(formulas), Some(deck)) = (
+                    dbs.as_ref(),
+                    monsters.as_ref(),
+                    rules.as_ref(),
+                    formulas.as_ref(),
+                    deck.as_ref(),
+                ) {
                     connection.send(PvpMessage::Hello {
                         protocol_version: PROTOCOL_VERSION,
-                        data_hash: data_hash(dbs, monsters),
+                        data_hash: data_hash(dbs, monsters, rules, formulas, deck),
                     });
                 }
             }
@@ -1181,11 +1241,18 @@ fn pvp_poll_network_system(
                     protocol_version,
                     data_hash: remote_hash,
                 } => {
-                    let local_hash = dbs
-                        .as_ref()
-                        .zip(monsters.as_ref())
-                        .map(|(dbs, monsters)| data_hash(dbs, monsters))
-                        .unwrap_or_default();
+                    let local_hash = match (
+                        dbs.as_ref(),
+                        monsters.as_ref(),
+                        rules.as_ref(),
+                        formulas.as_ref(),
+                        deck.as_ref(),
+                    ) {
+                        (Some(dbs), Some(monsters), Some(rules), Some(formulas), Some(deck)) => {
+                            data_hash(dbs, monsters, rules, formulas, deck)
+                        }
+                        _ => String::new(),
+                    };
                     let accepted =
                         protocol_version == PROTOCOL_VERSION && remote_hash == local_hash;
                     let reason = if protocol_version != PROTOCOL_VERSION {

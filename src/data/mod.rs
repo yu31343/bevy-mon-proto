@@ -235,6 +235,13 @@ impl ElementDb {
             .unwrap_or(1.0)
     }
 
+    pub fn entries(&self) -> Vec<(ElementType, ElementType, f32)> {
+        self.matrix
+            .iter()
+            .map(|(&(attacker, defender), &multiplier)| (attacker, defender, multiplier))
+            .collect()
+    }
+
     /// 从配置构建默认的元素克制矩阵（用于 fallback）。
     pub fn from_default_config() -> Self {
         let mut matrix = HashMap::new();
