@@ -146,13 +146,13 @@ impl ElementAura {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusStageModifier {
     pub attribute: AttributeType,
     pub amount: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusInstance {
     pub id: String,
     pub name: String,
