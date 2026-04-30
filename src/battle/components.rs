@@ -453,6 +453,7 @@ pub struct PendingKoResolution {
     pub enemy_switch_index: Option<usize>,
     pub player_defeated: bool,
     pub enemy_defeated: bool,
+    pub resume_phase: Option<BattlePhase>,
 }
 
 impl Default for PendingKoResolution {
@@ -463,6 +464,7 @@ impl Default for PendingKoResolution {
             enemy_switch_index: None,
             player_defeated: false,
             enemy_defeated: false,
+            resume_phase: None,
         }
     }
 }

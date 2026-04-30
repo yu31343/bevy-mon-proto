@@ -8,9 +8,9 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
-        PendingKoResolution, ReplayEventLog, Shield, Side, Stats, StructuredBattleLog, TurnCount,
-        note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
-        transfer_status_by_id,
+        PendingKoResolution, ReplayEventLog, RoundOrder, Shield, Side, Stats, StructuredBattleLog,
+        TurnContext, TurnCount, battle_phase_for_side, note_action_phase, note_structured_phase,
+        push_battle_line, push_named_action_trace, transfer_status_by_id,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -171,11 +171,7 @@ pub fn check_end_system(
         e_dead = enemy_next_idx.is_none();
     }
 
-    if pending_ko.player_switch_index.is_some()
-        || pending_ko.enemy_switch_index.is_some()
-        || p_dead
-        || e_dead
-    {
+    if p_hp <= 0 || e_hp <= 0 {
         pending_ko.player_defeated = p_dead;
         pending_ko.enemy_defeated = e_dead;
         pending_ko.timer = Timer::from_seconds(1.0, TimerMode::Once);
@@ -193,6 +189,12 @@ pub fn check_end_system(
         );
         next_phase.set(BattlePhase::DeathResolve);
     } else {
+        pending_ko.player_switch_index = None;
+        pending_ko.enemy_switch_index = None;
+        pending_ko.player_defeated = false;
+        pending_ko.enemy_defeated = false;
+        pending_ko.resume_phase = None;
+
         for &entity in &player_team.0.combatants {
             if let Ok((mut stats, _shield, mut statuses, mut aura)) = queries.p1().get_mut(entity) {
                 process_round_end_status_durations(
@@ -248,6 +250,8 @@ pub fn resolve_ko_system(
     mut enemy_team: ResMut<crate::battle::EnemyTeam>,
     mut pending_ko: ResMut<PendingKoResolution>,
     turn_count: Res<TurnCount>,
+    turn_ctx: Res<TurnContext>,
+    round_order: Res<RoundOrder>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -368,15 +372,35 @@ pub fn resolve_ko_system(
         );
         pending_ko.player_defeated = false;
         pending_ko.enemy_defeated = false;
+        pending_ko.resume_phase = None;
         next_game_state.set(GameState::Result);
-    } else {
+    } else if let Some(phase) = pending_ko.resume_phase.take() {
         note_structured_phase(
             &mut structured_log,
             "death-resolve",
             "死亡结算完成",
-            "双方已完成换人，返回下一回合。",
+            "双方已完成换人，返回当前行动方。",
         );
-        next_phase.set(BattlePhase::RoundStart);
+        next_phase.set(phase);
+    } else {
+        let next = if round_order.first == Side::Player
+            && turn_ctx.player_ended
+            && !turn_ctx.enemy_ended
+        {
+            battle_phase_for_side(round_order.second)
+        } else if round_order.first == Side::Enemy && turn_ctx.enemy_ended && !turn_ctx.player_ended
+        {
+            battle_phase_for_side(round_order.second)
+        } else {
+            BattlePhase::CheckEnd
+        };
+        note_structured_phase(
+            &mut structured_log,
+            "death-resolve",
+            "死亡结算完成",
+            "双方已完成换人，继续回合结算。",
+        );
+        next_phase.set(next);
     }
 }
 
@@ -487,7 +511,7 @@ mod tests {
             PlayerTeam, ReplayEventLog, Shield, Side, StatusBoard, StatusInstance,
             StructuredBattleLog, Team, systems::consume_battle_events_system,
         },
-        data::{BattleFormulaRules, StatusCategory, StatusTickTiming},
+        data::{BattleFormulaRules, ElementType, StatusCategory, StatusTickTiming},
         game_state::GameState,
     };
     use bevy::{ecs::message::Messages, prelude::State, time::TimePlugin};
@@ -506,6 +530,39 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    fn spawn_test_combatant(app: &mut App, name: &str, side: Side, hp: i32) -> Entity {
+        app.world_mut()
+            .spawn((
+                InBattle,
+                Name::new(name.to_string()),
+                Combatant {
+                    side,
+                    element: ElementType::Fire,
+                },
+                test_stats(hp),
+                StatusBoard::default(),
+            ))
+            .id()
+    }
+
+    fn setup_resolve_ko_app(pending_ko: PendingKoResolution) -> App {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.init_resource::<Messages<BattleEvent>>();
+        app.insert_resource(pending_ko);
+        app.insert_resource(TurnCount(5));
+        app.insert_resource(TurnContext::default());
+        app.insert_resource(RoundOrder::default());
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ActionTrace::default());
+        app.insert_resource(BattleResult::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.insert_resource(NextState::<GameState>::default());
+        app.add_systems(Update, resolve_ko_system);
+        app
     }
 
     #[test]
@@ -593,6 +650,57 @@ mod tests {
         assert!(trace.0.iter().any(|entry| {
             entry.action == "fainted" && entry.detail.contains("Player A 倒下")
         }));
+    }
+
+    #[test]
+    fn check_end_clears_stale_pending_ko_when_no_combatant_fainted() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleFormulaEvent>>();
+        app.init_resource::<Messages<BattleStatusEvent>>();
+        app.insert_resource(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: Some(1),
+            enemy_switch_index: Some(1),
+            player_defeated: true,
+            enemy_defeated: true,
+            resume_phase: Some(BattlePhase::PlayerTurn),
+        });
+        app.insert_resource(TurnCount(1));
+        app.insert_resource(BattleFormulaRules::default());
+        app.insert_resource(BattleLog::default());
+        app.insert_resource(StructuredBattleLog::default());
+        app.insert_resource(ActionTrace::default());
+        app.insert_resource(BattleResult::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.insert_resource(NextState::<GameState>::default());
+        app.add_systems(Update, check_end_system);
+
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 12);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 12);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let pending_ko = app.world().resource::<PendingKoResolution>();
+        assert_eq!(pending_ko.player_switch_index, None);
+        assert_eq!(pending_ko.enemy_switch_index, None);
+        assert!(!pending_ko.player_defeated);
+        assert!(!pending_ko.enemy_defeated);
+        assert_eq!(pending_ko.resume_phase, None);
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::RoundStart)
+        ));
     }
 
     #[test]
@@ -691,65 +799,18 @@ mod tests {
 
     #[test]
     fn resolve_ko_switches_to_next_living_combatant() {
-        let mut app = App::new();
-        app.add_plugins(TimePlugin);
-        app.init_resource::<Messages<BattleEvent>>();
-        app.insert_resource(PendingKoResolution {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
             timer: Timer::from_seconds(0.0, TimerMode::Once),
             player_switch_index: Some(1),
             enemy_switch_index: None,
             player_defeated: false,
             enemy_defeated: false,
+            resume_phase: Some(BattlePhase::PlayerTurn),
         });
-        app.insert_resource(TurnCount(5));
-        app.insert_resource(BattleLog::default());
-        app.insert_resource(StructuredBattleLog::default());
-        app.insert_resource(ActionTrace::default());
-        app.insert_resource(BattleResult::default());
-        app.insert_resource(NextState::<BattlePhase>::default());
-        app.insert_resource(NextState::<GameState>::default());
-        app.add_systems(Update, resolve_ko_system);
 
-        let player_active = app
-            .world_mut()
-            .spawn((
-                InBattle,
-                Name::new("Player A"),
-                Combatant {
-                    side: Side::Player,
-                    element: crate::data::ElementType::Fire,
-                },
-                test_stats(0),
-                StatusBoard::default(),
-            ))
-            .id();
-        let player_bench = app
-            .world_mut()
-            .spawn((
-                InBattle,
-                Name::new("Player B"),
-                Combatant {
-                    side: Side::Player,
-                    element: crate::data::ElementType::Water,
-                },
-                test_stats(14),
-                StatusBoard::default(),
-            ))
-            .id();
-        let enemy_active = app
-            .world_mut()
-            .spawn((
-                InBattle,
-                Name::new("Enemy A"),
-                Combatant {
-                    side: Side::Enemy,
-                    element: crate::data::ElementType::Grass,
-                },
-                test_stats(8),
-                StatusBoard::default(),
-            ))
-            .id();
-
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 0);
+        let player_bench = spawn_test_combatant(&mut app, "Player B", Side::Player, 14);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 8);
         app.insert_resource(PlayerTeam(Team {
             combatants: vec![player_active, player_bench],
             active_index: 0,
@@ -763,13 +824,11 @@ mod tests {
 
         let player_team = app.world().resource::<PlayerTeam>();
         assert_eq!(player_team.0.active_index, 1);
-
         let next_phase = app.world().resource::<NextState<BattlePhase>>();
         assert!(matches!(
             next_phase,
-            NextState::Pending(BattlePhase::RoundStart)
+            NextState::Pending(BattlePhase::PlayerTurn)
         ));
-
         let battle_log = app.world().resource::<BattleLog>();
         assert!(
             battle_log
@@ -777,7 +836,6 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("玩家换上了 Player B"))
         );
-
         let trace = app.world().resource::<ActionTrace>();
         assert!(
             trace
@@ -785,6 +843,174 @@ mod tests {
                 .iter()
                 .any(|entry| entry.action == "auto_switch" && entry.detail.contains("Player B"))
         );
+    }
+
+    #[test]
+    fn resolve_ko_returns_to_enemy_turn_when_enemy_action_caused_ko() {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: None,
+            enemy_switch_index: Some(1),
+            player_defeated: false,
+            enemy_defeated: false,
+            resume_phase: Some(BattlePhase::EnemyTurn),
+        });
+
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 12);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 0);
+        let enemy_bench = spawn_test_combatant(&mut app, "Enemy B", Side::Enemy, 14);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active, enemy_bench],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let enemy_team = app.world().resource::<EnemyTeam>();
+        assert_eq!(enemy_team.0.active_index, 1);
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::EnemyTurn)
+        ));
+    }
+
+    #[test]
+    fn resolve_ko_enters_result_when_defeated_even_with_resume_phase() {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: None,
+            enemy_switch_index: None,
+            player_defeated: false,
+            enemy_defeated: true,
+            resume_phase: Some(BattlePhase::PlayerTurn),
+        });
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 12);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 0);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let next_game_state = app.world().resource::<NextState<GameState>>();
+        assert!(matches!(
+            next_game_state,
+            NextState::Pending(GameState::Result)
+        ));
+        let pending_ko = app.world().resource::<PendingKoResolution>();
+        assert_eq!(pending_ko.resume_phase, None);
+    }
+
+    #[test]
+    fn resolve_ko_with_no_resume_continues_to_second_side() {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: Some(1),
+            enemy_switch_index: None,
+            player_defeated: false,
+            enemy_defeated: false,
+            resume_phase: None,
+        });
+        app.world_mut().resource_mut::<TurnContext>().player_ended = true;
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 0);
+        let player_bench = spawn_test_combatant(&mut app, "Player B", Side::Player, 14);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 12);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active, player_bench],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::EnemyTurn)
+        ));
+    }
+
+    #[test]
+    fn resolve_ko_with_no_resume_and_both_ended_goes_check_end() {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: Some(1),
+            enemy_switch_index: None,
+            player_defeated: false,
+            enemy_defeated: false,
+            resume_phase: None,
+        });
+        {
+            let mut turn_ctx = app.world_mut().resource_mut::<TurnContext>();
+            turn_ctx.player_ended = true;
+            turn_ctx.enemy_ended = true;
+        }
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 0);
+        let player_bench = spawn_test_combatant(&mut app, "Player B", Side::Player, 14);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 12);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active, player_bench],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::CheckEnd)
+        ));
+    }
+
+    #[test]
+    fn simultaneous_nonterminal_ko_auto_switches_both_and_resumes_actor() {
+        let mut app = setup_resolve_ko_app(PendingKoResolution {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            player_switch_index: Some(1),
+            enemy_switch_index: Some(1),
+            player_defeated: false,
+            enemy_defeated: false,
+            resume_phase: Some(BattlePhase::PlayerTurn),
+        });
+        let player_active = spawn_test_combatant(&mut app, "Player A", Side::Player, 0);
+        let player_bench = spawn_test_combatant(&mut app, "Player B", Side::Player, 14);
+        let enemy_active = spawn_test_combatant(&mut app, "Enemy A", Side::Enemy, 0);
+        let enemy_bench = spawn_test_combatant(&mut app, "Enemy B", Side::Enemy, 14);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player_active, player_bench],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy_active, enemy_bench],
+            active_index: 0,
+        }));
+
+        app.update();
+
+        assert_eq!(app.world().resource::<PlayerTeam>().0.active_index, 1);
+        assert_eq!(app.world().resource::<EnemyTeam>().0.active_index, 1);
+        let next_phase = app.world().resource::<NextState<BattlePhase>>();
+        assert!(matches!(
+            next_phase,
+            NextState::Pending(BattlePhase::PlayerTurn)
+        ));
     }
 
     #[test]

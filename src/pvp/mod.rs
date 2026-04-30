@@ -2232,6 +2232,7 @@ fn pvp_apply_host_snapshot_system(
     runtime.pending_ko.enemy_switch_index = None;
     runtime.pending_ko.player_defeated = snapshot.player_defeated;
     runtime.pending_ko.enemy_defeated = snapshot.enemy_defeated;
+    runtime.pending_ko.resume_phase = None;
 
     if let Some(player_team) = runtime.player_team.as_mut() {
         player_team.0.active_index = snapshot

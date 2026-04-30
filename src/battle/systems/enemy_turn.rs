@@ -4,9 +4,9 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
-        TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
-        push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, RoundOrder, Shield, Side, SkillCount, SkillList, Stats,
+        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
+        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{
         BattleDbs, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect, SkillId,
@@ -629,6 +629,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     action_points: ResMut<'w, ActionPoints>,
     hand: ResMut<'w, Hand>,
     pending_boosts: ResMut<'w, PendingBoosts>,
+    pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
@@ -795,6 +796,7 @@ pub fn enemy_turn_input_system(
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
     let pending_boosts = &mut runtime.pending_boosts;
+    let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
@@ -1308,7 +1310,7 @@ pub fn enemy_turn_input_system(
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
-            turn_ctx.enemy_ended = true;
+            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -1427,7 +1429,7 @@ pub fn enemy_turn_input_system(
                                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                                 .unwrap_or(false);
                         if should_go_check_end {
-                            turn_ctx.enemy_ended = true;
+                            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
                             next_phase.set(BattlePhase::CheckEnd);
                             return;
                         }
@@ -1722,6 +1724,7 @@ pub fn enemy_turn_ai_system(
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
     let pending_boosts = &mut runtime.pending_boosts;
+    let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
@@ -1808,7 +1811,7 @@ pub fn enemy_turn_ai_system(
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
-            turn_ctx.enemy_ended = true;
+            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
             ai_state.0 = 0.0;
             ai_state.1 = false;
             ai_state.2 = false;
@@ -2416,7 +2419,7 @@ pub fn enemy_turn_ai_system(
                     .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                     .unwrap_or(false);
             if should_go_check_end {
-                turn_ctx.enemy_ended = true;
+                pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
                 ai_state.0 = 0.0;
                 ai_state.1 = false;
                 ai_state.2 = false;
