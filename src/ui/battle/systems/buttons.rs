@@ -463,9 +463,6 @@ pub(crate) fn button_play_card_two_step_system(
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
-                if *ap <= 0 {
-                    turn_ctx.player_end_requested = true;
-                }
             }
             Side::Enemy => {
                 let cards = &mut hand.enemy;
@@ -527,9 +524,6 @@ pub(crate) fn button_play_card_two_step_system(
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
-                if *ap <= 0 {
-                    turn_ctx.enemy_end_requested = true;
-                }
             }
         }
         break;
