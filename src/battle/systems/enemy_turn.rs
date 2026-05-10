@@ -4,9 +4,9 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
-        TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
-        push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, RoundOrder, Shield, Side, SkillCount, SkillList, Stats,
+        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
+        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{
         BattleDbs, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect, SkillId,
@@ -629,6 +629,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     action_points: ResMut<'w, ActionPoints>,
     hand: ResMut<'w, Hand>,
     pending_boosts: ResMut<'w, PendingBoosts>,
+    pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
@@ -783,14 +784,19 @@ pub fn enemy_turn_input_system(
         With<InBattle>,
     >,
 ) {
-    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+    if !matches!(
+        *battle_mode,
+        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
+    ) {
         return;
     }
+    let remote_controlled = *battle_mode == BattleControlMode::PlayerVsRemote;
 
     let round_order = &runtime.round_order;
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
     let pending_boosts = &mut runtime.pending_boosts;
+    let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
@@ -833,7 +839,7 @@ pub fn enemy_turn_input_system(
         None
     };
 
-    if let Some(target_index) = switch_target {
+    if !remote_controlled && let Some(target_index) = switch_target {
         if action_points.enemy >= 1
             && target_index < enemy_team.0.combatants.len()
             && target_index != enemy_team.0.active_index
@@ -881,7 +887,7 @@ pub fn enemy_turn_input_system(
         return;
     }
 
-    if keyboard.just_pressed(KeyCode::KeyF) {
+    if !remote_controlled && keyboard.just_pressed(KeyCode::KeyF) {
         if hand.enemy.is_empty() {
             return;
         }
@@ -1304,163 +1310,166 @@ pub fn enemy_turn_input_system(
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
-            turn_ctx.enemy_ended = true;
+            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
         return;
     }
 
-    for (key, idx) in [
-        (KeyCode::KeyZ, 0_usize),
-        (KeyCode::KeyX, 1_usize),
-        (KeyCode::KeyC, 2_usize),
-        (KeyCode::KeyV, 3_usize),
-        (KeyCode::KeyB, 4_usize),
-    ] {
-        if keyboard.just_pressed(key) {
-            if idx >= hand.enemy.len() {
-                return;
-            }
-            if selected.enemy.discard_armed {
-                let card_id = hand.enemy.remove(idx);
-                action_points.enemy += 1;
-                let card_name = dbs
-                    .cards
-                    .get(&card_id)
-                    .map(|c| c.name.to_string())
-                    .unwrap_or_else(|| format!("{card_id:?}"));
-                writers.event_writer.write(BattleEvent::CardDiscarded {
-                    side: Side::Enemy,
-                    card_name: card_name.clone(),
-                });
-                note_action_phase(
-                    &mut logs.structured_log,
-                    logs.turn_count.0,
-                    Side::Enemy,
-                    "敌方弃牌",
-                    format!(
-                        "弃置卡牌={}；获得AP=1；当前AP={}",
-                        card_name, action_points.enemy
-                    ),
-                );
-                push_named_action_trace(
-                    &mut logs.action_trace,
-                    logs.turn_count.0,
-                    Side::Enemy,
-                    "discard_card",
-                    format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
-                );
-                selected.enemy.index = None;
-                selected.enemy.discard_armed = false;
-                return;
-            }
-            if selected.enemy.index != Some(idx) {
-                selected.enemy.index = Some(idx);
-                return;
-            }
-            let card_id = hand.enemy[idx];
-            if let Some(card) = dbs.cards.get(&card_id) {
-                if action_points.enemy >= card.cost_ap {
-                    hand.enemy.remove(idx);
-                    action_points.enemy -= card.cost_ap;
-
-                    let card_name = card.name.to_string();
-                    writers.event_writer.write(BattleEvent::CardUsed {
+    if !remote_controlled {
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0_usize),
+            (KeyCode::KeyX, 1_usize),
+            (KeyCode::KeyC, 2_usize),
+            (KeyCode::KeyV, 3_usize),
+            (KeyCode::KeyB, 4_usize),
+        ] {
+            if keyboard.just_pressed(key) {
+                if idx >= hand.enemy.len() {
+                    return;
+                }
+                if selected.enemy.discard_armed {
+                    let card_id = hand.enemy.remove(idx);
+                    action_points.enemy += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    writers.event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
                         card_name: card_name.clone(),
                     });
-
-                    let effect_detail = match card.effect {
-                        CardEffect::GainAp { amount } => {
-                            action_points.enemy += amount;
-                            format!("获得AP={amount}")
-                        }
-                        CardEffect::NextAttackBoost { amount } => {
-                            pending_boosts.enemy.next_attack_bonus = amount;
-                            format!("下次攻击加成={amount}")
-                        }
-                        CardEffect::NextShieldBoost { amount } => {
-                            pending_boosts.enemy.next_shield_bonus = amount;
-                            format!("下次护盾加成={amount}")
-                        }
-                        CardEffect::NextHealBoost { amount } => {
-                            pending_boosts.enemy.next_heal_bonus = amount;
-                            format!("下次治疗加成={amount}")
-                        }
-                    };
                     note_action_phase(
                         &mut logs.structured_log,
                         logs.turn_count.0,
                         Side::Enemy,
-                        "敌方使用卡牌",
+                        "敌方弃牌",
                         format!(
-                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
-                            card_name, card.cost_ap, effect_detail, action_points.enemy
+                            "弃置卡牌={}；获得AP=1；当前AP={}",
+                            card_name, action_points.enemy
                         ),
                     );
                     push_named_action_trace(
                         &mut logs.action_trace,
                         logs.turn_count.0,
                         Side::Enemy,
-                        "use_card",
-                        format!(
-                            "卡牌={}；效果={}；当前AP={}",
-                            card_name, effect_detail, action_points.enemy
-                        ),
+                        "discard_card",
+                        format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
                     );
-
                     selected.enemy.index = None;
                     selected.enemy.discard_armed = false;
+                    return;
+                }
+                if selected.enemy.index != Some(idx) {
+                    selected.enemy.index = Some(idx);
+                    return;
+                }
+                let card_id = hand.enemy[idx];
+                if let Some(card) = dbs.cards.get(&card_id) {
+                    if action_points.enemy >= card.cost_ap {
+                        hand.enemy.remove(idx);
+                        action_points.enemy -= card.cost_ap;
 
-                    let should_go_check_end = exec_query
-                        .get(p_entity)
-                        .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                        .unwrap_or(false)
-                        || exec_query
-                            .get(e_entity)
+                        let card_name = card.name.to_string();
+                        writers.event_writer.write(BattleEvent::CardUsed {
+                            side: Side::Enemy,
+                            card_name: card_name.clone(),
+                        });
+
+                        let effect_detail = match card.effect {
+                            CardEffect::GainAp { amount } => {
+                                action_points.enemy += amount;
+                                format!("获得AP={amount}")
+                            }
+                            CardEffect::NextAttackBoost { amount } => {
+                                pending_boosts.enemy.next_attack_bonus = amount;
+                                format!("下次攻击加成={amount}")
+                            }
+                            CardEffect::NextShieldBoost { amount } => {
+                                pending_boosts.enemy.next_shield_bonus = amount;
+                                format!("下次护盾加成={amount}")
+                            }
+                            CardEffect::NextHealBoost { amount } => {
+                                pending_boosts.enemy.next_heal_bonus = amount;
+                                format!("下次治疗加成={amount}")
+                            }
+                        };
+                        note_action_phase(
+                            &mut logs.structured_log,
+                            logs.turn_count.0,
+                            Side::Enemy,
+                            "敌方使用卡牌",
+                            format!(
+                                "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                                card_name, card.cost_ap, effect_detail, action_points.enemy
+                            ),
+                        );
+                        push_named_action_trace(
+                            &mut logs.action_trace,
+                            logs.turn_count.0,
+                            Side::Enemy,
+                            "use_card",
+                            format!(
+                                "卡牌={}；效果={}；当前AP={}",
+                                card_name, effect_detail, action_points.enemy
+                            ),
+                        );
+
+                        selected.enemy.index = None;
+                        selected.enemy.discard_armed = false;
+
+                        let should_go_check_end = exec_query
+                            .get(p_entity)
                             .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false);
-                    if should_go_check_end {
-                        turn_ctx.enemy_ended = true;
-                        next_phase.set(BattlePhase::CheckEnd);
-                        return;
+                            .unwrap_or(false)
+                            || exec_query
+                                .get(e_entity)
+                                .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                                .unwrap_or(false);
+                        if should_go_check_end {
+                            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
+                            next_phase.set(BattlePhase::CheckEnd);
+                            return;
+                        }
                     }
                 }
+                return;
             }
-            return;
         }
-    }
 
-    let skill_slot = if keyboard.just_pressed(KeyCode::Digit1) {
-        Some(0_usize)
-    } else if keyboard.just_pressed(KeyCode::Digit2) {
-        Some(1_usize)
-    } else if keyboard.just_pressed(KeyCode::Digit3) {
-        Some(2_usize)
-    } else if keyboard.just_pressed(KeyCode::Digit4) {
-        Some(3_usize)
-    } else {
-        None
-    };
-
-    if let Some(skill_slot) = skill_slot {
-        let Ok((_, _, _, skill_list, skill_count, _, _, _, _)) = exec_query.get(e_entity) else {
-            return;
+        let skill_slot = if keyboard.just_pressed(KeyCode::Digit1) {
+            Some(0_usize)
+        } else if keyboard.just_pressed(KeyCode::Digit2) {
+            Some(1_usize)
+        } else if keyboard.just_pressed(KeyCode::Digit3) {
+            Some(2_usize)
+        } else if keyboard.just_pressed(KeyCode::Digit4) {
+            Some(3_usize)
+        } else {
+            None
         };
-        if skill_slot >= skill_count.0 {
+
+        if let Some(skill_slot) = skill_slot {
+            let Ok((_, _, _, skill_list, skill_count, _, _, _, _)) = exec_query.get(e_entity)
+            else {
+                return;
+            };
+            if skill_slot >= skill_count.0 {
+                return;
+            }
+            let skill_id = skill_list.0[skill_slot];
+            turn_ctx.enemy_action = Some(TurnAction::Skill(skill_id));
+            next_phase.set(BattlePhase::EnemyTurn);
             return;
         }
-        let skill_id = skill_list.0[skill_slot];
-        turn_ctx.enemy_action = Some(TurnAction::Skill(skill_id));
-        next_phase.set(BattlePhase::EnemyTurn);
-        return;
-    }
 
-    if keyboard.just_pressed(KeyCode::KeyE) {
-        turn_ctx.enemy_end_requested = true;
+        if keyboard.just_pressed(KeyCode::KeyE) {
+            turn_ctx.enemy_end_requested = true;
+        }
     }
-    if turn_ctx.enemy_end_requested || action_points.enemy <= 0 {
+    if turn_ctx.enemy_end_requested {
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -1700,7 +1709,10 @@ pub fn enemy_turn_ai_system(
         With<InBattle>,
     >,
 ) {
-    if *battle_mode == BattleControlMode::DebugPlayerControlsBoth {
+    if matches!(
+        *battle_mode,
+        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
+    ) {
         ai_state.0 = 0.0;
         ai_state.1 = false;
         ai_state.2 = false;
@@ -1711,6 +1723,7 @@ pub fn enemy_turn_ai_system(
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
     let pending_boosts = &mut runtime.pending_boosts;
+    let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
@@ -1797,7 +1810,7 @@ pub fn enemy_turn_ai_system(
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
-            turn_ctx.enemy_ended = true;
+            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
             ai_state.0 = 0.0;
             ai_state.1 = false;
             ai_state.2 = false;
@@ -2405,7 +2418,7 @@ pub fn enemy_turn_ai_system(
                     .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                     .unwrap_or(false);
             if should_go_check_end {
-                turn_ctx.enemy_ended = true;
+                pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
                 ai_state.0 = 0.0;
                 ai_state.1 = false;
                 ai_state.2 = false;

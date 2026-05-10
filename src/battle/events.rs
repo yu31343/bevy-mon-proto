@@ -73,6 +73,9 @@ pub enum BattleEvent {
         side: Side,
         name: String,
     },
+    NetworkInterrupted {
+        reason: String,
+    },
 }
 
 #[allow(dead_code)]

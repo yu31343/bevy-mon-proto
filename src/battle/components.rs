@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, fmt};
 
 use bevy::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     data::{
@@ -13,7 +13,7 @@ use crate::{
     game_state::BattlePhase,
 };
 
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Side {
     Player,
     Enemy,
@@ -146,13 +146,13 @@ impl ElementAura {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusStageModifier {
     pub attribute: AttributeType,
     pub amount: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusInstance {
     pub id: String,
     pub name: String,
@@ -410,6 +410,12 @@ pub enum BattleControlMode {
     #[default]
     PlayerVsAi,
     DebugPlayerControlsBoth,
+    PlayerVsRemote,
+}
+
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PvpTurnOrder {
+    pub local_first: bool,
 }
 
 #[derive(Resource, Debug, Clone, Copy)]
@@ -447,6 +453,7 @@ pub struct PendingKoResolution {
     pub enemy_switch_index: Option<usize>,
     pub player_defeated: bool,
     pub enemy_defeated: bool,
+    pub resume_phase: Option<BattlePhase>,
 }
 
 impl Default for PendingKoResolution {
@@ -457,6 +464,7 @@ impl Default for PendingKoResolution {
             enemy_switch_index: None,
             player_defeated: false,
             enemy_defeated: false,
+            resume_phase: None,
         }
     }
 }

@@ -2,14 +2,15 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, ActionTrace, BattleEvent, BattleFormulaEvent, BattleLog, BattleResult,
-        BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts, RoundOrder,
-        SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction,
-        TurnContext, TurnCount, next_phase_after_side_end, note_action_phase,
-        push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
+        BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
+        PendingKoResolution, RoundOrder, SelectedCards, Shield, Side, SkillCount, SkillList, Stats,
+        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
+        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{BattleDbs, CardEffect},
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::{
@@ -38,6 +39,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     round_order: Res<'w, RoundOrder>,
     hand: ResMut<'w, Hand>,
     pending_boosts: ResMut<'w, PendingBoosts>,
+    pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
@@ -47,6 +49,30 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     selected: ResMut<'w, SelectedCards>,
+    battle_mode: Res<'w, BattleControlMode>,
+    pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+    pvp_pending_intent: Option<ResMut<'w, pvp::PvpPendingLocalIntent>>,
+}
+
+fn send_pvp_intent(
+    battle_mode: &BattleControlMode,
+    connection: &mut Option<ResMut<pvp::PvpConnection>>,
+    pending_intent: &mut Option<ResMut<pvp::PvpPendingLocalIntent>>,
+    intent: pvp::BattleIntent,
+) -> bool {
+    if *battle_mode != BattleControlMode::PlayerVsRemote {
+        return false;
+    }
+    let Some(connection) = connection.as_mut() else {
+        return false;
+    };
+    if connection.role != Some(pvp::PvpRole::Client) {
+        return false;
+    }
+    if let Some(pending_intent) = pending_intent.as_mut() {
+        pvp::send_local_intent(connection, pending_intent, intent);
+    }
+    true
 }
 
 fn finalize_player_turn(
@@ -131,6 +157,7 @@ pub fn player_turn_input_system(
     let round_order = &runtime.round_order;
     let hand = &mut runtime.hand;
     let pending_boosts = &mut runtime.pending_boosts;
+    let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
@@ -140,6 +167,15 @@ pub fn player_turn_input_system(
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
     let selected = &mut runtime.selected;
+    let battle_mode = &runtime.battle_mode;
+    let pvp_connection = &mut runtime.pvp_connection;
+    let pvp_pending_intent = &mut runtime.pvp_pending_intent;
+
+    if pvp_pending_intent.as_ref().is_some_and(|pending| {
+        pending.0.is_some() && **battle_mode == BattleControlMode::PlayerVsRemote
+    }) {
+        return;
+    }
 
     if turn_ctx.player_ended {
         return;
@@ -199,6 +235,14 @@ pub fn player_turn_input_system(
             ) = query.get_many_mut([current_entity, target_entity])
             {
                 if target_stats.hp > 0 {
+                    if send_pvp_intent(
+                        battle_mode,
+                        pvp_connection,
+                        pvp_pending_intent,
+                        pvp::BattleIntent::Switch { target_index },
+                    ) {
+                        return;
+                    }
                     transfer_status_by_id(
                         &mut current_statuses,
                         &mut current_stats,
@@ -260,6 +304,15 @@ pub fn player_turn_input_system(
             return;
         }
 
+        if send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp_pending_intent,
+            pvp::BattleIntent::UseSkill { slot },
+        ) {
+            turn_ctx.player_action = None;
+            return;
+        }
         action_points.player -= cost;
         turn_ctx.player_action = None;
 
@@ -584,7 +637,7 @@ pub fn player_turn_input_system(
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                 .unwrap_or(false);
         if should_go_check_end {
-            turn_ctx.player_ended = true;
+            pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -598,6 +651,15 @@ pub fn player_turn_input_system(
     }
 
     if turn_ctx.player_end_requested {
+        if send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp_pending_intent,
+            pvp::BattleIntent::EndTurn,
+        ) {
+            turn_ctx.player_end_requested = false;
+            return;
+        }
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -637,6 +699,18 @@ pub fn player_turn_input_system(
             selected.player.discard_armed = !selected.player.discard_armed;
             return;
         };
+        if send_pvp_intent(
+            battle_mode,
+            pvp_connection,
+            pvp_pending_intent,
+            pvp::BattleIntent::DiscardCard {
+                card_index: target_index,
+            },
+        ) {
+            selected.player.index = None;
+            selected.player.discard_armed = false;
+            return;
+        }
         let card_id = hand.player.remove(target_index);
         action_points.player += 1;
         let card_name = dbs
@@ -685,6 +759,16 @@ pub fn player_turn_input_system(
             }
             // 若已武装弃牌模式（由点击"弃牌"按钮触发），直接弃置该牌
             if selected.player.discard_armed {
+                if send_pvp_intent(
+                    battle_mode,
+                    pvp_connection,
+                    pvp_pending_intent,
+                    pvp::BattleIntent::DiscardCard { card_index: idx },
+                ) {
+                    selected.player.index = None;
+                    selected.player.discard_armed = false;
+                    return;
+                }
                 let card_id = hand.player.remove(idx);
                 action_points.player += 1;
                 let card_name = dbs
@@ -726,6 +810,16 @@ pub fn player_turn_input_system(
             let card_id = hand.player[idx];
             if let Some(card) = dbs.cards.get(&card_id) {
                 if action_points.player >= card.cost_ap {
+                    if send_pvp_intent(
+                        battle_mode,
+                        pvp_connection,
+                        pvp_pending_intent,
+                        pvp::BattleIntent::UseCard { card_index: idx },
+                    ) {
+                        selected.player.index = None;
+                        selected.player.discard_armed = false;
+                        return;
+                    }
                     hand.player.remove(idx);
                     action_points.player -= card.cost_ap;
 
@@ -786,7 +880,7 @@ pub fn player_turn_input_system(
                             .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
                             .unwrap_or(false);
                     if should_go_check_end {
-                        turn_ctx.player_ended = true;
+                        pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
                         next_phase.set(BattlePhase::CheckEnd);
                         return;
                     }
@@ -827,6 +921,14 @@ pub fn player_turn_input_system(
         return;
     }
 
+    if send_pvp_intent(
+        battle_mode,
+        pvp_connection,
+        pvp_pending_intent,
+        pvp::BattleIntent::UseSkill { slot: skill_slot },
+    ) {
+        return;
+    }
     action_points.player -= cost;
 
     // 事件：技能使用（用于 UI 闪白）。
@@ -1181,7 +1283,7 @@ pub fn player_turn_input_system(
             .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
             .unwrap_or(false);
     if should_go_check_end {
-        turn_ctx.player_ended = true;
+        pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
         next_phase.set(BattlePhase::CheckEnd);
         return;
     }
