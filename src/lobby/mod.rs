@@ -1,10 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    data::MonsterPool,
+    data::{BattleDbs, MonsterPool},
     game_state::GameState,
     team_selection::SelectionEntryMode,
-    ui::battle::{resources::UiFontHandle, theme::UiTheme},
+    ui::battle::{
+        helpers::{monster_skill_ap_cost_ui, skill_meta, skill_name, skill_summary},
+        resources::UiFontHandle,
+        theme::UiTheme,
+    },
 };
 
 pub struct LobbyPlugin;
@@ -12,6 +16,7 @@ pub struct LobbyPlugin;
 impl Plugin for LobbyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MonsterDexScrollOffset>()
+            .init_resource::<MonsterDexDetailState>()
             .add_systems(OnExit(GameState::Lobby), cleanup_lobby_ui)
             .add_systems(
                 Update,
@@ -41,15 +46,16 @@ impl Plugin for LobbyPlugin {
             )
             .add_systems(
                 Update,
-                dex_back_button_system.run_if(in_state(GameState::MonsterDex)),
-            )
-            .add_systems(
-                Update,
-                monster_dex_mouse_wheel_scroll_system.run_if(in_state(GameState::MonsterDex)),
-            )
-            .add_systems(
-                Update,
-                monster_dex_scrollbar_update_system.run_if(in_state(GameState::MonsterDex)),
+                (
+                    dex_back_button_system,
+                    monster_dex_entry_click_system,
+                    monster_dex_detail_close_system,
+                    monster_dex_detail_visibility_system,
+                    monster_dex_detail_update_system,
+                    monster_dex_mouse_wheel_scroll_system,
+                    monster_dex_scrollbar_update_system,
+                )
+                    .run_if(in_state(GameState::MonsterDex)),
             );
     }
 }
@@ -86,6 +92,35 @@ struct MonsterDexScrollbarThumb;
 
 #[derive(Resource, Default)]
 struct MonsterDexScrollOffset(f32);
+
+#[derive(Resource, Default)]
+struct MonsterDexDetailState {
+    selected: Option<usize>,
+    open: bool,
+}
+
+#[derive(Component)]
+struct MonsterDexEntryButton {
+    index: usize,
+}
+
+#[derive(Component)]
+struct MonsterDexDetailOverlayRoot;
+
+#[derive(Component)]
+struct MonsterDexDetailBackdrop;
+
+#[derive(Component)]
+struct MonsterDexDetailCloseButton;
+
+#[derive(Component)]
+struct MonsterDexDetailNameText;
+
+#[derive(Component)]
+struct MonsterDexDetailStatsText;
+
+#[derive(Component)]
+struct MonsterDexDetailSkillsText;
 
 fn setup_lobby_ui(
     mut commands: Commands,
@@ -317,6 +352,7 @@ fn setup_monster_dex_ui(
     theme: Res<UiTheme>,
     monster_pool: Res<MonsterPool>,
     mut scroll_offset: ResMut<MonsterDexScrollOffset>,
+    mut detail_state: ResMut<MonsterDexDetailState>,
     ui_font: Option<Res<UiFontHandle>>,
     existing_ui: Query<(), With<MonsterDexUiRoot>>,
 ) {
@@ -324,6 +360,8 @@ fn setup_monster_dex_ui(
         return;
     }
     scroll_offset.0 = 0.0;
+    detail_state.selected = None;
+    detail_state.open = false;
 
     let title_font = make_text_font(36.0, ui_font.as_deref());
     let body_font = make_text_font(18.0, ui_font.as_deref());
@@ -418,8 +456,9 @@ fn setup_monster_dex_ui(
                                 MonsterDexListContent,
                             ))
                             .with_children(|list| {
-                                for monster in &monster_pool.monsters {
+                                for (index, monster) in monster_pool.monsters.iter().enumerate() {
                                     list.spawn((
+                                        Button,
                                         Node {
                                             width: Val::Percent(100.0),
                                             flex_direction: FlexDirection::Column,
@@ -431,6 +470,7 @@ fn setup_monster_dex_ui(
                                         },
                                         BackgroundColor(theme.enemy_card_bg),
                                         BorderColor::all(theme.enemy_card_border),
+                                        MonsterDexEntryButton { index },
                                     ))
                                     .with_children(|card| {
                                         card.spawn((
@@ -443,17 +483,18 @@ fn setup_monster_dex_ui(
                                         ));
                                         card.spawn((
                                             Text::new(format!(
-                                                "HP {}  ATK {}  DEF {}  SPD {}",
+                                                "HP {}  ATK {}  DEF {}  SPD {}  ACC {}",
                                                 monster.stats.hp,
                                                 monster.stats.atk,
                                                 monster.stats.def,
-                                                monster.stats.spd
+                                                monster.stats.spd,
+                                                monster.stats.acc
                                             )),
                                             small_font.clone(),
                                             TextColor(theme.text_secondary),
                                         ));
                                         card.spawn((
-                                            Text::new(format!("技能数：{}", monster.skills.len())),
+                                            Text::new(format!("技能数：{}（点击查看详情）", monster.skills.len())),
                                             small_font.clone(),
                                             TextColor(theme.text_muted),
                                         ));
@@ -489,6 +530,115 @@ fn setup_monster_dex_ui(
                         ));
                     });
                 });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    display: Display::None,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                MonsterDexDetailOverlayRoot,
+            ))
+            .with_children(|overlay| {
+                overlay.spawn((
+                    Button,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(0.0),
+                        left: Val::Px(0.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.68)),
+                    BorderColor::all(Color::NONE),
+                    MonsterDexDetailBackdrop,
+                ));
+
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Px(760.0),
+                            max_height: Val::Percent(82.0),
+                            padding: UiRect::all(Val::Px(18.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(10.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(theme.radius_panel),
+                            overflow: Overflow::clip_y(),
+                            ..default()
+                        },
+                        BackgroundColor(theme.panel),
+                        BorderColor::all(theme.border_panel),
+                        theme.panel_shadow(),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                border: UiRect::bottom(Val::Px(1.0)),
+                                padding: UiRect::bottom(Val::Px(8.0)),
+                                ..default()
+                            },
+                            BorderColor::all(theme.divider),
+                        ))
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("精灵详情"),
+                                body_font.clone(),
+                                TextColor(theme.text_primary),
+                                MonsterDexDetailNameText,
+                            ));
+
+                            header
+                                .spawn((
+                                    Button,
+                                    Node {
+                                        min_width: Val::Px(80.0),
+                                        min_height: Val::Px(34.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        border_radius: BorderRadius::all(theme.radius_button),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.button_idle),
+                                    BorderColor::all(theme.button_border_idle),
+                                    theme.button_shadow(),
+                                    MonsterDexDetailCloseButton,
+                                ))
+                                .with_children(|btn| {
+                                    btn.spawn((
+                                        Text::new("关闭"),
+                                        small_font.clone(),
+                                        TextColor(theme.text_primary),
+                                    ));
+                                });
+                        });
+
+                        panel.spawn((
+                            Text::new(""),
+                            small_font.clone(),
+                            TextColor(theme.text_secondary),
+                            MonsterDexDetailStatsText,
+                        ));
+
+                        panel.spawn((
+                            Text::new(""),
+                            small_font.clone(),
+                            TextColor(theme.text_primary),
+                            MonsterDexDetailSkillsText,
+                        ));
+                    });
+            });
         });
 }
 
@@ -509,6 +659,119 @@ fn dex_back_button_system(
         if *interaction == Interaction::Pressed {
             next_state.set(GameState::Lobby);
             return;
+        }
+    }
+}
+
+fn monster_dex_entry_click_system(
+    mut detail_state: ResMut<MonsterDexDetailState>,
+    mut entries: Query<
+        (&Interaction, &MonsterDexEntryButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    for (interaction, entry) in &mut entries {
+        if *interaction == Interaction::Pressed {
+            detail_state.selected = Some(entry.index);
+            detail_state.open = true;
+            return;
+        }
+    }
+}
+
+fn monster_dex_detail_close_system(
+    mut detail_state: ResMut<MonsterDexDetailState>,
+    mut close_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<MonsterDexDetailCloseButton>),
+    >,
+    mut backdrops: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<MonsterDexDetailBackdrop>),
+    >,
+) {
+    for interaction in &mut close_buttons {
+        if *interaction == Interaction::Pressed {
+            detail_state.open = false;
+            return;
+        }
+    }
+
+    for interaction in &mut backdrops {
+        if *interaction == Interaction::Pressed {
+            detail_state.open = false;
+            return;
+        }
+    }
+}
+
+fn monster_dex_detail_visibility_system(
+    detail_state: Res<MonsterDexDetailState>,
+    mut overlays: Query<&mut Node, With<MonsterDexDetailOverlayRoot>>,
+) {
+    for mut node in &mut overlays {
+        node.display = if detail_state.open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
+fn monster_dex_detail_update_system(
+    detail_state: Res<MonsterDexDetailState>,
+    monster_pool: Res<MonsterPool>,
+    battle_dbs: Res<BattleDbs>,
+    mut detail_texts: Query<
+        (
+            &mut Text,
+            Option<&MonsterDexDetailNameText>,
+            Option<&MonsterDexDetailStatsText>,
+            Option<&MonsterDexDetailSkillsText>,
+        ),
+    >,
+) {
+    if !detail_state.is_changed() {
+        return;
+    }
+
+    let Some(index) = detail_state.selected else {
+        return;
+    };
+    let Some(monster) = monster_pool.monsters.get(index) else {
+        return;
+    };
+
+    let name_value = format!("{}（{:?}）", monster.name, monster.element);
+    let stat_value = format!(
+        "HP {}  ATK {}  DEF {}  SPD {}  ACC {}",
+        monster.stats.hp,
+        monster.stats.atk,
+        monster.stats.def,
+        monster.stats.spd,
+        monster.stats.acc
+    );
+
+    let mut lines = Vec::with_capacity(monster.skills.len() * 4 + 1);
+    for (slot, skill_id) in monster.skills.iter().copied().enumerate() {
+        lines.push(format!("{}号：{}", slot + 1, skill_name(skill_id, &battle_dbs)));
+        lines.push(skill_meta(skill_id, &battle_dbs));
+        lines.push(format!("AP消耗：{}", monster_skill_ap_cost_ui(skill_id, &battle_dbs)));
+        lines.push(skill_summary(skill_id, &battle_dbs));
+        lines.push(String::new());
+    }
+    if lines.is_empty() {
+        lines.push("该精灵暂无技能配置".to_string());
+    }
+    let skills_value = lines.join("\n");
+
+    for (mut text, is_name, is_stats, is_skills) in &mut detail_texts {
+        if is_name.is_some() {
+            text.0 = name_value.clone();
+        } else if is_stats.is_some() {
+            text.0 = stat_value.clone();
+        } else if is_skills.is_some() {
+            text.0 = skills_value.clone();
         }
     }
 }
