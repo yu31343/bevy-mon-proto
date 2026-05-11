@@ -67,7 +67,7 @@ struct LobbyUiRoot;
 struct StartBattleButton;
 
 #[derive(Component)]
-struct MapButton;  // 新增
+struct MapButton; // 新增
 
 #[derive(Component)]
 struct OpenDexButton;
@@ -311,7 +311,7 @@ fn lobby_button_system(
         &Interaction,
         (Changed<Interaction>, With<Button>, With<DebugBattleButton>),
     >,
-    mut map_buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, With<MapButton>)>,  // 新增
+    mut map_buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, With<MapButton>)>, // 新增
 ) {
     for interaction in &mut battle_buttons {
         if *interaction == Interaction::Pressed {
@@ -344,7 +344,8 @@ fn lobby_button_system(
         }
     }
 
-    for interaction in &mut map_buttons {  // 新增
+    for interaction in &mut map_buttons {
+        // 新增
         if *interaction == Interaction::Pressed {
             next_state.set(GameState::Map);
             return;
@@ -361,7 +362,7 @@ fn lobby_button_visual_system(
             With<Button>,
             Or<(
                 With<StartBattleButton>,
-                With<MapButton>,  // 新增
+                With<MapButton>, // 新增
                 With<PvpBattleButton>,
                 With<OpenDexButton>,
                 With<DebugBattleButton>,
@@ -530,7 +531,10 @@ fn setup_monster_dex_ui(
                                             TextColor(theme.text_secondary),
                                         ));
                                         card.spawn((
-                                            Text::new(format!("技能数：{}（点击查看详情）", monster.skills.len())),
+                                            Text::new(format!(
+                                                "技能数：{}（点击查看详情）",
+                                                monster.skills.len()
+                                            )),
                                             small_font.clone(),
                                             TextColor(theme.text_muted),
                                         ));
@@ -615,50 +619,51 @@ fn setup_monster_dex_ui(
                         theme.panel_shadow(),
                     ))
                     .with_children(|panel| {
-                        panel.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                justify_content: JustifyContent::SpaceBetween,
-                                align_items: AlignItems::Center,
-                                border: UiRect::bottom(Val::Px(1.0)),
-                                padding: UiRect::bottom(Val::Px(8.0)),
-                                ..default()
-                            },
-                            BorderColor::all(theme.divider),
-                        ))
-                        .with_children(|header| {
-                            header.spawn((
-                                Text::new("精灵详情"),
-                                body_font.clone(),
-                                TextColor(theme.text_primary),
-                                MonsterDexDetailNameText,
-                            ));
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    justify_content: JustifyContent::SpaceBetween,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::bottom(Val::Px(1.0)),
+                                    padding: UiRect::bottom(Val::Px(8.0)),
+                                    ..default()
+                                },
+                                BorderColor::all(theme.divider),
+                            ))
+                            .with_children(|header| {
+                                header.spawn((
+                                    Text::new("精灵详情"),
+                                    body_font.clone(),
+                                    TextColor(theme.text_primary),
+                                    MonsterDexDetailNameText,
+                                ));
 
-                            header
-                                .spawn((
-                                    Button,
-                                    Node {
-                                        min_width: Val::Px(80.0),
-                                        min_height: Val::Px(34.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        border_radius: BorderRadius::all(theme.radius_button),
-                                        ..default()
-                                    },
-                                    BackgroundColor(theme.button_idle),
-                                    BorderColor::all(theme.button_border_idle),
-                                    theme.button_shadow(),
-                                    MonsterDexDetailCloseButton,
-                                ))
-                                .with_children(|btn| {
-                                    btn.spawn((
-                                        Text::new("关闭"),
-                                        small_font.clone(),
-                                        TextColor(theme.text_primary),
-                                    ));
-                                });
-                        });
+                                header
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(80.0),
+                                            min_height: Val::Px(34.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            border_radius: BorderRadius::all(theme.radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.button_idle),
+                                        BorderColor::all(theme.button_border_idle),
+                                        theme.button_shadow(),
+                                        MonsterDexDetailCloseButton,
+                                    ))
+                                    .with_children(|btn| {
+                                        btn.spawn((
+                                            Text::new("关闭"),
+                                            small_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                            });
 
                         panel.spawn((
                             Text::new(""),
@@ -719,11 +724,19 @@ fn monster_dex_detail_close_system(
     mut detail_state: ResMut<MonsterDexDetailState>,
     mut close_buttons: Query<
         &Interaction,
-        (Changed<Interaction>, With<Button>, With<MonsterDexDetailCloseButton>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<MonsterDexDetailCloseButton>,
+        ),
     >,
     mut backdrops: Query<
         &Interaction,
-        (Changed<Interaction>, With<Button>, With<MonsterDexDetailBackdrop>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<MonsterDexDetailBackdrop>,
+        ),
     >,
 ) {
     for interaction in &mut close_buttons {
@@ -758,14 +771,12 @@ fn monster_dex_detail_update_system(
     detail_state: Res<MonsterDexDetailState>,
     monster_pool: Res<MonsterPool>,
     battle_dbs: Res<BattleDbs>,
-    mut detail_texts: Query<
-        (
-            &mut Text,
-            Option<&MonsterDexDetailNameText>,
-            Option<&MonsterDexDetailStatsText>,
-            Option<&MonsterDexDetailSkillsText>,
-        ),
-    >,
+    mut detail_texts: Query<(
+        &mut Text,
+        Option<&MonsterDexDetailNameText>,
+        Option<&MonsterDexDetailStatsText>,
+        Option<&MonsterDexDetailSkillsText>,
+    )>,
 ) {
     if !detail_state.is_changed() {
         return;
@@ -790,9 +801,16 @@ fn monster_dex_detail_update_system(
 
     let mut lines = Vec::with_capacity(monster.skills.len() * 4 + 1);
     for (slot, skill_id) in monster.skills.iter().copied().enumerate() {
-        lines.push(format!("{}号：{}", slot + 1, skill_name(skill_id, &battle_dbs)));
+        lines.push(format!(
+            "{}号：{}",
+            slot + 1,
+            skill_name(skill_id, &battle_dbs)
+        ));
         lines.push(skill_meta(skill_id, &battle_dbs));
-        lines.push(format!("AP消耗：{}", monster_skill_ap_cost_ui(skill_id, &battle_dbs)));
+        lines.push(format!(
+            "AP消耗：{}",
+            monster_skill_ap_cost_ui(skill_id, &battle_dbs)
+        ));
         lines.push(skill_summary(skill_id, &battle_dbs));
         lines.push(String::new());
     }

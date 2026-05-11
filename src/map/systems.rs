@@ -1,7 +1,8 @@
-use bevy::prelude::*;
 use crate::game_state::GameState;
-use crate::map::components::{Map, Character, SpriteEntity};
+use crate::map::components::{Character, EnterLobbyButton, Map, MapUiRoot, SpriteEntity};
 use crate::team_selection::SelectionEntryMode;
+use crate::ui::battle::{resources::UiFontHandle, theme::UiTheme};
+use bevy::prelude::*;
 
 pub fn spawn_map(mut commands: Commands) {
     // 极简地图：一个大的矩形背景
@@ -25,7 +26,7 @@ pub fn spawn_character(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 1.0),
-        Character { 
+        Character {
             speed: 100.0,
             target_position: None,
         },
@@ -47,7 +48,7 @@ pub fn spawn_sprites(mut commands: Commands) {
         Vec3::new(-100.0, 50.0, 1.0),
         Vec3::new(200.0, -50.0, 1.0),
     ];
-    
+
     for (pos, &monster_name) in positions.iter().zip(monster_names.iter()) {
         commands.spawn((
             Sprite {
@@ -61,6 +62,55 @@ pub fn spawn_sprites(mut commands: Commands) {
             },
         ));
     }
+}
+
+pub fn setup_map_ui(
+    mut commands: Commands,
+    theme: Res<UiTheme>,
+    ui_font: Option<Res<UiFontHandle>>,
+    existing_ui: Query<(), With<MapUiRoot>>,
+) {
+    if !existing_ui.is_empty() {
+        return;
+    }
+
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Start,
+                align_items: AlignItems::Start,
+                padding: UiRect::all(Val::Px(20.0)),
+                ..default()
+            },
+            MapUiRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Px(180.0),
+                    min_height: Val::Px(50.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(theme.radius_button),
+                    ..default()
+                },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
+                EnterLobbyButton,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("进入大厅"),
+                    make_text_font(22.0, ui_font.as_deref()),
+                    TextColor(theme.text_primary),
+                ));
+            });
+        });
 }
 
 pub fn move_character(
@@ -97,17 +147,18 @@ pub fn move_character(
             let current_pos = transform.translation.truncate();
             let direction = (target - current_pos).normalize();
             let distance = (target - current_pos).length();
-            
-            if distance > 5.0 { // 到达阈值
+
+            if distance > 5.0 {
+                // 到达阈值
                 let move_distance = character.speed * time.delta_secs();
                 let new_pos = current_pos + direction * move_distance.min(distance);
-                
+
                 // 再次边界检查
                 let clamped_pos = Vec2::new(
                     new_pos.x.clamp(-400.0 + 10.0, 400.0 - 10.0),
                     new_pos.y.clamp(-300.0 + 10.0, 300.0 - 10.0),
                 );
-                
+
                 transform.translation.x = clamped_pos.x;
                 transform.translation.y = clamped_pos.y;
             } else {
@@ -133,7 +184,8 @@ pub fn click_sprites(
                         let world_pos: Vec2 = world_pos.origin.truncate(); // 2D
                         for (transform, sprite) in sprite_q.iter() {
                             let distance = (transform.translation.truncate() - world_pos).length();
-                            if distance < 30.0 { // 点击范围
+                            if distance < 30.0 {
+                                // 点击范围
                                 println!("Clicked on {}", sprite.monster_type);
                                 *entry_mode = SelectionEntryMode::VsAi;
                                 next_state.set(GameState::TeamSelection);
@@ -147,8 +199,70 @@ pub fn click_sprites(
     }
 }
 
-pub fn cleanup_map(mut commands: Commands, query: Query<Entity, Or<(With<Map>, With<Character>, With<SpriteEntity>)>>) {
+pub fn map_enter_lobby_button_system(
+    mut next_state: ResMut<NextState<GameState>>,
+    mut button_query: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<EnterLobbyButton>),
+    >,
+) {
+    for interaction in &mut button_query {
+        if *interaction == Interaction::Pressed {
+            next_state.set(GameState::Lobby);
+        }
+    }
+}
+
+pub fn map_button_visual_system(
+    theme: Res<UiTheme>,
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<Button>, With<EnterLobbyButton>),
+    >,
+) {
+    for (interaction, mut background, mut border) in &mut interaction_query {
+        *background = match *interaction {
+            Interaction::Pressed => BackgroundColor(theme.button_pressed),
+            Interaction::Hovered => BackgroundColor(theme.button_hover),
+            Interaction::None => BackgroundColor(theme.button_idle),
+        };
+
+        *border = match *interaction {
+            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+            Interaction::None => BorderColor::all(theme.button_border_idle),
+        };
+    }
+}
+
+pub fn cleanup_map(
+    mut commands: Commands,
+    query: Query<
+        Entity,
+        Or<(
+            With<Map>,
+            With<Character>,
+            With<SpriteEntity>,
+            With<MapUiRoot>,
+        )>,
+    >,
+) {
     for entity in query.iter() {
         commands.entity(entity).despawn();
+    }
+}
+
+fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextFont {
+    if let Some(ui_font) = ui_font {
+        TextFont {
+            font: ui_font.0.clone(),
+            font_size: size,
+            ..default()
+        }
+    } else {
+        TextFont {
+            font_size: size,
+            ..default()
+        }
     }
 }

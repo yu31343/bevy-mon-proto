@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum GameState {
     #[default]
     Lobby,
-    Map,  // 新增地图状态
+    Map, // 新增地图状态
     MonsterDex,
     PvpLobby,
     TeamSelection,

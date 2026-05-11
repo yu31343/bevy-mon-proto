@@ -497,7 +497,7 @@ pub fn restart_from_result_system(
         }
 
         next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::Map);  // 修改为返回地图
+        next_game_state.set(GameState::Map); // 修改为返回地图
     }
 }
 

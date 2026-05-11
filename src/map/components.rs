@@ -13,3 +13,9 @@ pub struct Character {
 pub struct SpriteEntity {
     pub monster_type: String, // 简化为字符串，实际可扩展
 }
+
+#[derive(Component)]
+pub struct MapUiRoot;
+
+#[derive(Component)]
+pub struct EnterLobbyButton;
