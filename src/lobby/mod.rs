@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    data::{BattleDbs, MonsterPool},
+    data::{BattleDbs, MapBattleContext, MonsterPool},
     game_state::GameState,
     team_selection::SelectionEntryMode,
     ui::battle::{
@@ -298,6 +298,7 @@ fn cleanup_lobby_ui(mut commands: Commands, query: Query<Entity, With<LobbyUiRoo
 fn lobby_button_system(
     mut next_state: ResMut<NextState<GameState>>,
     mut entry_mode: ResMut<SelectionEntryMode>,
+    mut map_battle_context: ResMut<MapBattleContext>,
     mut battle_buttons: Query<
         &Interaction,
         (Changed<Interaction>, With<Button>, With<StartBattleButton>),
@@ -315,6 +316,7 @@ fn lobby_button_system(
 ) {
     for interaction in &mut battle_buttons {
         if *interaction == Interaction::Pressed {
+            map_battle_context.enemy_monster_index = None;
             *entry_mode = SelectionEntryMode::VsAi;
             next_state.set(GameState::TeamSelection);
             return;
@@ -323,6 +325,7 @@ fn lobby_button_system(
 
     for interaction in &mut pvp_buttons {
         if *interaction == Interaction::Pressed {
+            map_battle_context.enemy_monster_index = None;
             *entry_mode = SelectionEntryMode::Pvp;
             next_state.set(GameState::PvpLobby);
             return;
@@ -331,6 +334,7 @@ fn lobby_button_system(
 
     for interaction in &mut debug_buttons {
         if *interaction == Interaction::Pressed {
+            map_battle_context.enemy_monster_index = None;
             *entry_mode = SelectionEntryMode::Debug;
             next_state.set(GameState::TeamSelection);
             return;

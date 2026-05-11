@@ -1,5 +1,8 @@
+use crate::data::{MapBattleContext, MonsterPool};
 use crate::game_state::GameState;
-use crate::map::components::{Character, EnterLobbyButton, Map, MapUiRoot, SpriteEntity};
+use crate::map::components::{
+    Character, EnterLobbyButton, Map, MapUiRoot, SpriteEntity, SpriteNameLabel,
+};
 use crate::team_selection::SelectionEntryMode;
 use crate::ui::battle::{resources::UiFontHandle, theme::UiTheme};
 use bevy::prelude::*;
@@ -40,27 +43,45 @@ pub fn setup_sprite_spine(
     // TODO: 集成Spine动画
 }
 
-pub fn spawn_sprites(mut commands: Commands) {
-    // 放置几个精灵：暂时使用蓝色方块，稍后替换为Spine
-    let monster_names = ["火精灵", "水精灵", "风精灵"];
-    let positions = vec![
+pub fn spawn_sprites(
+    mut commands: Commands,
+    monster_pool: Res<MonsterPool>,
+    ui_font: Option<Res<UiFontHandle>>,
+) {
+    let positions = [
         Vec3::new(100.0, 100.0, 1.0),
         Vec3::new(-100.0, 50.0, 1.0),
         Vec3::new(200.0, -50.0, 1.0),
     ];
 
-    for (pos, &monster_name) in positions.iter().zip(monster_names.iter()) {
-        commands.spawn((
-            Sprite {
-                color: Color::srgb(0.0, 0.0, 1.0),
-                custom_size: Some(Vec2::new(30.0, 30.0)),
-                ..default()
-            },
-            Transform::from_translation(*pos),
-            SpriteEntity {
-                monster_type: monster_name.to_string(),
-            },
-        ));
+    for (monster_index, (monster, pos)) in monster_pool
+        .monsters
+        .iter()
+        .zip(positions.iter())
+        .enumerate()
+    {
+        commands
+            .spawn((
+                Sprite {
+                    color: Color::srgb(0.0, 0.0, 1.0),
+                    custom_size: Some(Vec2::new(30.0, 30.0)),
+                    ..default()
+                },
+                Transform::from_translation(*pos),
+                SpriteEntity {
+                    monster_type: monster.name.clone(),
+                    monster_index,
+                },
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Text2d::new(monster.name.clone()),
+                    make_text_font(20.0, ui_font.as_deref()),
+                    TextColor(Color::WHITE),
+                    Transform::from_xyz(0.0, 35.0, 1.0),
+                    SpriteNameLabel,
+                ));
+            });
     }
 }
 
@@ -175,6 +196,7 @@ pub fn click_sprites(
     sprite_q: Query<(&Transform, &SpriteEntity), With<SpriteEntity>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut entry_mode: ResMut<SelectionEntryMode>,
+    mut map_battle_context: ResMut<MapBattleContext>,
 ) {
     if mouse_button_input.just_pressed(MouseButton::Left) {
         if let Ok(window) = windows.single() {
@@ -187,6 +209,7 @@ pub fn click_sprites(
                             if distance < 30.0 {
                                 // 点击范围
                                 println!("Clicked on {}", sprite.monster_type);
+                                map_battle_context.enemy_monster_index = Some(sprite.monster_index);
                                 *entry_mode = SelectionEntryMode::VsAi;
                                 next_state.set(GameState::TeamSelection);
                                 break;
@@ -243,6 +266,7 @@ pub fn cleanup_map(
             With<Map>,
             With<Character>,
             With<SpriteEntity>,
+            With<SpriteNameLabel>,
             With<MapUiRoot>,
         )>,
     >,

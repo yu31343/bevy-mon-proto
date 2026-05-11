@@ -11,8 +11,12 @@ pub struct Character {
 
 #[derive(Component)]
 pub struct SpriteEntity {
-    pub monster_type: String, // 简化为字符串，实际可扩展
+    pub monster_type: String,
+    pub monster_index: usize,
 }
+
+#[derive(Component)]
+pub struct SpriteNameLabel;
 
 #[derive(Component)]
 pub struct MapUiRoot;

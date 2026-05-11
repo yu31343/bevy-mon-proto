@@ -3,7 +3,7 @@ use rand::seq::SliceRandom;
 
 use crate::{
     battle::BattleControlMode,
-    data::{BattleRules, MonsterPool, TeamSelections},
+    data::{BattleRules, MapBattleContext, MonsterPool, TeamSelections},
     game_state::GameState,
     pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
     team_selection::{
@@ -54,6 +54,7 @@ pub fn button_confirm_selection_system(
     entry_mode: Res<SelectionEntryMode>,
     monster_pool: Res<MonsterPool>,
     rules: Res<BattleRules>,
+    mut map_battle_context: ResMut<MapBattleContext>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
     pvp_connection: Option<Res<PvpConnection>>,
@@ -86,8 +87,15 @@ pub fn button_confirm_selection_system(
 
         match *entry_mode {
             SelectionEntryMode::VsAi => {
-                let enemy_indices =
-                    generate_ai_selection(monster_pool.monsters.len(), selected_count);
+                let enemy_indices = if let Some(idx) = map_battle_context.enemy_monster_index {
+                    if idx < monster_pool.monsters.len() {
+                        vec![idx]
+                    } else {
+                        generate_ai_selection(monster_pool.monsters.len(), selected_count)
+                    }
+                } else {
+                    generate_ai_selection(monster_pool.monsters.len(), selected_count)
+                };
 
                 println!("=== 队伍选择 ===");
                 print!("玩家选择: ");
@@ -113,6 +121,7 @@ pub fn button_confirm_selection_system(
                     player_indices: selection_state.selected_indices.clone(),
                     enemy_indices,
                 });
+                map_battle_context.enemy_monster_index = None;
                 next_state.set(GameState::Battle);
             }
             SelectionEntryMode::Debug if selection_state.stage == SelectionStage::Player => {
