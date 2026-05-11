@@ -3,11 +3,12 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, Hand, PendingBoosts, PlayerTeam,
-        RoundOrder, SelectedCards, Side, Stats, StructuredBattleLog, TurnContext, TurnCount,
-        UiControlSide, note_round_phase, opposite_side, push_named_action_trace,
+        PvpTurnOrder, RoundOrder, SelectedCards, Side, Stats, StructuredBattleLog, TurnContext,
+        TurnCount, UiControlSide, note_round_phase, opposite_side, push_named_action_trace,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
+    pvp::{PvpConnection, PvpRole},
 };
 
 fn hand_names(hand: &[crate::data::CardId], dbs: &BattleDbs) -> String {
@@ -43,6 +44,8 @@ pub(crate) struct RoundStartResources<'w> {
 pub fn round_start_system(
     card_deck: Res<CardDeck>,
     query: Query<&Stats>,
+    battle_mode: Res<BattleControlMode>,
+    pvp_turn_order: Option<Res<PvpTurnOrder>>,
     mut runtime: RoundStartResources,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
@@ -73,13 +76,26 @@ pub fn round_start_system(
     hand.enemy.clear();
     let deck_len = card_deck.0.len();
     let seed = turn_count.0 as usize;
+    let mut first_role_cards = Vec::new();
+    let mut second_role_cards = Vec::new();
     for i in 0..rules.cards_per_round {
         let idx = (seed * 7 + i * 3) % deck_len;
-        hand.player.push(card_deck.0[idx]);
+        first_role_cards.push(card_deck.0[idx]);
     }
     for i in 0..rules.cards_per_round {
         let idx = (seed * 11 + i * 5) % deck_len;
-        hand.enemy.push(card_deck.0[idx]);
+        second_role_cards.push(card_deck.0[idx]);
+    }
+    if *battle_mode == BattleControlMode::PlayerVsRemote
+        && pvp_turn_order
+            .as_ref()
+            .is_some_and(|order| !order.local_first)
+    {
+        hand.player = second_role_cards;
+        hand.enemy = first_role_cards;
+    } else {
+        hand.player = first_role_cards;
+        hand.enemy = second_role_cards;
     }
 
     let player_cards = hand_names(&hand.player, &dbs);
@@ -112,7 +128,17 @@ pub fn round_start_system(
 
     let player_spd = super::combat::effective_spd(player_stats, &formula_rules);
     let enemy_spd = super::combat::effective_spd(enemy_stats, &formula_rules);
-    let first_side = if player_spd > enemy_spd {
+    let first_side = if *battle_mode == BattleControlMode::PlayerVsRemote {
+        let local_is_host = pvp_turn_order
+            .as_ref()
+            .is_some_and(|order| order.local_first);
+        crate::pvp::pvp_host_first_side(
+            player_spd,
+            enemy_spd,
+            local_is_host,
+            round_order.previous_first,
+        )
+    } else if player_spd > enemy_spd {
         Side::Player
     } else if enemy_spd > player_spd {
         Side::Enemy
@@ -160,13 +186,21 @@ pub fn round_start_system(
 pub fn sync_ui_control_side_system(
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
+    pvp_connection: Option<Res<PvpConnection>>,
     mut ui_control_side: ResMut<UiControlSide>,
 ) {
     ui_control_side.0 = match *battle_phase.get() {
         BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::DebugPlayerControlsBoth => {
             Side::Enemy
         }
-        BattlePhase::EnemyTurn => Side::Player,
+        BattlePhase::EnemyTurn
+            if *battle_mode == BattleControlMode::PlayerVsRemote
+                && pvp_connection
+                    .as_ref()
+                    .is_some_and(|connection| connection.role == Some(PvpRole::Client)) =>
+        {
+            Side::Player
+        }
         _ => Side::Player,
     };
 }

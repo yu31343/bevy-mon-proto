@@ -39,7 +39,7 @@ The README says active development happens on `develop`. New work is expected to
 
 ## Architecture
 
-`src/main.rs` is intentionally thin. It initializes the top-level `GameState` and nested `BattlePhase`, then registers plugins in this order: `DataPlugin`, `UiPlugin`, `LobbyPlugin`, `TeamSelectionPlugin`, `BattlePlugin`, and `SpineAnimPlugin`.
+`src/main.rs` is intentionally thin. It initializes the top-level `GameState` and nested `BattlePhase`, adds `EguiPlugin`, then registers gameplay plugins in this order: `DataPlugin`, `UiPlugin`, `LobbyPlugin`, `PvpPlugin`, `TeamSelectionPlugin`, `BattlePlugin`, and `SpineAnimPlugin`.
 
 ### State flow
 
@@ -47,7 +47,7 @@ The app is driven by one top-level state machine plus one nested battle-phase st
 
 ```text
 GameState::Lobby
-  -> GameState::MonsterDex or GameState::TeamSelection
+  -> GameState::MonsterDex, GameState::PvpLobby, or GameState::TeamSelection
   -> GameState::Battle with BattlePhase::Init
   -> RoundStart -> PlayerTurn -> EnemyTurn -> CheckEnd
   -> DeathResolve or next RoundStart
@@ -57,8 +57,9 @@ GameState::Lobby
 
 Important state details:
 
-- `LobbyPlugin` owns the real entry screen. It routes into team selection, monster dex, or debug battle setup.
-- `TeamSelectionPlugin` has two modes via `SelectionEntryMode`: `VsAi` selects only the player team and auto-generates the enemy team, while `Debug` is a two-step flow where the user selects both sides.
+- `LobbyPlugin` owns the real entry screen. It routes into VS AI selection, PVP lobby, monster dex, or debug battle setup.
+- `TeamSelectionPlugin` has three modes via `SelectionEntryMode`: `VsAi` selects only the player team and auto-generates the enemy team, `Debug` is a two-step flow where the user selects both sides, and `Pvp` submits the local team then waits for the remote team.
+- `PvpPlugin` owns `GameState::PvpLobby`, performs connection setup, then switches into `TeamSelection` once the protocol/data handshake succeeds.
 - `restart_from_result_system` returns to `GameState::Lobby`, resets selection state, and restores `VsAi` mode when the player restarts.
 
 ### Data-driven battle setup
@@ -88,6 +89,14 @@ Important runtime rules:
 - `round_start_system` redraws hands from `CardDeck`, adds `BattleRules.ap_per_round` on top of leftover AP, clears pending boosts, and hands control to the player side first.
 - `BattlePlugin` uses Bevy messages as the contract between core battle logic and downstream consumers. New combat feedback should usually become a new `BattleEvent` or related message rather than direct UI mutation.
 - Enemy turns stay in `Update` because AI pacing depends on local timers rather than a single `OnEnter` step.
+
+### PVP networking flow
+
+- `src/pvp/mod.rs` handles both direct TCP LAN play and relay-server play. Network IO runs on background threads that send `NetEvent`s back into Bevy resources; Bevy systems poll those events in `Update`.
+- PVP sessions start in `GameState::PvpLobby`. A `Hello`/`HelloAck` handshake checks both `PROTOCOL_VERSION` and a stable hash of battle data, rules, formulas, cards, monsters, and deck order before allowing team selection.
+- When both players submit teams, `pvp_apply_remote_team_system` inserts `BattleControlMode::PlayerVsRemote`, `PvpTurnOrder`, and `TeamSelections`, then enters the normal battle state.
+- The host is authoritative during PVP battles: clients send `BattleIntent`s, the host applies remote intents during its enemy turn, broadcasts battle feedback, and sends snapshots that the client mirrors into local ECS state.
+- PVP uses the same battle UI/resources as local play, but `UiControlSide`, hand assignment, turn order, and result messages are mirrored depending on whether the local peer is host or client.
 
 ### Combat model
 

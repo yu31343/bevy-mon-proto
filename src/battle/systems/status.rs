@@ -29,6 +29,16 @@ fn aura_status_element(status_id: &str) -> Option<ElementType> {
     }
 }
 
+fn apply_status_tick_heal(stats: &mut Stats, heal_amount: i32) -> Option<i32> {
+    if heal_amount <= 0 || stats.hp <= 0 {
+        return None;
+    }
+
+    let before = stats.hp;
+    stats.hp = (stats.hp + heal_amount).min(stats.max_hp);
+    Some(stats.hp - before)
+}
+
 pub(crate) fn process_side_end_statuses(
     stats: &mut Stats,
     shield: &mut Shield,
@@ -97,10 +107,7 @@ pub(crate) fn process_side_end_statuses(
             ));
         }
 
-        if outcome.heal_amount > 0 {
-            let before = stats.hp;
-            stats.hp = (stats.hp + outcome.heal_amount).min(stats.max_hp);
-            let actual_heal = stats.hp - before;
+        if let Some(actual_heal) = apply_status_tick_heal(stats, outcome.heal_amount) {
             params.event_writer.write(BattleEvent::Healed {
                 side: params.side,
                 amount: actual_heal,
@@ -209,5 +216,45 @@ pub(crate) fn process_round_end_status_durations(
                 ),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_stats(hp: i32) -> Stats {
+        Stats {
+            hp,
+            max_hp: 30,
+            atk: 5,
+            def: 5,
+            spd: 5,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        }
+    }
+
+    #[test]
+    fn status_tick_heal_does_not_revive_fainted_combatant() {
+        let mut stats = test_stats(0);
+
+        let actual_heal = apply_status_tick_heal(&mut stats, 6);
+
+        assert_eq!(actual_heal, None);
+        assert_eq!(stats.hp, 0);
+    }
+
+    #[test]
+    fn status_tick_heal_still_heals_living_combatant() {
+        let mut stats = test_stats(10);
+
+        let actual_heal = apply_status_tick_heal(&mut stats, 6);
+
+        assert_eq!(actual_heal, Some(6));
+        assert_eq!(stats.hp, 16);
     }
 }

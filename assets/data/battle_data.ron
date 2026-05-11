@@ -405,7 +405,7 @@
                 DealStatDifferenceDamage(
                     source_attribute: Def,
                     target_attribute: Def,
-                    multiply_by_source_stage: true,
+                    multiply_by_source_stage: false,
                     ignore_shield: false,
                     target: Opponent,
                 ),
@@ -775,26 +775,26 @@
         (
             id: GainAp,
             name: "行动充能",
-            cost_ap: 1,
+            cost_ap: 0,
             effect: GainAp(amount: 2),
         ),
         (
             id: NextAttackBoost,
             name: "火力全开",
             cost_ap: 2,
-            effect: NextAttackBoost(amount: 5),
+            effect: NextAttackBoost(amount: 7), //注意是倍率提升
         ),
         (
             id: NextShieldBoost,
             name: "坚如磐石",
             cost_ap: 2,
-            effect: NextShieldBoost(amount: 5),
+            effect: NextShieldBoost(amount: 15),
         ),
         (
             id: NextHealBoost,
             name: "良药苦口",
             cost_ap: 2,
-            effect: NextHealBoost(amount: 5),
+            effect: NextHealBoost(amount: 10),
         ),
     ],
     //卡组

@@ -3,10 +3,12 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, TurnContext, UiControlSide,
+        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
+        UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::super::components::*;
@@ -17,26 +19,6 @@ pub(crate) struct SwitchOverlayOpen(pub bool);
 #[derive(Resource, Default)]
 pub(crate) struct RetreatConfirmState {
     pub armed: bool,
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct BenchRosterOverlayOpen(pub bool);
-
-#[derive(Resource)]
-pub(crate) struct PendingBenchRosterOverlayToggle {
-    pub target: Option<bool>,
-    pub timer: Timer,
-}
-
-impl Default for PendingBenchRosterOverlayToggle {
-    fn default() -> Self {
-        let mut timer = Timer::from_seconds(0.0, TimerMode::Once);
-        timer.pause();
-        Self {
-            target: None,
-            timer,
-        }
-    }
 }
 
 #[derive(Resource)]
@@ -67,6 +49,37 @@ fn queue_switch_overlay_toggle(
 fn is_controllable_phase(phase: BattlePhase, mode: BattleControlMode) -> bool {
     phase == BattlePhase::PlayerTurn
         || (phase == BattlePhase::EnemyTurn && mode == BattleControlMode::DebugPlayerControlsBoth)
+}
+
+fn waiting_for_pvp_snapshot(
+    battle_mode: BattleControlMode,
+    pending_intent: &Option<ResMut<pvp::PvpPendingLocalIntent>>,
+) -> bool {
+    battle_mode == BattleControlMode::PlayerVsRemote
+        && pending_intent
+            .as_ref()
+            .is_some_and(|pending| pending.0.is_some())
+}
+
+fn send_client_intent(
+    battle_mode: BattleControlMode,
+    connection: &mut Option<ResMut<pvp::PvpConnection>>,
+    pending_intent: &mut Option<ResMut<pvp::PvpPendingLocalIntent>>,
+    intent: pvp::BattleIntent,
+) -> bool {
+    if battle_mode != BattleControlMode::PlayerVsRemote {
+        return false;
+    }
+    let Some(connection) = connection.as_mut() else {
+        return false;
+    };
+    if connection.role != Some(pvp::PvpRole::Client) {
+        return false;
+    }
+    if let Some(pending_intent) = pending_intent.as_mut() {
+        pvp::send_local_intent(connection, pending_intent, intent);
+    }
+    true
 }
 
 pub(crate) fn button_toggle_switch_overlay_system(
@@ -199,9 +212,12 @@ pub(crate) fn button_select_skill_system(
     ui_control_side: Res<UiControlSide>,
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
+    pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+        || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+    {
         return;
     }
     let active_entity = match ui_control_side.0 {
@@ -234,7 +250,7 @@ pub(crate) fn button_select_skill_system(
         }
         match ui_control_side.0 {
             Side::Player => {
-                turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id))
+                turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id));
             }
             Side::Enemy => turn_ctx.enemy_action = Some(crate::battle::TurnAction::Skill(skill_id)),
         }
@@ -256,10 +272,14 @@ pub(crate) fn button_switch_member_system(
     player_team: Option<ResMut<PlayerTeam>>,
     enemy_team: Option<ResMut<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
+    mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut event_writer: MessageWriter<BattleEvent>,
-    combat_query: Query<(&Stats, &Name), With<InBattle>>,
+    mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<InBattle>>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+        || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+    {
         return;
     }
 
@@ -291,14 +311,38 @@ pub(crate) fn button_switch_member_system(
             continue;
         }
 
+        let current_entity = team.combatants[team.active_index];
         let target_entity = team.combatants[target_index];
-        let Ok((stats, name)) = combat_query.get(target_entity) else {
+        let Ok(
+            [
+                (mut current_stats, _, mut current_statuses),
+                (target_stats, name, target_statuses),
+            ],
+        ) = combat_query.get_many_mut([current_entity, target_entity])
+        else {
             continue;
         };
-        if stats.hp <= 0 {
+        if target_stats.hp <= 0 {
             continue;
         }
 
+        if side == Side::Player
+            && send_client_intent(
+                *battle_mode,
+                &mut pvp_connection,
+                &mut pvp_pending_intent,
+                pvp::BattleIntent::Switch { target_index },
+            )
+        {
+            return;
+        }
+        transfer_status_by_id(
+            &mut current_statuses,
+            &mut current_stats,
+            target_statuses.into_inner(),
+            target_stats.into_inner(),
+            "nature_regen",
+        );
         *ap -= 1;
         team.active_index = target_index;
         event_writer.write(BattleEvent::Switched {
@@ -321,10 +365,14 @@ pub(crate) fn button_play_card_two_step_system(
     mut hand: ResMut<Hand>,
     mut pending_boosts: ResMut<PendingBoosts>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
+    mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+        || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+    {
         return;
     }
     for (interaction, button) in &mut interaction_query {
@@ -344,6 +392,17 @@ pub(crate) fn button_play_card_two_step_system(
                     continue;
                 }
                 if selected_state.discard_armed {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
                     let card_id = cards[idx];
                     cards.remove(idx);
                     *ap += 1;
@@ -372,6 +431,17 @@ pub(crate) fn button_play_card_two_step_system(
                 if *ap < card.cost_ap {
                     continue;
                 }
+                if send_client_intent(
+                    *battle_mode,
+                    &mut pvp_connection,
+                    &mut pvp_pending_intent,
+                    pvp::BattleIntent::UseCard { card_index: idx },
+                ) {
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
                 cards.remove(idx);
                 *ap -= card.cost_ap;
                 event_writer.write(BattleEvent::CardUsed {
@@ -393,9 +463,6 @@ pub(crate) fn button_play_card_two_step_system(
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
-                if *ap <= 0 {
-                    turn_ctx.player_end_requested = true;
-                }
             }
             Side::Enemy => {
                 let cards = &mut hand.enemy;
@@ -457,9 +524,6 @@ pub(crate) fn button_play_card_two_step_system(
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
-                if *ap <= 0 {
-                    turn_ctx.enemy_end_requested = true;
-                }
             }
         }
         break;
@@ -478,10 +542,14 @@ pub(crate) fn button_discard_system(
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
     ui_control_side: Res<UiControlSide>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
+    mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+        || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+    {
         return;
     }
     for (interaction, _) in &mut interaction_query {
@@ -505,6 +573,19 @@ pub(crate) fn button_discard_system(
                         continue;
                     }
                 };
+                if send_client_intent(
+                    *battle_mode,
+                    &mut pvp_connection,
+                    &mut pvp_pending_intent,
+                    pvp::BattleIntent::DiscardCard {
+                        card_index: target_index,
+                    },
+                ) {
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
                 let card_id = cards.remove(target_index);
                 *ap += 1;
                 let card_name = dbs
@@ -565,8 +646,12 @@ pub(crate) fn button_end_turn_system(
     >,
     ui_control_side: Res<UiControlSide>,
     mut turn_ctx: ResMut<TurnContext>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
+    mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode) {
+    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+        || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+    {
         return;
     }
     for (interaction, _) in &mut interaction_query {
@@ -576,7 +661,12 @@ pub(crate) fn button_end_turn_system(
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = None;
-                turn_ctx.player_end_requested = true;
+                turn_ctx.player_end_requested = !send_client_intent(
+                    *battle_mode,
+                    &mut pvp_connection,
+                    &mut pvp_pending_intent,
+                    pvp::BattleIntent::EndTurn,
+                );
             }
             Side::Enemy => {
                 turn_ctx.enemy_action = None;
@@ -594,6 +684,8 @@ pub(crate) fn button_retreat_system(
     >,
     mut retreat_confirm: ResMut<RetreatConfirmState>,
     mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
+    battle_mode: Res<BattleControlMode>,
+    pvp_connection: Option<Res<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
@@ -611,73 +703,14 @@ pub(crate) fn button_retreat_system(
 
             retreat_confirm.armed = false;
             retreat_text.0 = "撤退".to_string();
+            if *battle_mode == BattleControlMode::PlayerVsRemote {
+                if let Some(connection) = pvp_connection.as_ref() {
+                    pvp::surrender(connection);
+                }
+            }
             next_phase.set(BattlePhase::Init);
             next_game_state.set(GameState::Lobby);
             break;
         }
-    }
-}
-
-pub(crate) fn button_toggle_bench_roster_overlay_system(
-    mut player_bench_query: Query<&Interaction, (Changed<Interaction>, With<PlayerBenchButton>)>,
-    mut enemy_bench_query: Query<&Interaction, (Changed<Interaction>, With<EnemyBenchButton>)>,
-    mut cancel_query: Query<&Interaction, (Changed<Interaction>, With<BenchRosterCancelButton>)>,
-    open: Res<BenchRosterOverlayOpen>,
-    mut pending_toggle: ResMut<PendingBenchRosterOverlayToggle>,
-) {
-    for interaction in &mut player_bench_query {
-        if *interaction == Interaction::Pressed {
-            queue_bench_roster_overlay_toggle(&mut pending_toggle, !open.0);
-            return;
-        }
-    }
-
-    for interaction in &mut enemy_bench_query {
-        if *interaction == Interaction::Pressed {
-            queue_bench_roster_overlay_toggle(&mut pending_toggle, !open.0);
-            return;
-        }
-    }
-
-    for interaction in &mut cancel_query {
-        if *interaction == Interaction::Pressed {
-            queue_bench_roster_overlay_toggle(&mut pending_toggle, false);
-            return;
-        }
-    }
-}
-
-fn queue_bench_roster_overlay_toggle(
-    pending_toggle: &mut ResMut<PendingBenchRosterOverlayToggle>,
-    visible: bool,
-) {
-    pending_toggle.target = Some(visible);
-    pending_toggle.timer = Timer::from_seconds(0.12, TimerMode::Once);
-}
-
-pub(crate) fn apply_pending_bench_roster_overlay_toggle_system(
-    time: Res<Time>,
-    mut nodes: Query<&mut Node, With<BenchRosterOverlayRoot>>,
-    mut open: ResMut<BenchRosterOverlayOpen>,
-    mut pending_toggle: ResMut<PendingBenchRosterOverlayToggle>,
-) {
-    let Some(visible) = pending_toggle.target else {
-        return;
-    };
-
-    pending_toggle.timer.tick(time.delta());
-    if !pending_toggle.timer.just_finished() {
-        return;
-    }
-
-    pending_toggle.target = None;
-    open.0 = visible;
-
-    for mut node in &mut nodes {
-        node.display = if visible {
-            Display::Flex
-        } else {
-            Display::None
-        };
     }
 }
