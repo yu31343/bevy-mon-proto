@@ -51,6 +51,7 @@ pub enum SelectionEntryMode {
     #[default]
     VsAi,
     Debug,
+    Pvp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

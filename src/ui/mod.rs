@@ -1,7 +1,7 @@
 //! 战斗 UI：上敌方 / 下玩家，血条与护盾条，技能格占位图与特效。
 pub(crate) mod battle;
 
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 
 use battle::{
     components::BattleUiRoot,
@@ -26,12 +26,28 @@ use battle::systems::{PendingSwitchOverlayToggle, SwitchOverlayOpen};
 
 pub struct UiPlugin;
 
+const BASE_UI_WIDTH: f32 = 1440.0;
+const BASE_UI_HEIGHT: f32 = 900.0;
+
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         // Initialize theme globally so it's available to all UI systems
-        app.init_resource::<UiTheme>();
+        app.init_resource::<UiTheme>()
+            .init_resource::<UiScale>()
+            .add_systems(Update, update_ui_scale_system);
         battle::register(app);
     }
+}
+
+fn update_ui_scale_system(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut ui_scale: ResMut<UiScale>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+
+    ui_scale.0 = (window.width() / BASE_UI_WIDTH).min(window.height() / BASE_UI_HEIGHT);
 }
 
 /// 旧版战斗 UI 注册入口（供 `ui::battle` 桥接）。
@@ -116,7 +132,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         ),
     );
 
-    app.add_systems(Update, update_result_ui_system);
+    app.add_systems(
+        Update,
+        update_result_ui_system.run_if(in_state(GameState::Result)),
+    );
 }
 
 fn cleanup_battle_ui_system(mut commands: Commands, query: Query<Entity, With<BattleUiRoot>>) {

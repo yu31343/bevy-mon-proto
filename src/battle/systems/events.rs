@@ -103,6 +103,7 @@ pub fn consume_battle_events_system(
                 | BattleEvent::WindSpreadSkipped { .. }
                 | BattleEvent::CombatantFainted { .. }
                 | BattleEvent::Switched { .. }
+                | BattleEvent::NetworkInterrupted { .. }
         )
     }
 
@@ -219,6 +220,9 @@ pub fn consume_battle_events_system(
             }
             BattleEvent::Switched { side, name } => {
                 format!("{} 换上了 {}！", side_text(*side), name)
+            }
+            BattleEvent::NetworkInterrupted { reason } => {
+                format!("联机中断：{}", reason)
             }
         };
 

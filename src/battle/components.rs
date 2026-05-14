@@ -3,16 +3,17 @@
 use std::{collections::VecDeque, fmt};
 
 use bevy::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     data::{
-        AttributeType, CardId, ElementType, SkillId, StatusCategory, StatusDef, StatusTickTiming,
+        AttributeStageBounds, AttributeType, CardId, ElementType, SkillId, StatusCategory,
+        StatusDef, StatusTickTiming,
     },
     game_state::BattlePhase,
 };
 
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Side {
     Player,
     Enemy,
@@ -145,13 +146,13 @@ impl ElementAura {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusStageModifier {
     pub attribute: AttributeType,
     pub amount: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusInstance {
     pub id: String,
     pub name: String,
@@ -231,6 +232,7 @@ pub struct StatusTickOutcome {
 }
 
 pub fn recalculate_stage_modifiers(stats: &mut Stats, status_board: &StatusBoard) {
+    let bounds = AttributeStageBounds::default();
     stats.atk_stage = 0;
     stats.def_stage = 0;
     stats.spd_stage = 0;
@@ -246,6 +248,11 @@ pub fn recalculate_stage_modifiers(stats: &mut Stats, status_board: &StatusBoard
             }
         }
     }
+
+    stats.atk_stage = stats.atk_stage.clamp(bounds.min, bounds.max);
+    stats.def_stage = stats.def_stage.clamp(bounds.min, bounds.max);
+    stats.spd_stage = stats.spd_stage.clamp(bounds.min, bounds.max);
+    stats.acc_stage = stats.acc_stage.clamp(bounds.min, bounds.max);
 }
 
 pub fn upsert_status_instance(
@@ -304,6 +311,27 @@ pub fn remove_status_by_id(
         recalculate_stage_modifiers(stats, status_board);
     }
     removed
+}
+
+pub fn transfer_status_by_id(
+    source_statuses: &mut StatusBoard,
+    source_stats: &mut Stats,
+    target_statuses: &mut StatusBoard,
+    target_stats: &mut Stats,
+    status_id: &str,
+) -> bool {
+    let Some(index) = source_statuses
+        .entries
+        .iter()
+        .position(|entry| entry.id == status_id)
+    else {
+        return false;
+    };
+
+    let status = source_statuses.entries.remove(index);
+    recalculate_stage_modifiers(source_stats, source_statuses);
+    upsert_status_instance(target_statuses, status, target_stats);
+    true
 }
 
 pub fn tick_statuses_for_timing(
@@ -382,6 +410,12 @@ pub enum BattleControlMode {
     #[default]
     PlayerVsAi,
     DebugPlayerControlsBoth,
+    PlayerVsRemote,
+}
+
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PvpTurnOrder {
+    pub local_first: bool,
 }
 
 #[derive(Resource, Debug, Clone, Copy)]
@@ -419,6 +453,7 @@ pub struct PendingKoResolution {
     pub enemy_switch_index: Option<usize>,
     pub player_defeated: bool,
     pub enemy_defeated: bool,
+    pub resume_phase: Option<BattlePhase>,
 }
 
 impl Default for PendingKoResolution {
@@ -429,6 +464,7 @@ impl Default for PendingKoResolution {
             enemy_switch_index: None,
             player_defeated: false,
             enemy_defeated: false,
+            resume_phase: None,
         }
     }
 }
@@ -740,6 +776,21 @@ mod tests {
     use super::*;
     use crate::data::{SkillId, StatusCategory, StatusTickTiming};
 
+    fn test_stats() -> Stats {
+        Stats {
+            hp: 10,
+            max_hp: 10,
+            atk: 5,
+            def: 5,
+            spd: 5,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        }
+    }
+
     #[test]
     fn replay_log_assigns_monotonic_sequence_numbers() {
         let mut replay_log = ReplayEventLog::default();
@@ -843,18 +894,7 @@ mod tests {
 
     #[test]
     fn round_end_decrement_skips_same_round_and_expires_next_full_round() {
-        let mut stats = Stats {
-            hp: 10,
-            max_hp: 10,
-            atk: 5,
-            def: 5,
-            spd: 5,
-            acc: 100,
-            atk_stage: 0,
-            def_stage: 0,
-            spd_stage: 0,
-            acc_stage: 0,
-        };
+        let mut stats = test_stats();
         let mut status_board = StatusBoard {
             entries: vec![StatusInstance {
                 id: "wind_evade".to_string(),
@@ -883,5 +923,119 @@ mod tests {
         assert_eq!(second_round[0].remaining_turns, 0);
         assert!(second_round[0].expired);
         assert!(status_board.entries.is_empty());
+    }
+
+    #[test]
+    fn recalculate_stage_modifiers_clamps_each_attribute_stage() {
+        let mut stats = test_stats();
+        let status_board = StatusBoard {
+            entries: vec![
+                StatusInstance {
+                    id: "buff_1".to_string(),
+                    name: "buff".to_string(),
+                    category: StatusCategory::Buff,
+                    remaining_turns: 1,
+                    applied_round: 1,
+                    source_side: Some(Side::Player),
+                    tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                    stage_modifiers: vec![
+                        StatusStageModifier {
+                            attribute: AttributeType::Atk,
+                            amount: 4,
+                        },
+                        StatusStageModifier {
+                            attribute: AttributeType::Atk,
+                            amount: 4,
+                        },
+                        StatusStageModifier {
+                            attribute: AttributeType::Def,
+                            amount: -4,
+                        },
+                    ],
+                    fixed_damage_on_tick: 0,
+                    heal_on_tick: 0,
+                    heal_taken_multiplier: None,
+                    evade_charges: 0,
+                },
+                StatusInstance {
+                    id: "debuff_1".to_string(),
+                    name: "debuff".to_string(),
+                    category: StatusCategory::Debuff,
+                    remaining_turns: 1,
+                    applied_round: 1,
+                    source_side: Some(Side::Enemy),
+                    tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                    stage_modifiers: vec![
+                        StatusStageModifier {
+                            attribute: AttributeType::Def,
+                            amount: -4,
+                        },
+                        StatusStageModifier {
+                            attribute: AttributeType::Spd,
+                            amount: 6,
+                        },
+                        StatusStageModifier {
+                            attribute: AttributeType::Acc,
+                            amount: -6,
+                        },
+                    ],
+                    fixed_damage_on_tick: 0,
+                    heal_on_tick: 0,
+                    heal_taken_multiplier: None,
+                    evade_charges: 0,
+                },
+            ],
+        };
+
+        recalculate_stage_modifiers(&mut stats, &status_board);
+
+        assert_eq!(stats.atk_stage, 6);
+        assert_eq!(stats.def_stage, -6);
+        assert_eq!(stats.spd_stage, 6);
+        assert_eq!(stats.acc_stage, -6);
+    }
+
+    #[test]
+    fn transfer_status_moves_nature_regen_to_new_active_combatant() {
+        let mut old_stats = test_stats();
+        let mut new_stats = test_stats();
+        let mut old_statuses = StatusBoard {
+            entries: vec![StatusInstance {
+                id: "nature_regen".to_string(),
+                name: "自然治愈".to_string(),
+                category: StatusCategory::Buff,
+                remaining_turns: 2,
+                applied_round: 1,
+                source_side: Some(Side::Player),
+                tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                stage_modifiers: vec![],
+                fixed_damage_on_tick: 0,
+                heal_on_tick: 5,
+                heal_taken_multiplier: None,
+                evade_charges: 0,
+            }],
+        };
+        let mut new_statuses = StatusBoard::default();
+
+        assert!(transfer_status_by_id(
+            &mut old_statuses,
+            &mut old_stats,
+            &mut new_statuses,
+            &mut new_stats,
+            "nature_regen",
+        ));
+
+        assert!(old_statuses.entries.is_empty());
+        assert_eq!(new_statuses.entries.len(), 1);
+
+        let old_outcomes =
+            tick_statuses_for_timing(&mut old_statuses, StatusTickTiming::OwnerActionEnd);
+        let new_outcomes =
+            tick_statuses_for_timing(&mut new_statuses, StatusTickTiming::OwnerActionEnd);
+
+        assert!(old_outcomes.is_empty());
+        assert_eq!(new_outcomes.len(), 1);
+        assert_eq!(new_outcomes[0].status_id, "nature_regen");
+        assert_eq!(new_outcomes[0].heal_amount, 5);
     }
 }

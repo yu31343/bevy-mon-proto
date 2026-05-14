@@ -1,3 +1,9 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::needless_option_as_deref,
+    clippy::too_many_arguments
+)]
+
 use bevy::prelude::*;
 
 use crate::{

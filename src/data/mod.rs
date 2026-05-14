@@ -6,12 +6,12 @@ use std::{
 };
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub use cards::{CardDeck, CardDef, CardEffect, CardId};
 
 /// 元素类型（系别）：火、水、草、光、暗、雷、风。
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum ElementType {
     Fire,
     Water,
@@ -36,7 +36,7 @@ fn default_skill_category() -> SkillCategory {
     SkillCategory::NormalAttack
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum StatusCategory {
     Aura,
     Buff,
@@ -44,12 +44,12 @@ pub enum StatusCategory {
     Special,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum StatusTickTiming {
     OwnerActionEnd,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum AttributeType {
     Atk,
     Def,
@@ -233,6 +233,13 @@ impl ElementDb {
             .get(&(attacker, defender))
             .copied()
             .unwrap_or(1.0)
+    }
+
+    pub fn entries(&self) -> Vec<(ElementType, ElementType, f32)> {
+        self.matrix
+            .iter()
+            .map(|(&(attacker, defender), &multiplier)| (attacker, defender, multiplier))
+            .collect()
     }
 
     /// 从配置构建默认的元素克制矩阵（用于 fallback）。
