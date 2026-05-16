@@ -45,12 +45,14 @@ pub(crate) fn update_player_hand_ui_system(
         let is_selected = active_selected.index == Some(meta.index);
         if is_selected {
             node.width = Val::Px(140.0);
-            node.height = Val::Px(194.0);
-            node.margin.top = Val::Px(-10.0);
+            node.height = Val::Px(240.0);
+            node.margin.top = Val::Px(0.0);
+            node.margin.bottom = Val::Px(78.0);
         } else {
             node.width = Val::Px(130.0);
             node.height = Val::Px(180.0);
             node.margin.top = Val::Px(0.0);
+            node.margin.bottom = Val::Px(0.0);
         }
     }
 

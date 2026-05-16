@@ -632,6 +632,11 @@ pub struct TeamSelections {
     pub enemy_indices: Vec<usize>,
 }
 
+#[derive(Resource, Debug, Clone, Default)]
+pub struct MapBattleContext {
+    pub enemy_monster_index: Option<usize>,
+}
+
 /// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。
 #[derive(Resource, Debug, Clone, Default)]
 pub struct BattleDataStatus {
