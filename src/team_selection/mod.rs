@@ -4,7 +4,7 @@ mod systems;
 
 use bevy::prelude::*;
 
-use crate::game_state::GameState;
+use crate::{data::MapBattleContext, game_state::GameState};
 
 pub use components::*;
 pub use layout::*;
@@ -16,6 +16,7 @@ impl Plugin for TeamSelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectionState>()
             .init_resource::<SelectionEntryMode>()
+            .init_resource::<MapBattleContext>()
             .add_systems(
                 Update,
                 setup_selection_ui.run_if(
