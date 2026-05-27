@@ -1,57 +1,428 @@
 use bevy::prelude::*;
 
+use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use crate::{
     battle::{
-        BattleEvent, Combatant, EnemyTeam, ElementAura, InBattle, PlayerTeam, Shield, SkillCount,
-        SkillList, Stats, Team,
+        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, SkillCount,
+        SkillList, Stats, StatusBoard, Team,
     },
-    data::BattleDbs,
+    data::{BattleDbs, BattleFormulaRules, StatusCategory},
     game_state::BattlePhase,
 };
 
-use super::super::components::*;
+type ActiveCombatantRef<'a> = (
+    &'a Combatant,
+    &'a Stats,
+    &'a Name,
+    &'a Shield,
+    &'a ElementAura,
+    &'a StatusBoard,
+);
 
-fn format_active_summary(
-    header: &str,
+fn active_combatant_data<'a>(
     team: &Team,
-    query: &Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
-) -> String {
-    let Some(entity) = team.active_combatant() else {
-        return format!("{header}：无在场精灵");
+    query: &'a Query<
+        (
+            &Combatant,
+            &Stats,
+            &Name,
+            &Shield,
+            &ElementAura,
+            &StatusBoard,
+        ),
+        With<InBattle>,
+    >,
+) -> Option<ActiveCombatantRef<'a>> {
+    let entity = team.active_combatant()?;
+    query.get(entity).ok()
+}
+
+fn active_summary(active: Option<ActiveCombatantRef<'_>>) -> String {
+    let Some((combatant, _, _, _, _, _)) = active else {
+        return "无".to_string();
     };
-    let Ok((combatant, stats, name, shield, aura)) = query.get(entity) else {
-        return format!("{header}：数据读取失败");
-    };
+    super::super::helpers::element_name(combatant.element).to_string()
+}
+
+fn stat_line(label: &str, stage: i32, current: i32) -> String {
     format!(
-        "{}在场 [{}] {} | HP {}/{} | 护盾 {} | 附着 {}",
-        header,
-        combatant.side,
-        name,
-        stats.hp.max(0),
-        stats.max_hp,
-        shield.0.max(0),
-        super::super::helpers::aura_label(aura.attached),
+        "{}: {}{}",
+        label,
+        super::super::helpers::stage_prefix(stage),
+        current
     )
 }
 
-/// 仅更新战斗相关 `Text`，避免与 `Node` 宽度更新在同一系统内触发 B0001
+pub(crate) fn update_phase_text_system(
+    battle_phase: Res<State<BattlePhase>>,
+    mut text_q: Query<&mut Text, With<BattlePhaseText>>,
+) {
+    if let Ok(mut text) = text_q.single_mut() {
+        text.0 = format!(
+            "战斗阶段：{}",
+            super::super::helpers::phase_label(*battle_phase.get())
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn update_battle_text_system(
+pub(crate) fn update_active_panel_text_system(
+    mut text_sets: ParamSet<(
+        Query<
+            (
+                &mut Text,
+                Option<&PlayerStatsText>,
+                Option<&EnemyStatsText>,
+                Option<&PlayerNameText>,
+                Option<&EnemyNameText>,
+            ),
+            Without<BattlePhaseText>,
+        >,
+        Query<
+            (
+                &mut Text,
+                Option<&PlayerHpValueText>,
+                Option<&EnemyHpValueText>,
+                Option<&PlayerShieldValueText>,
+                Option<&EnemyShieldValueText>,
+                Option<&PlayerAtkText>,
+                Option<&EnemyAtkText>,
+                Option<&PlayerDefText>,
+                Option<&EnemyDefText>,
+                Option<&PlayerAccText>,
+                Option<&EnemyAccText>,
+                Option<&PlayerSpdText>,
+                Option<&EnemySpdText>,
+            ),
+            Without<BattlePhaseText>,
+        >,
+    )>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<
+        (
+            &Combatant,
+            &Stats,
+            &Name,
+            &Shield,
+            &ElementAura,
+            &StatusBoard,
+        ),
+        With<InBattle>,
+    >,
+    formula_rules: Res<BattleFormulaRules>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+
+    let player_active = active_combatant_data(&player_team.0, &combat_query);
+    let enemy_active = active_combatant_data(&enemy_team.0, &combat_query);
+    let player_summary = active_summary(player_active);
+    let enemy_summary = active_summary(enemy_active);
+
+    for (mut text, is_player_summary, is_enemy_summary, is_player_name, is_enemy_name) in
+        &mut text_sets.p0()
+    {
+        if is_player_name.is_some() {
+            text.0 = if let Some((_, _, name, _, _, _)) = player_active {
+                format!("我方：{}", name)
+            } else {
+                "我方：无在场精灵".to_string()
+            };
+            continue;
+        }
+        if is_enemy_name.is_some() {
+            text.0 = if let Some((_, _, name, _, _, _)) = enemy_active {
+                format!("敌方：{}", name)
+            } else {
+                "敌方：无在场精灵".to_string()
+            };
+            continue;
+        }
+        if is_player_summary.is_some() {
+            text.0 = player_summary.clone();
+            continue;
+        }
+        if is_enemy_summary.is_some() {
+            text.0 = enemy_summary.clone();
+        }
+    }
+
+    for (
+        mut text,
+        is_player_hp,
+        is_enemy_hp,
+        is_player_shield,
+        is_enemy_shield,
+        is_player_atk,
+        is_enemy_atk,
+        is_player_def,
+        is_enemy_def,
+        is_player_acc,
+        is_enemy_acc,
+        is_player_spd,
+        is_enemy_spd,
+    ) in &mut text_sets.p1()
+    {
+        if is_player_hp.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                format!("{}/{}", stats.hp.max(0), stats.max_hp)
+            } else {
+                "0/0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_hp.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                format!("{}/{}", stats.hp.max(0), stats.max_hp)
+            } else {
+                "0/0".to_string()
+            };
+            continue;
+        }
+        if is_player_shield.is_some() {
+            text.0 = if let Some((_, _, _, shield, _, _)) = player_active {
+                shield.0.max(0).to_string()
+            } else {
+                "0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_shield.is_some() {
+            text.0 = if let Some((_, _, _, shield, _, _)) = enemy_active {
+                shield.0.max(0).to_string()
+            } else {
+                "0".to_string()
+            };
+            continue;
+        }
+        if is_player_atk.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                stat_line(
+                    "Atk",
+                    stats.atk_stage,
+                    super::super::helpers::effective_atk_value(stats, &formula_rules),
+                )
+            } else {
+                "Atk: 0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_atk.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stat_line(
+                    "Atk",
+                    stats.atk_stage,
+                    super::super::helpers::effective_atk_value(stats, &formula_rules),
+                )
+            } else {
+                "Atk: 0".to_string()
+            };
+            continue;
+        }
+        if is_player_def.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                stat_line(
+                    "Def",
+                    stats.def_stage,
+                    super::super::helpers::effective_def_value(stats, &formula_rules),
+                )
+            } else {
+                "Def: 0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_def.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stat_line(
+                    "Def",
+                    stats.def_stage,
+                    super::super::helpers::effective_def_value(stats, &formula_rules),
+                )
+            } else {
+                "Def: 0".to_string()
+            };
+            continue;
+        }
+        if is_player_acc.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                stat_line(
+                    "Acc",
+                    stats.acc_stage,
+                    super::super::helpers::effective_acc_value(stats, &formula_rules),
+                )
+            } else {
+                "Acc: 0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_acc.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stat_line(
+                    "Acc",
+                    stats.acc_stage,
+                    super::super::helpers::effective_acc_value(stats, &formula_rules),
+                )
+            } else {
+                "Acc: 0".to_string()
+            };
+            continue;
+        }
+        if is_player_spd.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                stat_line(
+                    "Spd",
+                    stats.spd_stage,
+                    super::super::helpers::effective_spd_value(stats, &formula_rules),
+                )
+            } else {
+                "Spd: 0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_spd.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stat_line(
+                    "Spd",
+                    stats.spd_stage,
+                    super::super::helpers::effective_spd_value(stats, &formula_rules),
+                )
+            } else {
+                "Spd: 0".to_string()
+            };
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_active_panel_tokens_system(
+    mut commands: Commands,
+    aura_lines: Query<
+        (
+            Entity,
+            Option<&Children>,
+            Option<&PlayerAuraLine>,
+            Option<&EnemyAuraLine>,
+        ),
+        Or<(With<PlayerAuraLine>, With<EnemyAuraLine>)>,
+    >,
+    status_lines: Query<
+        (
+            Entity,
+            Option<&Children>,
+            Option<&PlayerStatusLine>,
+            Option<&EnemyStatusLine>,
+        ),
+        Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
+    >,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<
+        (
+            &Combatant,
+            &Stats,
+            &Name,
+            &Shield,
+            &ElementAura,
+            &StatusBoard,
+        ),
+        With<InBattle>,
+    >,
+    theme: Res<UiTheme>,
+    ui_font: Option<Res<UiFontHandle>>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+
+    let player_active = active_combatant_data(&player_team.0, &combat_query);
+    let enemy_active = active_combatant_data(&enemy_team.0, &combat_query);
+    let info_font = super::super::helpers::make_text_font(13.0, ui_font.as_deref());
+
+    for (entity, children, is_player_aura, is_enemy_aura) in &aura_lines {
+        let active = if is_player_aura.is_some() {
+            player_active
+        } else if is_enemy_aura.is_some() {
+            enemy_active
+        } else {
+            None
+        };
+        let items = if let Some((_, _, _, _, aura, _)) = active {
+            aura.elements()
+                .iter()
+                .map(|element| {
+                    (
+                        super::super::helpers::element_name(*element).to_string(),
+                        super::super::helpers::element_color(*element, &theme),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        super::super::helpers::replace_debug_tokens(
+            &mut commands,
+            entity,
+            children,
+            &info_font,
+            &items,
+            DebugAuraToken,
+        );
+    }
+
+    for (entity, children, is_player_status, is_enemy_status) in &status_lines {
+        let active = if is_player_status.is_some() {
+            player_active
+        } else if is_enemy_status.is_some() {
+            enemy_active
+        } else {
+            None
+        };
+        let items = if let Some((_, _, _, _, _, statuses)) = active {
+            let labels: Vec<_> = statuses
+                .entries
+                .iter()
+                .filter(|entry| entry.category != StatusCategory::Aura)
+                .map(|entry| {
+                    (
+                        entry.name.clone(),
+                        super::super::helpers::status_color(entry, &theme),
+                    )
+                })
+                .collect();
+            if labels.is_empty() {
+                vec![("无".to_string(), theme.text_muted)]
+            } else {
+                labels
+            }
+        } else {
+            vec![("无".to_string(), theme.text_muted)]
+        };
+        super::super::helpers::replace_debug_tokens(
+            &mut commands,
+            entity,
+            children,
+            &info_font,
+            &items,
+            DebugStatusToken,
+        );
+    }
+}
+
+pub(crate) fn update_skill_text_system(
+    battle_phase: Res<State<BattlePhase>>,
+    ui_control_side: Res<crate::battle::UiControlSide>,
     mut text_q: Query<
         (
             &mut Text,
-            Option<&BattlePhaseText>,
-            Option<&PlayerStatsText>,
-            Option<&EnemyStatsText>,
-            Option<&ResultText>,
+            Option<&TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
             Option<&EnemySkillText>,
             Option<&EnemySkillMetaText>,
             Option<&EnemySkillIconText>,
-            Option<&PlayerNameText>,
-            Option<&EnemyNameText>,
         ),
         (
             Without<ActionPointsText>,
@@ -63,88 +434,59 @@ pub(crate) fn update_battle_text_system(
             Without<PlayerCardNameText>,
             Without<PlayerCardCostText>,
             Without<PlayerCardDescText>,
+            Without<BattleActionText>,
         ),
     >,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<(&Combatant, &Stats, &Name, &Shield, &ElementAura), With<InBattle>>,
     skill_query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     skill_db: Res<BattleDbs>,
-    battle_phase: Res<State<BattlePhase>>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;
     };
 
-    let player_line = format_active_summary("玩家", &player_team.0, &combat_query);
-    let enemy_line = format_active_summary("敌方", &enemy_team.0, &combat_query);
-
     let mut player_skills = None;
-    if let Some(p_entity) = player_team.0.active_combatant() {
-        if let Ok((skills, count)) = skill_query.get(p_entity) {
+    if let Some(entity) = player_team.0.active_combatant() {
+        if let Ok((skills, count)) = skill_query.get(entity) {
             player_skills = Some((skills.0, count.0));
         }
     }
 
     let mut enemy_skills = None;
-    if let Some(e_entity) = enemy_team.0.active_combatant() {
-        if let Ok((skills, count)) = skill_query.get(e_entity) {
+    if let Some(entity) = enemy_team.0.active_combatant() {
+        if let Ok((skills, count)) = skill_query.get(entity) {
             enemy_skills = Some((skills.0, count.0));
         }
     }
 
     for (
         mut text,
-        is_phase,
-        is_player,
-        is_enemy,
-        is_result,
+        is_turn_banner,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
         enemy_skill_text,
         enemy_skill_meta,
         enemy_skill_icon,
-        is_player_name,
-        is_enemy_name,
     ) in &mut text_q
     {
-        if is_result.is_some() {
-            text.0.clear();
-            continue;
-        }
-        if is_phase.is_some() {
-            text.0 = format!(
-                "战斗阶段：{}",
-                super::super::helpers::phase_label(*battle_phase.get())
-            );
-            continue;
-        }
-        if is_player_name.is_some() {
-            if let Some(entity) = player_team.0.active_combatant() {
-                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
-                    text.0 = format!("我方：{}", name);
+        if is_turn_banner.is_some() {
+            text.0 = match *battle_phase.get() {
+                BattlePhase::PlayerTurn => "你的回合".to_string(),
+                BattlePhase::EnemyTurn if ui_control_side.0 == crate::battle::Side::Enemy => {
+                    "敌方操作回合".to_string()
                 }
-            }
+                BattlePhase::EnemyTurn => "对手的回合".to_string(),
+                _ => String::new(),
+            };
             continue;
         }
-        if is_enemy_name.is_some() {
-            if let Some(entity) = enemy_team.0.active_combatant() {
-                if let Ok((_, _, name, _, _)) = combat_query.get(entity) {
-                    text.0 = format!("敌方：{}", name);
-                }
-            }
-            continue;
-        }
-        if is_player.is_some() {
-            text.0 = player_line.clone();
-            continue;
-        }
-        if is_enemy.is_some() {
-            text.0 = enemy_line.clone();
-            continue;
-        }
-        if let (Some(button), Some((skills, count))) = (skill_button_text, player_skills) {
+        let control_skills = match ui_control_side.0 {
+            crate::battle::Side::Player => player_skills,
+            crate::battle::Side::Enemy => enemy_skills,
+        };
+        if let (Some(button), Some((skills, count))) = (skill_button_text, control_skills) {
             if button.index >= count {
                 text.0 = format!("{}号: 未配置", button.index + 1);
             } else {
@@ -157,20 +499,21 @@ pub(crate) fn update_battle_text_system(
             }
             continue;
         }
-        if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, player_skills) {
+        if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, control_skills) {
             if meta.index >= count {
                 text.0 = "AP消耗：--".to_string();
             } else {
                 let skill_id = skills[meta.index];
                 text.0 = format!(
-                    "{} AP消耗：{}",
+                    "{}\nAP消耗：{}\n{}",
                     super::super::helpers::skill_meta(skill_id, &skill_db),
-                    super::super::helpers::monster_skill_ap_cost_ui(meta.index)
+                    super::super::helpers::monster_skill_ap_cost_ui(skill_id, &skill_db),
+                    super::super::helpers::skill_summary(skill_id, &skill_db)
                 );
             }
             continue;
         }
-        if let (Some(icon), Some((_skills, count))) = (skill_icon_text, player_skills) {
+        if let (Some(icon), Some((_skills, count))) = (skill_icon_text, control_skills) {
             text.0 = if icon.index >= count {
                 "-".to_string()
             } else {
@@ -266,7 +609,7 @@ pub(crate) fn update_battle_action_text_system(
                 };
                 format!("行为：{}换上{}", owner, name)
             }
-            BattleEvent::CombatantFainted { side, name } => {
+            BattleEvent::CombatantFainted { side, name, .. } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
@@ -285,7 +628,16 @@ pub(crate) fn update_result_ui_system(
     battle_result: Res<crate::battle::BattleResult>,
 ) {
     if let Ok(mut result_text) = result_text_q.single_mut() {
-        result_text.0 = battle_result.message.clone();
+        if battle_result.message.is_empty() {
+            result_text.0.clear();
+            return;
+        }
+
+        let mut lines = vec![battle_result.message.clone()];
+        if let Some(status) = &battle_result.export_status {
+            lines.push(status.clone());
+        }
+        lines.push("按 L 导出 replay/action log。".to_string());
+        result_text.0 = lines.join("\n");
     }
 }
-

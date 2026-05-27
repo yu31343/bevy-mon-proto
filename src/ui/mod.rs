@@ -1,7 +1,7 @@
 //! 战斗 UI：上敌方 / 下玩家，血条与护盾条，技能格占位图与特效。
 pub(crate) mod battle;
 
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 
 use battle::{
     components::BattleUiRoot,
@@ -12,7 +12,7 @@ use battle::{
 };
 
 use crate::{
-    battle::{Team, Combatant, ElementAura, InBattle, Shield, Stats},
+    battle::{Combatant, ElementAura, InBattle, Shield, Stats, Team},
     data::{BattleDbs, CardDef, ElementType, SkillId},
     game_state::{BattlePhase, GameState},
 };
@@ -26,12 +26,28 @@ use battle::systems::{PendingSwitchOverlayToggle, SwitchOverlayOpen};
 
 pub struct UiPlugin;
 
+const BASE_UI_WIDTH: f32 = 1440.0;
+const BASE_UI_HEIGHT: f32 = 900.0;
+
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         // Initialize theme globally so it's available to all UI systems
-        app.init_resource::<UiTheme>();
+        app.init_resource::<UiTheme>()
+            .init_resource::<UiScale>()
+            .add_systems(Update, update_ui_scale_system);
         battle::register(app);
     }
+}
+
+fn update_ui_scale_system(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut ui_scale: ResMut<UiScale>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+
+    ui_scale.0 = (window.width() / BASE_UI_WIDTH).min(window.height() / BASE_UI_HEIGHT);
 }
 
 /// 旧版战斗 UI 注册入口（供 `ui::battle` 桥接）。
@@ -40,33 +56,28 @@ impl Plugin for UiPlugin {
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.init_resource::<SwitchOverlayOpen>()
         .init_resource::<PendingSwitchOverlayToggle>()
+        .init_resource::<RetreatConfirmState>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
+        .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
         .add_systems(
             Update,
             (
-                button_select_skill_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_discard_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_switch_member_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_play_card_two_step_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                button_toggle_switch_overlay_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
-                close_switch_overlay_on_switch_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                button_select_skill_system.run_if(in_state(GameState::Battle)),
+                button_discard_system.run_if(in_state(GameState::Battle)),
+                button_switch_member_system.run_if(in_state(GameState::Battle)),
+                button_play_card_two_step_system.run_if(in_state(GameState::Battle)),
+                button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
+                close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
                 apply_pending_switch_overlay_toggle_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                    .run_if(in_state(GameState::Battle))
                     .after(button_toggle_switch_overlay_system)
                     .after(close_switch_overlay_on_switch_system)
                     .after(spawn_button_click_flash)
                     .after(keyboard_button_flash_system),
             ),
         );
-
 
     app.add_systems(
         Update,
@@ -83,14 +94,20 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
 
     app.add_systems(
         Update,
-        update_battle_text_system.run_if(in_state(GameState::Battle)),
+        (
+            update_phase_text_system,
+            update_active_panel_text_system,
+            update_active_panel_tokens_system,
+            update_skill_text_system,
+        )
+            .run_if(in_state(GameState::Battle)),
     );
 
     app.add_systems(
         Update,
         (
-            button_end_turn_system
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+            button_end_turn_system.run_if(in_state(GameState::Battle)),
+            button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
             update_discard_armed_visual_system
                 .run_if(in_state(GameState::Battle))
@@ -104,10 +121,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             tick_screen_flashes,
             tick_fx_lifetimes,
             spawn_button_click_flash
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                .run_if(in_state(GameState::Battle))
                 .after(update_player_roster_ui_system),
             keyboard_button_flash_system
-                .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                .run_if(in_state(GameState::Battle))
                 .after(spawn_button_click_flash),
             tick_button_click_flash
                 .run_if(in_state(GameState::Battle))
@@ -115,13 +132,13 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         ),
     );
 
-    app.add_systems(Update, update_result_ui_system);
+    app.add_systems(
+        Update,
+        update_result_ui_system.run_if(in_state(GameState::Result)),
+    );
 }
 
-fn cleanup_battle_ui_system(
-    mut commands: Commands,
-    query: Query<Entity, With<BattleUiRoot>>,
-) {
+fn cleanup_battle_ui_system(mut commands: Commands, query: Query<Entity, With<BattleUiRoot>>) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
@@ -138,8 +155,8 @@ fn skill_meta(skill_id: SkillId, dbs: &BattleDbs) -> String {
 }
 
 #[allow(dead_code)]
-fn monster_skill_ap_cost_ui(slot: usize) -> i32 {
-    battle::helpers::monster_skill_ap_cost_ui(slot)
+fn monster_skill_ap_cost_ui(skill_id: SkillId, dbs: &BattleDbs) -> i32 {
+    battle::helpers::monster_skill_ap_cost_ui(skill_id, dbs)
 }
 
 #[allow(dead_code)]
@@ -177,7 +194,7 @@ fn element_name(element: ElementType) -> &'static str {
 }
 
 #[allow(dead_code)]
-fn aura_label(aura: Option<ElementType>) -> &'static str {
+fn aura_label(aura: &[ElementType]) -> String {
     battle::helpers::aura_label(aura)
 }
 

@@ -2,11 +2,11 @@
 
 pub(crate) mod components;
 pub(crate) mod fx;
+pub(crate) mod helpers;
 pub(crate) mod layout;
 pub(crate) mod resources;
 pub(crate) mod systems;
 pub(crate) mod theme;
-pub(crate) mod helpers;
 
 mod plugin;
 
@@ -18,4 +18,3 @@ use bevy::prelude::*;
 pub(crate) fn register(app: &mut App) {
     plugin::register(app);
 }
-

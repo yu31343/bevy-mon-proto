@@ -4,10 +4,11 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle, PendingBoosts,
-        Shield, Side, SkillList, Stats, TurnAction, TurnContext, TurnCount,
+        AccuracyRng, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
+        PendingBoosts, Shield, Side, SkillList, Stats, StatusBoard, TurnAction, TurnContext,
+        TurnCount, transfer_status_by_id,
     },
-    data::{BattleDbs, SkillEffect},
+    data::{BattleDbs, BattleFormulaRules, SkillEffect},
     game_state::{BattlePhase, GameState},
 };
 
@@ -34,7 +35,7 @@ fn player_input_system(
     mut player_team: ResMut<crate::battle::PlayerTeam>,
     mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
-    query: Query<(&Combatant, &SkillList, &Stats), With<InBattle>>,
+    mut query: Query<(&Combatant, &SkillList, &mut Stats, &mut StatusBoard), With<InBattle>>,
 ) {
     if player_team.0.combatants.is_empty() {
         abort_battle(
@@ -51,9 +52,23 @@ fn player_input_system(
         let current = player_team.0.active_index;
         for offset in 1..player_team.0.combatants.len() {
             let next_idx = (current + offset) % player_team.0.combatants.len();
-            let entity = player_team.0.combatants[next_idx];
-            if let Ok((_, _, stats)) = query.get(entity) {
-                if stats.hp > 0 {
+            let current_entity = player_team.0.combatants[current];
+            let next_entity = player_team.0.combatants[next_idx];
+            if let Ok(
+                [
+                    (_, _, mut current_stats, mut current_statuses),
+                    (_, _, next_stats, next_statuses),
+                ],
+            ) = query.get_many_mut([current_entity, next_entity])
+            {
+                if next_stats.hp > 0 {
+                    transfer_status_by_id(
+                        &mut current_statuses,
+                        &mut current_stats,
+                        next_statuses.into_inner(),
+                        next_stats.into_inner(),
+                        "nature_regen",
+                    );
                     player_team.0.active_index = next_idx;
                     turn_ctx.player_action = Some(TurnAction::Switch);
                     next_phase.set(BattlePhase::EnemyTurn);
@@ -73,7 +88,7 @@ fn player_input_system(
         return;
     };
 
-    let Ok((_, skill_list, _)) = query.get(active_entity) else {
+    let Ok((_, skill_list, _, _)) = query.get(active_entity) else {
         abort_battle(
             "玩家当前成员数据丢失，战斗已中断。",
             &mut battle_log,
@@ -156,10 +171,10 @@ fn enemy_choose_skill_system(
     };
 
     let low_hp = enemy_stats.max_hp > 0 && enemy_stats.hp * 100 < enemy_stats.max_hp * 30;
-    let under_counter = dbs.elements.get_effectiveness(
-        player_combatant.element,
-        enemy_combatant.element,
-    ) > 1.0;
+    let under_counter = dbs
+        .elements
+        .get_effectiveness(player_combatant.element, enemy_combatant.element)
+        > 1.0;
 
     let mut heal_candidates = Vec::new();
     let mut best_scored: Option<(crate::data::SkillId, i32)> = None;
@@ -170,13 +185,11 @@ fn enemy_choose_skill_system(
         };
 
         let score = match &skill.effect {
-            SkillEffect::Attack { power } => {
+            SkillEffect::Attack { power, .. } => {
                 let base_damage = *power + enemy_stats.atk - player_stats.def;
                 let effectiveness = if let Some(skill_element) = skill.element {
-                    dbs.elements.get_effectiveness(
-                        skill_element,
-                        player_combatant.element,
-                    )
+                    dbs.elements
+                        .get_effectiveness(skill_element, player_combatant.element)
                 } else {
                     1.0
                 };
@@ -193,6 +206,14 @@ fn enemy_choose_skill_system(
                 }
                 shield_score
             }
+            SkillEffect::ApplyStatus { .. } => 90,
+            SkillEffect::ModifyStages { .. } => 85,
+            SkillEffect::Cleanse { .. } => 88,
+            SkillEffect::Dispel { .. } => 89,
+            SkillEffect::DealFixedDamage { .. } => 92,
+            SkillEffect::DealStatDifferenceDamage { .. } => 93,
+            SkillEffect::Conditional { .. } => 94,
+            SkillEffect::Sequence { .. } => 95,
         };
 
         match best_scored {
@@ -240,6 +261,7 @@ fn resolve_turn_system(
             &mut Stats,
             &SkillList,
             &mut Shield,
+            &mut crate::battle::StatusBoard,
             &mut ElementAura,
             &Name,
         ),
@@ -256,6 +278,8 @@ fn resolve_turn_system(
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut turn_count: ResMut<TurnCount>,
     mut pending_boosts: ResMut<PendingBoosts>,
+    formula_rules: Res<BattleFormulaRules>,
+    mut accuracy_rng: ResMut<AccuracyRng>,
 ) {
     let Some(player_action) = turn_ctx.player_action else {
         return;
@@ -283,7 +307,7 @@ fn resolve_turn_system(
         return;
     };
 
-    let Ok((_, _, p_stats, _, _, _, _)) = query.get(player_entity) else {
+    let Ok((_, _, p_stats, _, _, _, _, _)) = query.get(player_entity) else {
         abort_battle(
             "回合结算失败：玩家成员数据缺失。",
             &mut battle_log,
@@ -292,7 +316,7 @@ fn resolve_turn_system(
         );
         return;
     };
-    let Ok((_, _, e_stats, _, _, _, _)) = query.get(enemy_entity) else {
+    let Ok((_, _, e_stats, _, _, _, _, _)) = query.get(enemy_entity) else {
         abort_battle(
             "回合结算失败：敌方成员数据缺失。",
             &mut battle_log,
@@ -337,7 +361,7 @@ fn resolve_turn_system(
         };
 
         if let TurnAction::Switch = action {
-            if let Ok((_, _, _, _, _, _, name)) = query.get(active_side_entity) {
+            if let Ok((_, _, _, _, _, _, _, name)) = query.get(active_side_entity) {
                 event_writer.write(BattleEvent::Switched {
                     side,
                     name: name.to_string(),
@@ -353,13 +377,13 @@ fn resolve_turn_system(
 
         let skill_slot = query
             .get(active_side_entity)
-            .map(|(_, _, _, sl, _, _, _)| sl.0.iter().position(|&s| s == skill_id).unwrap_or(0))
+            .map(|(_, _, _, sl, _, _, _, _)| sl.0.iter().position(|&s| s == skill_id).unwrap_or(0))
             .unwrap_or(0);
 
         let Ok(
             [
-                (_, a_combatant, mut a_stats, _, mut a_shield, mut a_aura, _),
-                (_, t_combatant, mut t_stats, _, mut t_shield, mut t_aura, _),
+                (_, a_combatant, mut a_stats, _, mut a_shield, mut a_statuses, mut a_aura, _),
+                (_, t_combatant, mut t_stats, _, mut t_shield, mut t_statuses, mut t_aura, _),
             ],
         ) = query.get_many_mut([player_entity, enemy_entity])
         else {
@@ -405,35 +429,53 @@ fn resolve_turn_system(
 
         if actor_is_player_slot {
             apply_effect(
-                &skill.effect,
-                skill.element,
+                skill,
                 attacker_side,
                 target_side,
                 t_combatant.element,
                 &mut a_stats,
                 &mut a_shield,
+                &mut a_statuses,
                 &mut t_stats,
                 &mut t_shield,
                 &mut t_aura,
+                &mut t_statuses,
                 &mut pending_boosts,
+                &formula_rules,
+                &mut accuracy_rng,
                 &dbs.elements,
+                &dbs.statuses,
+                &dbs.reactions,
                 &mut event_writer,
+                None,
+                None,
+                None,
+                None,
             );
         } else {
             apply_effect(
-                &skill.effect,
-                skill.element,
+                skill,
                 attacker_side,
                 target_side,
                 a_combatant.element,
                 &mut t_stats,
                 &mut t_shield,
+                &mut t_statuses,
                 &mut a_stats,
                 &mut a_shield,
                 &mut a_aura,
+                &mut a_statuses,
                 &mut pending_boosts,
+                &formula_rules,
+                &mut accuracy_rng,
                 &dbs.elements,
+                &dbs.statuses,
+                &dbs.reactions,
                 &mut event_writer,
+                None,
+                None,
+                None,
+                None,
             );
         }
     }
@@ -444,15 +486,26 @@ fn resolve_turn_system(
 }
 
 #[allow(dead_code)]
-fn action_priority(action: &TurnAction, skills: &HashMap<crate::data::SkillId, crate::data::SkillDef>) -> i32 {
+fn action_priority(
+    action: &TurnAction,
+    skills: &HashMap<crate::data::SkillId, crate::data::SkillDef>,
+) -> i32 {
     match action {
         TurnAction::Switch => 300,
         TurnAction::Skill(skill_id) => {
             let Some(skill) = skills.get(skill_id) else {
                 return 0;
             };
-            match skill.effect {
+            match &skill.effect {
                 SkillEffect::Shield { .. } | SkillEffect::Heal { .. } => 200,
+                SkillEffect::ApplyStatus { .. }
+                | SkillEffect::ModifyStages { .. }
+                | SkillEffect::Cleanse { .. }
+                | SkillEffect::Dispel { .. } => 150,
+                SkillEffect::DealFixedDamage { .. }
+                | SkillEffect::DealStatDifferenceDamage { .. }
+                | SkillEffect::Conditional { .. } => 165,
+                SkillEffect::Sequence { .. } => 175,
                 SkillEffect::Attack { .. } => 100,
             }
         }

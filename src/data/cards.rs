@@ -1,8 +1,8 @@
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// 技能卡唯一标识（与 RON 配置中的 id 字段对应）。
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum CardId {
     /// 使用后获得行动点。
     GainAp,

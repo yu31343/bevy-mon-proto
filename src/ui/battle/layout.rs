@@ -1,10 +1,6 @@
 use bevy::prelude::*;
 
-use super::{
-    components::*,
-    resources::UiFontHandle,
-    theme::UiTheme,
-};
+use super::{components::*, resources::UiFontHandle, theme::UiTheme};
 
 use crate::battle::Side;
 
@@ -13,7 +9,8 @@ pub(crate) fn spawn_camera(mut commands: Commands) {
 }
 
 pub(crate) fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-    static EMBEDDED_UI_FONT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded_ui_font.bin"));
+    static EMBEDDED_UI_FONT: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/embedded_ui_font.bin"));
 
     let font = Font::try_from_bytes(EMBEDDED_UI_FONT.to_vec())
         .expect("embedded UI font should be valid and loadable");
@@ -160,26 +157,24 @@ fn spawn_small_bench_card(
                     PlayerBenchCard { index },
                 ))
                 .with_children(|card| {
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("待机位"),
-                            title_font.clone(),
-                            TextColor(theme.text_primary),
-                        ));
-                        header.spawn((
-                            Text::new(header_text),
-                            hotkey_font.clone(),
-                            TextColor(theme.accent_player),
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },))
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("待机位"),
+                                title_font.clone(),
+                                TextColor(theme.text_primary),
+                            ));
+                            header.spawn((
+                                Text::new(header_text),
+                                hotkey_font.clone(),
+                                TextColor(theme.accent_player),
+                            ));
+                        });
                     card.spawn((
                         Text::new("队伍"),
                         title_font.clone(),
@@ -187,57 +182,91 @@ fn spawn_small_bench_card(
                         PlayerBenchNameText { index },
                     ));
                     card.spawn((
-                        Text::new("附着: 无"),
+                        Text::new("Atk: 0 Def: 0 Acc: 0 Spd: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        PlayerBenchStatsText { index },
+                    ));
+                    card.spawn((
+                        Text::new("状态：无"),
                         meta_font.clone(),
                         TextColor(theme.text_muted),
                         PlayerBenchAuraText { index },
                     ));
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(8.0),
-                            overflow: Overflow::clip(),
-                            border_radius: BorderRadius::all(Val::Px(4.0)),
-                            ..default()
-                        },
-                        BackgroundColor(theme.hp_track),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                border_radius: BorderRadius::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(theme.hp_fill_player),
-                            PlayerBenchHpBarFill { index },
-                        ));
-                    });
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(6.0),
-                            overflow: Overflow::clip(),
-                            border_radius: BorderRadius::all(Val::Px(3.0)),
-                            ..default()
-                        },
-                        BackgroundColor(theme.shield_track),
-                        Visibility::Hidden,
-                        PlayerBenchShieldBarTrack { index },
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                border_radius: BorderRadius::all(Val::Px(3.0)),
-                                ..default()
-                            },
-                            BackgroundColor(theme.shield_fill_player),
-                            PlayerBenchShieldBarFill { index },
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    height: Val::Px(8.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.hp_track),
+                            ))
+                            .with_children(|bar| {
+                                bar.spawn((
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.hp_fill_player),
+                                    PlayerBenchHpBarFill { index },
+                                ));
+                            });
+                            row.spawn((
+                                Text::new("0/0"),
+                                meta_font.clone(),
+                                TextColor(theme.text_secondary),
+                                PlayerBenchHpValueText { index },
+                            ));
+                        });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    height: Val::Px(6.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.shield_track),
+                                Visibility::Hidden,
+                                PlayerBenchShieldBarTrack { index },
+                            ))
+                            .with_children(|bar| {
+                                bar.spawn((
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.shield_fill_player),
+                                    PlayerBenchShieldBarFill { index },
+                                ));
+                            });
+                            row.spawn((
+                                Text::new("0"),
+                                meta_font.clone(),
+                                TextColor(theme.text_secondary),
+                                PlayerBenchShieldValueText { index },
+                            ));
+                        });
                 });
         }
         Side::Enemy => {
@@ -250,26 +279,24 @@ fn spawn_small_bench_card(
                     EnemyBenchCard { index },
                 ))
                 .with_children(|card| {
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("待机位"),
-                            title_font.clone(),
-                            TextColor(theme.text_primary),
-                        ));
-                        header.spawn((
-                            Text::new(header_text),
-                            hotkey_font.clone(),
-                            TextColor(theme.accent_enemy),
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },))
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("待机位"),
+                                title_font.clone(),
+                                TextColor(theme.text_primary),
+                            ));
+                            header.spawn((
+                                Text::new(header_text),
+                                hotkey_font.clone(),
+                                TextColor(theme.accent_enemy),
+                            ));
+                        });
                     card.spawn((
                         Text::new("队伍"),
                         title_font.clone(),
@@ -277,60 +304,137 @@ fn spawn_small_bench_card(
                         EnemyBenchNameText { index },
                     ));
                     card.spawn((
-                        Text::new("附着: 无"),
+                        Text::new("Atk: 0 Def: 0 Acc: 0 Spd: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        EnemyBenchStatsText { index },
+                    ));
+                    card.spawn((
+                        Text::new("状态：无"),
                         meta_font.clone(),
                         TextColor(theme.text_muted),
                         EnemyBenchAuraText { index },
                     ));
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(8.0),
-                            overflow: Overflow::clip(),
-                            border_radius: BorderRadius::all(Val::Px(4.0)),
-                            ..default()
-                        },
-                        BackgroundColor(theme.hp_track),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                border_radius: BorderRadius::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(theme.hp_fill_enemy),
-                            EnemyBenchHpBarFill { index },
-                        ));
-                    });
-                    card.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(6.0),
-                            overflow: Overflow::clip(),
-                            border_radius: BorderRadius::all(Val::Px(3.0)),
-                            ..default()
-                        },
-                        BackgroundColor(theme.shield_track),
-                        Visibility::Hidden,
-                        EnemyBenchShieldBarTrack { index },
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                border_radius: BorderRadius::all(Val::Px(3.0)),
-                                ..default()
-                            },
-                            BackgroundColor(theme.shield_fill_enemy),
-                            EnemyBenchShieldBarFill { index },
-                        ));
-                    });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    height: Val::Px(8.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.hp_track),
+                            ))
+                            .with_children(|bar| {
+                                bar.spawn((
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.hp_fill_enemy),
+                                    EnemyBenchHpBarFill { index },
+                                ));
+                            });
+                            row.spawn((
+                                Text::new("0/0"),
+                                meta_font.clone(),
+                                TextColor(theme.text_secondary),
+                                EnemyBenchHpValueText { index },
+                            ));
+                        });
+                    card.spawn((Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },))
+                        .with_children(|row| {
+                            row.spawn((
+                                Node {
+                                    flex_grow: 1.0,
+                                    height: Val::Px(6.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.shield_track),
+                                Visibility::Hidden,
+                                EnemyBenchShieldBarTrack { index },
+                            ))
+                            .with_children(|bar| {
+                                bar.spawn((
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(theme.shield_fill_enemy),
+                                    EnemyBenchShieldBarFill { index },
+                                ));
+                            });
+                            row.spawn((
+                                Text::new("0"),
+                                meta_font.clone(),
+                                TextColor(theme.text_secondary),
+                                EnemyBenchShieldValueText { index },
+                            ));
+                        });
                 });
         }
     }
+}
+
+fn spawn_colored_debug_tokens(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    label_font: TextFont,
+    value_font: TextFont,
+    label: &str,
+    line_width: Val,
+    line_wrap: FlexWrap,
+    column_gap: Val,
+    line_marker: impl Component,
+    token_marker: impl Component + Clone,
+    initial_tokens: &[(&str, Color)],
+) {
+    parent
+        .spawn((
+            Node {
+                width: line_width,
+                flex_direction: FlexDirection::Row,
+                flex_wrap: line_wrap,
+                column_gap,
+                row_gap: Val::Px(4.0),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            line_marker,
+        ))
+        .with_children(|line| {
+            line.spawn((
+                Text::new(label),
+                label_font,
+                TextColor(theme.text_secondary),
+            ));
+            for (text, color) in initial_tokens {
+                line.spawn((
+                    Text::new(*text),
+                    value_font.clone(),
+                    TextColor(*color),
+                    token_marker.clone(),
+                ));
+            }
+        });
 }
 
 fn spawn_skill_row_player(
@@ -343,28 +447,26 @@ fn spawn_skill_row_player(
     icon_font: TextFont,
 ) {
     parent
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                justify_content: JustifyContent::SpaceBetween,
-                column_gap: Val::Px(8.0),
-                row_gap: Val::Px(8.0),
-                align_items: AlignItems::Stretch,
-                ..default()
-            },
-        ))
+        .spawn((Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(8.0),
+            align_items: AlignItems::Stretch,
+            ..default()
+        },))
         .with_children(|row| {
             for idx in 0..4 {
                 row.spawn((
                     Button,
                     Node {
-                        width: Val::Percent(48.0),
-                        min_height: Val::Px(64.0),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_width: Val::Px(0.0),
+                        height: Val::Px(136.0),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                        align_items: AlignItems::FlexStart,
+                        column_gap: Val::Px(6.0),
+                        overflow: Overflow::clip(),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
                         ..default()
@@ -382,11 +484,11 @@ fn spawn_skill_row_player(
                     button
                         .spawn((
                             Node {
-                                width: Val::Px(30.0),
-                                height: Val::Px(30.0),
+                                width: Val::Px(26.0),
+                                height: Val::Px(26.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
-                                border_radius: BorderRadius::all(Val::Px(7.0)),
+                                border_radius: BorderRadius::all(Val::Px(6.0)),
                                 ..default()
                             },
                             ImageNode::solid_color(Color::srgba(0.22, 0.38, 0.52, 0.90)),
@@ -401,14 +503,12 @@ fn spawn_skill_row_player(
                         });
 
                     button
-                        .spawn((
-                            Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(2.0),
-                                flex_grow: 1.0,
-                                ..default()
-                            },
-                        ))
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(1.0),
+                            flex_grow: 1.0,
+                            ..default()
+                        },))
                         .with_children(|column| {
                             column.spawn((
                                 Text::new(format!("技能 {}", idx + 1)),
@@ -432,10 +532,14 @@ pub(crate) fn setup_ui_system(
     mut commands: Commands,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
+    retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
     existing_ui: Query<(), With<BattleUiRoot>>,
 ) {
     if !existing_ui.is_empty() {
         return;
+    }
+    if let Some(mut retreat_confirm) = retreat_confirm {
+        retreat_confirm.armed = false;
     }
     let radius_panel = theme.radius_panel;
     let radius_button = theme.radius_button;
@@ -449,6 +553,10 @@ pub(crate) fn setup_ui_system(
     let result_font = super::helpers::make_text_font(40.0, ui_font.as_deref());
     let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let small_font = super::helpers::make_text_font(11.0, ui_font.as_deref());
+    let skill_header_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
+    let skill_body_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
+    let skill_meta_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
+    let skill_icon_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
 
     commands
         .spawn((
@@ -539,12 +647,38 @@ pub(crate) fn setup_ui_system(
                 ))
                 .with_children(|header| {
                     header.spawn((
-                        Text::new("⚔ ..."),
-                        title_font.clone(),
-                        TextColor(theme.accent_player),
-                        theme.title_text_shadow(),
-                        PlayerNameText,
-                    ));
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        PlayerNameAuraRow,
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("⚔ ..."),
+                            title_font.clone(),
+                            TextColor(theme.accent_player),
+                            theme.title_text_shadow(),
+                            PlayerNameText,
+                        ));
+                        spawn_colored_debug_tokens(
+                            row,
+                            &theme,
+                            meta_font.clone(),
+                            meta_font.clone(),
+                            "",
+                            Val::Auto,
+                            FlexWrap::NoWrap,
+                            Val::Px(2.0),
+                            PlayerAuraLine,
+                            DebugAuraToken,
+                            &[],
+                        );
+                    });
                 });
                 panel.spawn((
                     Text::new("玩家：..."),
@@ -553,29 +687,116 @@ pub(crate) fn setup_ui_system(
                     theme.title_text_shadow(),
                     PlayerStatsText,
                 ));
-                spawn_hp_bar(
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexStart,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("Atk: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerAtkText,
+                    ));
+                    row.spawn((
+                        Text::new("Def: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerDefText,
+                    ));
+                    row.spawn((
+                        Text::new("Acc: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerAccText,
+                    ));
+                    row.spawn((
+                        Text::new("Spd: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerSpdText,
+                    ));
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                        .with_children(|bar_wrap| {
+                            spawn_hp_bar(
+                                bar_wrap,
+                                &theme,
+                                border_1,
+                                radius_hp,
+                                theme.hp_fill_player,
+                                PlayerHpBarFill,
+                            );
+                        });
+                    row.spawn((
+                        Text::new("0/0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        PlayerHpValueText,
+                    ));
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                        .with_children(|bar_wrap| {
+                            spawn_shield_bar(
+                                bar_wrap,
+                                &theme,
+                                border_1,
+                                radius_hp,
+                                theme.shield_fill_player,
+                                PlayerShieldBarFill,
+                                PlayerShieldBarTrack,
+                            );
+                        });
+                    row.spawn((
+                        Text::new("0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        PlayerShieldValueText,
+                    ));
+                });
+                spawn_colored_debug_tokens(
                     panel,
                     &theme,
-                    border_1,
-                    radius_hp,
-                    theme.hp_fill_player,
-                    PlayerHpBarFill,
-                );
-                spawn_shield_bar(
-                    panel,
-                    &theme,
-                    border_1,
-                    radius_hp,
-                    theme.shield_fill_player,
-                    PlayerShieldBarFill,
-                    PlayerShieldBarTrack,
+                    meta_font.clone(),
+                    meta_font.clone(),
+                    "状态：",
+                    Val::Percent(100.0),
+                    FlexWrap::Wrap,
+                    Val::Px(4.0),
+                    PlayerStatusLine,
+                    DebugStatusToken,
+                    &[("无", theme.text_muted)],
                 );
             });
 
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(236.0),
+                    top: Val::Px(276.0),
                     left: Val::Px(20.0),
                     width: Val::Px(320.0),
                     flex_direction: FlexDirection::Row,
@@ -598,6 +819,7 @@ pub(crate) fn setup_ui_system(
                     );
                 }
             });
+
 
             // === Enemy Info: Top-Right (only name + HP + shield, no skills/team) ===
             root.spawn((
@@ -630,12 +852,38 @@ pub(crate) fn setup_ui_system(
                 ))
                 .with_children(|header| {
                     header.spawn((
-                        Text::new("💀 ..."),
-                        title_font.clone(),
-                        TextColor(theme.accent_enemy),
-                        theme.title_text_shadow(),
-                        EnemyNameText,
-                    ));
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        EnemyNameAuraRow,
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("💀 ..."),
+                            title_font.clone(),
+                            TextColor(theme.accent_enemy),
+                            theme.title_text_shadow(),
+                            EnemyNameText,
+                        ));
+                        spawn_colored_debug_tokens(
+                            row,
+                            &theme,
+                            meta_font.clone(),
+                            meta_font.clone(),
+                            "",
+                            Val::Auto,
+                            FlexWrap::NoWrap,
+                            Val::Px(2.0),
+                            EnemyAuraLine,
+                            DebugAuraToken,
+                            &[],
+                        );
+                    });
                 });
                 panel.spawn((
                     Text::new("敌方：..."),
@@ -644,29 +892,116 @@ pub(crate) fn setup_ui_system(
                     theme.title_text_shadow(),
                     EnemyStatsText,
                 ));
-                spawn_hp_bar(
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexStart,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("Atk: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        EnemyAtkText,
+                    ));
+                    row.spawn((
+                        Text::new("Def: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        EnemyDefText,
+                    ));
+                    row.spawn((
+                        Text::new("Acc: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        EnemyAccText,
+                    ));
+                    row.spawn((
+                        Text::new("Spd: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        EnemySpdText,
+                    ));
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                        .with_children(|bar_wrap| {
+                            spawn_hp_bar(
+                                bar_wrap,
+                                &theme,
+                                border_1,
+                                radius_hp,
+                                theme.hp_fill_enemy,
+                                EnemyHpBarFill,
+                            );
+                        });
+                    row.spawn((
+                        Text::new("0/0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        EnemyHpValueText,
+                    ));
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                        .with_children(|bar_wrap| {
+                            spawn_shield_bar(
+                                bar_wrap,
+                                &theme,
+                                border_1,
+                                radius_hp,
+                                theme.shield_fill_enemy,
+                                EnemyShieldBarFill,
+                                EnemyShieldBarTrack,
+                            );
+                        });
+                    row.spawn((
+                        Text::new("0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        EnemyShieldValueText,
+                    ));
+                });
+                spawn_colored_debug_tokens(
                     panel,
                     &theme,
-                    border_1,
-                    radius_hp,
-                    theme.hp_fill_enemy,
-                    EnemyHpBarFill,
-                );
-                spawn_shield_bar(
-                    panel,
-                    &theme,
-                    border_1,
-                    radius_hp,
-                    theme.shield_fill_enemy,
-                    EnemyShieldBarFill,
-                    EnemyShieldBarTrack,
+                    meta_font.clone(),
+                    meta_font.clone(),
+                    "状态：",
+                    Val::Percent(100.0),
+                    FlexWrap::Wrap,
+                    Val::Px(4.0),
+                    EnemyStatusLine,
+                    DebugStatusToken,
+                    &[("无", theme.text_muted)],
                 );
             });
 
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(236.0),
+                    top: Val::Px(276.0),
                     right: Val::Px(20.0),
                     width: Val::Px(320.0),
                     flex_direction: FlexDirection::Row,
@@ -689,6 +1024,7 @@ pub(crate) fn setup_ui_system(
                     );
                 }
             });
+
 
             // === Hint Text: Center ===
             root.spawn((
@@ -716,12 +1052,37 @@ pub(crate) fn setup_ui_system(
                 ));
             });
 
+            // === Center Turn Banner ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(0.0),
+                    top: Val::Percent(36.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|banner| {
+                banner.spawn((
+                    Text::new(""),
+                    super::helpers::make_text_font(46.0, ui_font.as_deref()),
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.88)),
+                    TextShadow {
+                        offset: Vec2::new(2.0, 2.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.60),
+                    },
+                    TurnBannerText,
+                ));
+            });
+
             // === Bottom-Left: Control Buttons ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(20.0),
-                    bottom: Val::Px(20.0),
+                    bottom: Val::Px(16.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(10.0),
                     ..default()
@@ -777,200 +1138,208 @@ pub(crate) fn setup_ui_system(
                         TextColor(theme.text_primary),
                     ));
                 });
-            });
 
-            // === Bottom-Center: Hand Cards (Radial Fan Layout) ===
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    bottom: Val::Px(0.0),
-                    left: Val::Px(0.0),
-                    right: Val::Px(0.0),
-                    height: Val::Px(350.0),
-                    ..default()
-                },
-                HandCardsRoot,
-            ))
-            .with_children(|hand_container| {
-                let card_w = 130.0_f32;
-                let card_h = 180.0_f32;
-                let total_cards = 5_f32;
-                let radius = 260.0_f32;
-                let half_spread = 50.0_f32;
-
-                for idx in 0..5 {
-                    let i = idx as f32;
-                    let t = if total_cards > 1.0 {
-                        (i / (total_cards - 1.0)) * 2.0 - 1.0
-                    } else {
-                        0.0
-                    };
-                    let angle_deg = t * half_spread;
-                    let angle_rad = angle_deg.to_radians();
-
-                    let cx = radius * angle_rad.sin();
-                    let cy = radius * angle_rad.cos();
-
-                    let z = idx as i32;
-
-                    hand_container.spawn((
-                        Button,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Percent(50.0),
-                            bottom: Val::Px(cy - card_h / 2.0),
-                            width: Val::Px(card_w),
-                            height: Val::Px(card_h),
-                            margin: UiRect::left(Val::Px(cx - card_w / 2.0)),
-                            padding: UiRect::px(10.0, 10.0, 12.0, 10.0),
-                            border: border_1,
-                            border_radius: BorderRadius::all(radius_card),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(4.0),
-                            ..default()
-                        },
-                        UiTransform::from_rotation(Rot2::radians(angle_rad)),
-                        BackgroundColor(theme.card_bg),
-                        BorderColor::all(theme.card_border),
-                        theme.card_shadow(),
-                        ZIndex(z),
-                        PlayerCardButton { index: idx },
-                    ))
-                    .with_children(|card| {
-                        card.spawn((
-                            Node {
-                                width: Val::Px(24.0),
-                                height: Val::Px(24.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border_radius: BorderRadius::all(Val::Px(5.0)),
-                                ..default()
-                            },
-                            ImageNode::solid_color(Color::srgba(0.18, 0.32, 0.48, 0.85)),
-                        ))
-                        .with_children(|hotkey_box| {
-                            hotkey_box.spawn((
-                                Text::new(super::helpers::card_hotkey_label(idx)),
-                                icon_font.clone(),
-                                TextColor(theme.accent_player),
-                                PlayerCardHotkeyText { index: idx },
-                            ));
-                        });
-                        card.spawn((
-                            Text::new("—"),
-                            body_font.clone(),
-                            TextColor(theme.text_primary),
-                            PlayerCardNameText { index: idx },
-                        ));
-                        card.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(1.0),
-                                ..default()
-                            },
-                            BackgroundColor(theme.divider),
-                        ));
-                        card.spawn((
-                            Text::new("AP—"),
-                            meta_font.clone(),
-                            TextColor(theme.text_secondary),
-                            PlayerCardCostText { index: idx },
-                        ));
-                        card.spawn((
-                            Text::new(""),
-                            small_font.clone(),
-                            TextColor(theme.text_muted),
-                            Visibility::Hidden,
-                            PlayerCardDescText { index: idx },
-                        ));
-                    });
-                }
-            });
-
-            // === Bottom-Right: Switch Button + Skills ===
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: Val::Px(16.0),
-                    bottom: Val::Px(16.0),
-                    width: Val::Px(370.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
-                    ..default()
-                },
-                SkillPanelRoot,
-            ))
-            .with_children(|right_panel| {
-                // Switch Monster Button
-                right_panel.spawn((
+                controls.spawn((
                     Button,
                     Node {
-                        width: Val::Percent(100.0),
-                        min_height: Val::Px(48.0),
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                        width: Val::Px(150.0),
+                        min_height: Val::Px(46.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                         border: border_1,
                         border_radius: BorderRadius::all(radius_button),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
                         ..default()
                     },
                     BackgroundColor(theme.button_idle),
                     BorderColor::all(theme.button_border_idle),
                     theme.button_shadow(),
-                    SwitchMonsterButton,
+                    RetreatButton,
                 ))
                 .with_children(|btn| {
                     btn.spawn((
-                        Text::new("换精灵（Q）"),
+                        Text::new("撤退"),
                         body_font.clone(),
-                        TextColor(theme.accent_player),
+                        TextColor(theme.text_primary),
+                        RetreatButtonText,
                     ));
                 });
+            });
 
-                // Skill Section
-                right_panel.spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        padding: UiRect::all(Val::Px(12.0)),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_panel),
-                        ..default()
-                    },
-                    BackgroundColor(theme.panel),
-                    BorderColor::all(theme.border_panel),
-                    theme.panel_shadow(),
-                ))
-                .with_children(|skill_section| {
-                    skill_section.spawn((
+            // === Bottom Hand Row (above) ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(184.0),
+                    right: Val::Px(16.0),
+                    bottom: Val::Px(92.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexEnd,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                HandCardsRoot,
+                ZIndex(10),
+            ))
+            .with_children(|hand_container| {
+                for idx in 0..5 {
+                    hand_container
+                        .spawn((
+                            Button,
+                            Node {
+                                width: Val::Px(130.0),
+                                height: Val::Px(180.0),
+                                padding: UiRect::px(10.0, 10.0, 12.0, 10.0),
+                                border: border_1,
+                                border_radius: BorderRadius::all(radius_card),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                ..default()
+                            },
+                            BackgroundColor(theme.card_bg),
+                            BorderColor::all(theme.card_border),
+                            theme.card_shadow(),
+                            PlayerCardButton { index: idx },
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Node {
+                                    width: Val::Px(24.0),
+                                    height: Val::Px(24.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                ImageNode::solid_color(Color::srgba(0.18, 0.32, 0.48, 0.85)),
+                            ))
+                            .with_children(|hotkey_box| {
+                                hotkey_box.spawn((
+                                    Text::new(super::helpers::card_hotkey_label(idx)),
+                                    icon_font.clone(),
+                                    TextColor(theme.accent_player),
+                                    PlayerCardHotkeyText { index: idx },
+                                ));
+                            });
+                            card.spawn((
+                                Text::new("—"),
+                                body_font.clone(),
+                                TextColor(theme.text_primary),
+                                PlayerCardNameText { index: idx },
+                            ));
+                            card.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(1.0),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.divider),
+                            ));
+                            card.spawn((
+                                Text::new("AP—"),
+                                meta_font.clone(),
+                                TextColor(theme.text_secondary),
+                                PlayerCardCostText { index: idx },
+                            ));
+                            card.spawn((
+                                Text::new(""),
+                                small_font.clone(),
+                                TextColor(theme.text_muted),
+                                Visibility::Hidden,
+                                PlayerCardDescText { index: idx },
+                            ));
+                        });
+                }
+            });
+
+            // === Bottom Skill Region (front/overlay) ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(184.0),
+                    right: Val::Px(16.0),
+                    bottom: Val::Px(16.0),
+                    min_height: Val::Px(196.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Stretch,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                SkillPanelRoot,
+                ZIndex(20),
+            ))
+            .with_children(|skill_region| {
+                skill_region
+                    .spawn((
                         Node {
-                            width: Val::Percent(100.0),
-                            padding: UiRect::px(0.0, 0.0, 4.0, 6.0),
-                            border: UiRect::bottom(Val::Px(1.0)),
+                            flex_grow: 1.0,
+                            padding: UiRect::all(Val::Px(10.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            border: border_1,
+                            border_radius: BorderRadius::all(radius_panel),
                             ..default()
                         },
-                        BorderColor::all(theme.divider),
+                        BackgroundColor(theme.panel),
+                        BorderColor::all(theme.border_panel),
+                        theme.panel_shadow(),
                     ))
-                    .with_children(|header| {
-                        header.spawn((
-                            Text::new("技能"),
-                            title_font.clone(),
+                    .with_children(|skill_section| {
+                        skill_section
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::px(0.0, 0.0, 3.0, 5.0),
+                                    border: UiRect::bottom(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BorderColor::all(theme.divider),
+                            ))
+                            .with_children(|header| {
+                                header.spawn((
+                                    Text::new("技能"),
+                                    skill_header_font.clone(),
+                                    TextColor(theme.accent_player),
+                                    theme.title_text_shadow(),
+                                ));
+                            });
+                        spawn_skill_row_player(
+                            skill_section,
+                            &theme,
+                            border_1,
+                            radius_button,
+                            skill_body_font.clone(),
+                            skill_meta_font.clone(),
+                            skill_icon_font.clone(),
+                        );
+                    });
+
+                skill_region
+                    .spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(132.0),
+                            min_height: Val::Px(196.0),
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                            border: border_1,
+                            border_radius: BorderRadius::all(radius_button),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(theme.button_idle),
+                        BorderColor::all(theme.button_border_idle),
+                        theme.button_shadow(),
+                        SwitchMonsterButton,
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("换精灵（Q）"),
+                            skill_body_font.clone(),
                             TextColor(theme.accent_player),
-                            theme.title_text_shadow(),
                         ));
                     });
-                    spawn_skill_row_player(
-                        skill_section,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        body_font.clone(),
-                        meta_font.clone(),
-                        icon_font.clone(),
-                    );
-                });
             });
 
             // === Switch Monster Overlay (hidden by default) ===

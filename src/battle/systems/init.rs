@@ -1,10 +1,12 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        push_battle_line, ActionPoints, BattleLog, BattleResult, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, SelectedCard, Shield, Side, SkillCount, SkillList, Stats,
-        TurnContext, TurnCount,
+        AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, Combatant, ElementAura,
+        Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
+        SkillCount, SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
+        UiControlSide, clear_runtime_battle_logs, clear_turn_context, note_structured_phase,
+        push_battle_line,
     },
     data::{BattleDataStatus, BattleDbs, BattleRules, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
@@ -20,21 +22,45 @@ fn normalize_skill_slots(skills: &[crate::data::SkillId]) -> ([crate::data::Skil
     (slots, count)
 }
 
+#[derive(SystemParam)]
+pub(crate) struct InitBattleRuntime<'w> {
+    dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
+    data_status: Option<Res<'w, BattleDataStatus>>,
+    turn_ctx: ResMut<'w, TurnContext>,
+    battle_log: ResMut<'w, BattleLog>,
+    structured_log: ResMut<'w, StructuredBattleLog>,
+    replay_log: ResMut<'w, ReplayEventLog>,
+    action_trace: ResMut<'w, ActionTrace>,
+    result: ResMut<'w, BattleResult>,
+    turn_count: ResMut<'w, TurnCount>,
+    round_order: ResMut<'w, RoundOrder>,
+    accuracy_rng: ResMut<'w, AccuracyRng>,
+    next_game_state: ResMut<'w, NextState<GameState>>,
+}
+
 pub fn init_battle_system(
     mut commands: Commands,
     monster_pool: Res<MonsterPool>,
     team_selections: Option<Res<TeamSelections>>,
-    dbs: Res<BattleDbs>,
-    battle_rules: Res<BattleRules>,
-    data_status: Option<Res<BattleDataStatus>>,
-    mut turn_ctx: ResMut<TurnContext>,
-    mut battle_log: ResMut<BattleLog>,
-    mut result: ResMut<BattleResult>,
-    mut turn_count: ResMut<TurnCount>,
     cleanup_query: Query<Entity, With<InBattle>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
-    mut next_game_state: ResMut<NextState<GameState>>,
+    mut runtime: InitBattleRuntime,
 ) {
+    let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
+    let data_status = &runtime.data_status;
+    let turn_ctx = &mut runtime.turn_ctx;
+    let battle_log = &mut runtime.battle_log;
+    let structured_log = &mut runtime.structured_log;
+    let replay_log = &mut runtime.replay_log;
+    let action_trace = &mut runtime.action_trace;
+    let result = &mut runtime.result;
+    let turn_count = &mut runtime.turn_count;
+    let round_order = &mut runtime.round_order;
+    let accuracy_rng = &mut runtime.accuracy_rng;
+    let next_game_state = &mut runtime.next_game_state;
+
     // Wait for team selections to be made
     let Some(team_selections) = team_selections else {
         println!("等待队伍选择...");
@@ -44,13 +70,21 @@ pub fn init_battle_system(
         commands.entity(entity).despawn();
     }
 
-    turn_ctx.player_action = None;
-    turn_ctx.enemy_action = None;
-    turn_ctx.player_ended = false;
-    turn_ctx.enemy_ended = false;
-    battle_log.0.clear();
+    clear_turn_context(turn_ctx);
+    clear_runtime_battle_logs(battle_log, structured_log, replay_log, action_trace);
     result.message.clear();
+    result.export_status = None;
     turn_count.0 = 0;
+    **round_order = RoundOrder::default();
+    accuracy_rng.reset(0xA5A5_1F2D_D3C4_B7E9);
+    commands.insert_resource(crate::pvp::PvpPendingLocalIntent::default());
+    commands.insert_resource(crate::pvp::PvpLastRemoteIntentSeq::default());
+    note_structured_phase(
+        structured_log,
+        "battle-init",
+        "初始化战斗",
+        "已重置回合上下文、文本日志、结构化日志与行动追踪。",
+    );
 
     // 回合进度状态初始化（在每次“战斗重开”时重置）。
     commands.insert_resource(ActionPoints {
@@ -59,15 +93,16 @@ pub fn init_battle_system(
     });
     commands.insert_resource(Hand::default());
     commands.insert_resource(PendingBoosts::default());
-    commands.insert_resource(SelectedCard::default());
+    commands.insert_resource(SelectedCards::default());
+    commands.insert_resource(UiControlSide(Side::Player));
 
     if let Some(status) = data_status {
         if let Some(reason) = &status.error {
             abort_battle(
                 &format!("战斗初始化失败：{reason}"),
-                &mut battle_log,
-                &mut result,
-                &mut next_game_state,
+                battle_log,
+                result,
+                next_game_state,
             );
             return;
         }
@@ -81,21 +116,21 @@ pub fn init_battle_system(
                 "战斗初始化失败：玩家队伍人数非法（需 1..={}，当前 {}）。",
                 battle_rules.max_team_size, player_count
             ),
-            &mut battle_log,
-            &mut result,
-            &mut next_game_state,
+            battle_log,
+            result,
+            next_game_state,
         );
         return;
     }
-    if enemy_count != player_count {
+    if !(1..=battle_rules.max_team_size).contains(&enemy_count) {
         abort_battle(
             &format!(
-                "战斗初始化失败：敌我队伍人数不一致（玩家 {}，敌方 {}）。",
-                player_count, enemy_count
+                "战斗初始化失败：敌方队伍人数非法（需 1..={}，当前 {}）。",
+                battle_rules.max_team_size, enemy_count
             ),
-            &mut battle_log,
-            &mut result,
-            &mut next_game_state,
+            battle_log,
+            result,
+            next_game_state,
         );
         return;
     }
@@ -103,9 +138,9 @@ pub fn init_battle_system(
     if dbs.skills.is_empty() {
         abort_battle(
             "战斗初始化失败：技能数据库为空。",
-            &mut battle_log,
-            &mut result,
-            &mut next_game_state,
+            battle_log,
+            result,
+            next_game_state,
         );
         return;
     }
@@ -119,9 +154,9 @@ pub fn init_battle_system(
         if idx >= monster_pool.monsters.len() {
             abort_battle(
                 &format!("战斗初始化失败：无效的精灵索引 {}。", idx),
-                &mut battle_log,
-                &mut result,
-                &mut next_game_state,
+                battle_log,
+                result,
+                next_game_state,
             );
             return;
         }
@@ -134,9 +169,9 @@ pub fn init_battle_system(
                     mon.name,
                     mon.skills.len()
                 ),
-                &mut battle_log,
-                &mut result,
-                &mut next_game_state,
+                battle_log,
+                result,
+                next_game_state,
             );
             return;
         }
@@ -145,9 +180,9 @@ pub fn init_battle_system(
             if !dbs.skills.contains_key(&sid) {
                 abort_battle(
                     &format!("战斗初始化失败：{} 存在未定义技能 {:?}。", mon.name, sid),
-                    &mut battle_log,
-                    &mut result,
-                    &mut next_game_state,
+                    battle_log,
+                    result,
+                    next_game_state,
                 );
                 return;
             }
@@ -181,18 +216,17 @@ pub fn init_battle_system(
                     atk: combatant.stats.atk,
                     def: combatant.stats.def,
                     spd: combatant.stats.spd,
+                    acc: combatant.stats.acc,
+                    atk_stage: 0,
+                    def_stage: 0,
+                    spd_stage: 0,
+                    acc_stage: 0,
                 },
                 SkillList(skill_slots),
                 SkillCount(skill_count),
                 Shield::default(),
-                ElementAura {
-                    attached: match combatant.element {
-                        crate::data::ElementType::Fire
-                        | crate::data::ElementType::Light
-                        | crate::data::ElementType::Dark => Some(combatant.element),
-                        _ => None,
-                    },
-                },
+                StatusBoard::default(),
+                ElementAura::default(),
             ))
             .id();
         player_team.combatants.push(entity);
@@ -215,18 +249,17 @@ pub fn init_battle_system(
                     atk: combatant.stats.atk,
                     def: combatant.stats.def,
                     spd: combatant.stats.spd,
+                    acc: combatant.stats.acc,
+                    atk_stage: 0,
+                    def_stage: 0,
+                    spd_stage: 0,
+                    acc_stage: 0,
                 },
                 SkillList(skill_slots),
                 SkillCount(skill_count),
                 Shield::default(),
-                ElementAura {
-                    attached: match combatant.element {
-                        crate::data::ElementType::Fire
-                        | crate::data::ElementType::Light
-                        | crate::data::ElementType::Dark => Some(combatant.element),
-                        _ => None,
-                    },
-                },
+                StatusBoard::default(),
+                ElementAura::default(),
             ))
             .id();
         enemy_team.combatants.push(entity);
@@ -235,9 +268,9 @@ pub fn init_battle_system(
     if player_team.combatants.is_empty() || enemy_team.combatants.is_empty() {
         abort_battle(
             "战斗初始化失败：生成战斗实体后队伍为空。",
-            &mut battle_log,
-            &mut result,
-            &mut next_game_state,
+            battle_log,
+            result,
+            next_game_state,
         );
         return;
     }
@@ -246,7 +279,7 @@ pub fn init_battle_system(
     commands.insert_resource(crate::battle::EnemyTeam(enemy_team));
 
     push_battle_line(
-        &mut battle_log,
+        battle_log,
         "战斗已开始：每回合开始抽取手牌并获得行动点；按 1-4 使用精灵技能，按 F 弃牌换 AP，按 E 结束回合。",
     );
     next_phase.set(BattlePhase::RoundStart);
@@ -260,6 +293,7 @@ pub(crate) fn abort_battle(
 ) {
     let message = format!("战斗中断：{reason} 按 R 重新开始。");
     battle_result.message = message.clone();
+    battle_result.export_status = None;
     push_battle_line(battle_log, message);
     next_game_state.set(GameState::Result);
 }

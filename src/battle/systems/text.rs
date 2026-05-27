@@ -19,3 +19,30 @@ pub(crate) fn element_text(element: crate::data::ElementType) -> &'static str {
         crate::data::ElementType::Wind => "风",
     }
 }
+
+pub(crate) fn element_texts(elements: &[crate::data::ElementType]) -> String {
+    if elements.is_empty() {
+        "无".to_string()
+    } else {
+        elements
+            .iter()
+            .map(|element| element_text(*element))
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+}
+
+pub(crate) fn status_names(statuses: &crate::battle::StatusBoard) -> String {
+    let labels = statuses
+        .entries
+        .iter()
+        .filter(|entry| entry.category != crate::data::StatusCategory::Aura)
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>();
+
+    if labels.is_empty() {
+        "无".to_string()
+    } else {
+        labels.join("/")
+    }
+}

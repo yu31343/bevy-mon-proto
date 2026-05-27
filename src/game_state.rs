@@ -1,16 +1,21 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// 顶层游戏状态：队伍选择、战斗中或结算页。
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum GameState {
     #[default]
+    Lobby,
+    Map, // 新增地图状态
+    MonsterDex,
+    PvpLobby,
     TeamSelection,
     Battle,
     Result,
 }
 
 /// 战斗子状态：用于驱动 1v1 回合流程。
-#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default, Serialize, Deserialize)]
 pub enum BattlePhase {
     #[default]
     Init,
@@ -22,4 +27,6 @@ pub enum BattlePhase {
     EnemyTurn,
     /// 本回合结束判定与换人/胜负切换。
     CheckEnd,
+    /// 等待死亡动画播放完成，再执行换人或进入结算。
+    DeathResolve,
 }
