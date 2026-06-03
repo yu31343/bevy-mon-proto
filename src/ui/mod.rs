@@ -68,6 +68,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 button_discard_system.run_if(in_state(GameState::Battle)),
                 button_switch_member_system.run_if(in_state(GameState::Battle)),
                 button_play_card_two_step_system.run_if(in_state(GameState::Battle)),
+                button_cancel_card_selection_system.run_if(in_state(GameState::Battle)),
                 button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
                 close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
                 apply_pending_switch_overlay_toggle_system

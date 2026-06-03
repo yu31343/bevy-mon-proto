@@ -352,7 +352,51 @@ pub(crate) fn button_switch_member_system(
     }
 }
 
+pub(crate) fn button_cancel_card_selection_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
+    card_query: Query<(&Interaction, &PlayerCardButton), With<Button>>,
+    ui_control_side: Res<UiControlSide>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    mut selected: ResMut<SelectedCards>,
+) {
+    if !mouse_buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
+        || (*battle_phase.get() == BattlePhase::Discard
+            && pending_discard.as_ref().is_some_and(|pending| {
+                pending.side != ui_control_side.0
+                    || (*battle_mode == BattleControlMode::PlayerVsAi
+                        && pending.side == Side::Enemy)
+            }))
+    {
+        return;
+    }
+
+    let selected_state = match ui_control_side.0 {
+        Side::Player => &mut selected.player,
+        Side::Enemy => &mut selected.enemy,
+    };
+    let Some(selected_index) = selected_state.index else {
+        return;
+    };
+
+    for (interaction, button) in &card_query {
+        if button.index == selected_index
+            && matches!(*interaction, Interaction::Hovered | Interaction::Pressed)
+        {
+            selected_state.index = None;
+            selected_state.discard_armed = false;
+            break;
+        }
+    }
+}
+
 pub(crate) fn button_play_card_two_step_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
@@ -371,8 +415,9 @@ pub(crate) fn button_play_card_two_step_system(
     pending_discard: Option<Res<PendingHandDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
-        && *battle_phase.get() != BattlePhase::Discard)
+    if !mouse_buttons.pressed(MouseButton::Left)
+        || (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+            && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
     {
         return;
