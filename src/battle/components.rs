@@ -643,6 +643,12 @@ pub struct CardTurnMemory {
     pub enemy: SideTurnMemory,
 }
 
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PendingHandDiscard {
+    pub side: Side,
+    pub next_phase: BattlePhase,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SelectedCardState {
     pub index: Option<usize>,

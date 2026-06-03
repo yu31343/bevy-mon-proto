@@ -53,6 +53,11 @@ impl Plugin for BattlePlugin {
                 Update,
                 systems::player_turn_input_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+            )
+            .add_systems(
+                Update,
+                systems::hand_discard_phase_system
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Discard))),
             );
         app.add_systems(
             Update,

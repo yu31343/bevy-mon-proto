@@ -3,8 +3,8 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Hand,
-        PendingBoosts, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Side, Stats,
-        StructuredBattleLog, TurnContext, TurnCount, UiControlSide, note_round_phase,
+        PendingBoosts, PendingHandDiscard, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards,
+        Side, Stats, StructuredBattleLog, TurnContext, TurnCount, UiControlSide, note_round_phase,
         opposite_side, push_named_action_trace,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
@@ -76,25 +76,6 @@ pub fn round_start_system(
 
     turn_count.0 += 1;
     event_writer.write(BattleEvent::TurnStarted(turn_count.0));
-
-    super::cards::auto_discard_excess_hand(
-        Side::Player,
-        hand,
-        card_piles,
-        rules,
-        action_points,
-        dbs,
-        &mut event_writer,
-    );
-    super::cards::auto_discard_excess_hand(
-        Side::Enemy,
-        hand,
-        card_piles,
-        rules,
-        action_points,
-        dbs,
-        &mut event_writer,
-    );
 
     super::cards::draw_cards(
         Side::Player,
@@ -200,10 +181,18 @@ pub fn round_start_system(
 pub fn sync_ui_control_side_system(
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
     pvp_connection: Option<Res<PvpConnection>>,
     mut ui_control_side: ResMut<UiControlSide>,
 ) {
     ui_control_side.0 = match *battle_phase.get() {
+        BattlePhase::Discard => pending_discard
+            .as_ref()
+            .map(|pending| match *battle_mode {
+                BattleControlMode::PlayerVsAi if pending.side == Side::Enemy => Side::Player,
+                _ => pending.side,
+            })
+            .unwrap_or(Side::Player),
         BattlePhase::EnemyTurn if *battle_mode == BattleControlMode::DebugPlayerControlsBoth => {
             Side::Enemy
         }

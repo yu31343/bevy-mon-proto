@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
-        UiControlSide, transfer_status_by_id,
+        PendingHandDiscard, PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats,
+        StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
@@ -368,12 +368,24 @@ pub(crate) fn button_play_card_two_step_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -390,6 +402,23 @@ pub(crate) fn button_play_card_two_step_system(
                     selected_state.index = None;
                     selected_state.discard_armed = false;
                     continue;
+                }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_name,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
                 }
                 if selected_state.discard_armed {
                     if send_client_intent(
@@ -463,6 +492,23 @@ pub(crate) fn button_play_card_two_step_system(
                     selected_state.discard_armed = false;
                     continue;
                 }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_name,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
                 if selected_state.discard_armed {
                     let card_id = cards[idx];
                     cards.remove(idx);
@@ -523,12 +569,24 @@ pub(crate) fn button_discard_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, _) in &mut interaction_query {
         if *interaction != Interaction::Pressed {

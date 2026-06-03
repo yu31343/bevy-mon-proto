@@ -81,6 +81,7 @@ pub fn init_battle_system(
     accuracy_rng.reset(0xA5A5_1F2D_D3C4_B7E9);
     commands.insert_resource(crate::pvp::PvpPendingLocalIntent::default());
     commands.insert_resource(crate::pvp::PvpLastRemoteIntentSeq::default());
+    commands.remove_resource::<crate::battle::PendingHandDiscard>();
     note_structured_phase(
         structured_log,
         "battle-init",

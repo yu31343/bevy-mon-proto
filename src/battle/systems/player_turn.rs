@@ -8,7 +8,7 @@ use crate::{
         StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
         note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
-    data::BattleDbs,
+    data::{BattleDbs, BattleRules},
     game_state::{BattlePhase, GameState},
     pvp,
 };
@@ -41,6 +41,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     pending_boosts: ResMut<'w, PendingBoosts>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: ResMut<'w, crate::battle::PlayerTeam>,
@@ -81,6 +82,9 @@ fn finalize_player_turn(
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
     pending_boosts: &mut PendingBoosts,
+    hand: &Hand,
+    battle_rules: &BattleRules,
+    commands: &mut Commands,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut PlayerTurnLogs,
     writers: &mut PlayerTurnEventWriters,
@@ -130,10 +134,18 @@ fn finalize_player_turn(
             return;
         }
     }
-    next_phase.set(next_phase_after_side_end(round_order, Side::Player));
+    super::enter_discard_phase_or_continue(
+        Side::Player,
+        next_phase_after_side_end(round_order, Side::Player),
+        hand,
+        battle_rules,
+        commands,
+        next_phase,
+    );
 }
 
 pub fn player_turn_input_system(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
@@ -161,6 +173,7 @@ pub fn player_turn_input_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &mut runtime.player_team;
@@ -683,6 +696,9 @@ pub fn player_turn_input_system(
             &mut turn_ctx,
             &round_order,
             pending_boosts,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -748,13 +764,26 @@ pub fn player_turn_input_system(
         return;
     }
 
-    // 3) 出牌/选牌（手牌热键：Z X C V B；两步式：首按选中，再按出牌；弃牌武装时直接弃置）
+    // 3) 出牌/选牌（手牌热键按 UI 标注；两步式：首按选中/弹出，再按出牌；弃牌武装时直接弃置）
     for (key, idx) in [
         (KeyCode::KeyZ, 0_usize),
         (KeyCode::KeyX, 1_usize),
         (KeyCode::KeyC, 2_usize),
         (KeyCode::KeyV, 3_usize),
         (KeyCode::KeyB, 4_usize),
+        (KeyCode::KeyN, 5_usize),
+        (KeyCode::KeyA, 6_usize),
+        (KeyCode::KeyS, 7_usize),
+        (KeyCode::KeyD, 8_usize),
+        (KeyCode::KeyG, 9_usize),
+        (KeyCode::KeyH, 10_usize),
+        (KeyCode::KeyJ, 11_usize),
+        (KeyCode::KeyK, 12_usize),
+        (KeyCode::KeyL, 13_usize),
+        (KeyCode::KeyU, 14_usize),
+        (KeyCode::KeyI, 15_usize),
+        (KeyCode::KeyO, 16_usize),
+        (KeyCode::KeyP, 17_usize),
     ] {
         if keyboard.just_pressed(key) {
             if idx >= hand.player.len() {

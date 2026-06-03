@@ -9,8 +9,8 @@ use crate::{
         note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
     data::{
-        BattleDbs, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect, SkillId,
-        StatusCategory,
+        BattleDbs, BattleRules, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect,
+        SkillId, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -631,6 +631,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     pending_boosts: ResMut<'w, PendingBoosts>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: Res<'w, crate::battle::PlayerTeam>,
@@ -646,6 +647,9 @@ fn finalize_enemy_turn(
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
     pending_boosts: &mut PendingBoosts,
+    hand: &Hand,
+    battle_rules: &BattleRules,
+    commands: &mut Commands,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut EnemyTurnLogs,
     writers: &mut EnemyTurnEventWriters,
@@ -699,7 +703,14 @@ fn finalize_enemy_turn(
             return;
         }
     }
-    next_phase.set(next_phase_after_side_end(round_order, Side::Enemy));
+    super::enter_discard_phase_or_continue(
+        Side::Enemy,
+        next_phase_after_side_end(round_order, Side::Enemy),
+        hand,
+        battle_rules,
+        commands,
+        next_phase,
+    );
 }
 
 fn try_play_boost_card_for_skill(
@@ -758,6 +769,7 @@ fn try_play_boost_card_for_skill(
 }
 
 pub fn enemy_turn_input_system(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     battle_mode: Res<BattleControlMode>,
     mut selected: ResMut<crate::battle::SelectedCards>,
@@ -795,6 +807,7 @@ pub fn enemy_turn_input_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &runtime.player_team;
@@ -1321,6 +1334,19 @@ pub fn enemy_turn_input_system(
             (KeyCode::KeyC, 2_usize),
             (KeyCode::KeyV, 3_usize),
             (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
         ] {
             if keyboard.just_pressed(key) {
                 if idx >= hand.enemy.len() {
@@ -1472,6 +1498,9 @@ pub fn enemy_turn_input_system(
             &mut turn_ctx,
             &round_order,
             pending_boosts,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -1667,6 +1696,7 @@ mod tests {
 }
 
 pub fn enemy_turn_ai_system(
+    mut commands: Commands,
     time: Res<Time>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -1706,6 +1736,7 @@ pub fn enemy_turn_ai_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &runtime.player_team;
@@ -1771,6 +1802,9 @@ pub fn enemy_turn_ai_system(
             &mut turn_ctx,
             &round_order,
             pending_boosts,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -2473,6 +2507,9 @@ pub fn enemy_turn_ai_system(
         &mut turn_ctx,
         &round_order,
         pending_boosts,
+        hand,
+        battle_rules,
+        &mut commands,
         &formula_rules,
         &mut logs,
         &mut writers,

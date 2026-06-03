@@ -43,6 +43,11 @@ pub(crate) struct PlayerCardHotkeyText {
 }
 
 #[derive(Component)]
+pub(crate) struct PlayerCardHotkeyBadge {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct PlayerCardNameText {
     pub index: usize,
 }

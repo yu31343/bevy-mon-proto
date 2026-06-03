@@ -295,6 +295,7 @@ pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
         BattlePhase::RoundStart => "回合开始",
         BattlePhase::PlayerTurn => "玩家回合",
         BattlePhase::EnemyTurn => "敌方回合",
+        BattlePhase::Discard => "弃牌阶段",
         BattlePhase::CheckEnd => "胜负判定",
         BattlePhase::DeathResolve => "死亡结算",
     }
@@ -555,6 +556,19 @@ pub(crate) fn card_hotkey_label(index: usize) -> &'static str {
         2 => "C",
         3 => "V",
         4 => "B",
+        5 => "N",
+        6 => "A",
+        7 => "S",
+        8 => "D",
+        9 => "G",
+        10 => "H",
+        11 => "J",
+        12 => "K",
+        13 => "L",
+        14 => "U",
+        15 => "I",
+        16 => "O",
+        17 => "P",
         _ => "",
     }
 }

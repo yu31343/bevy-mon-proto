@@ -2,14 +2,15 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleEvent, CardPiles, CardTurnMemory, Combatant, ElementAura, EnemyTeam,
-        Hand, InBattle, PendingBoost, PendingBoosts, PlayerTeam, Shield, Side, Stats, StatusBoard,
-        StatusInstance, upsert_status_instance,
+        ActionPoints, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Combatant,
+        ElementAura, EnemyTeam, Hand, InBattle, PendingBoost, PendingBoosts, PendingHandDiscard,
+        PlayerTeam, Shield, Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
     },
     data::{
         AttributeType, BattleDbs, BattleRules, CardDeck, CardDef, CardEffect, CardId, ElementType,
         StatusCategory,
     },
+    game_state::BattlePhase,
 };
 
 pub(crate) type CardCombatQuery<'w, 's> = Query<
@@ -164,6 +165,141 @@ pub(crate) fn auto_discard_excess_hand(
         {
             break;
         }
+    }
+}
+
+pub(crate) fn enter_discard_phase_or_continue(
+    side: Side,
+    next_after_discard: BattlePhase,
+    hand: &Hand,
+    rules: &BattleRules,
+    commands: &mut Commands,
+    next_phase: &mut ResMut<NextState<BattlePhase>>,
+) {
+    let hand_len = match side {
+        Side::Player => hand.player.len(),
+        Side::Enemy => hand.enemy.len(),
+    };
+    if hand_len > rules.max_retained_hand {
+        commands.insert_resource(PendingHandDiscard {
+            side,
+            next_phase: next_after_discard,
+        });
+        next_phase.set(BattlePhase::Discard);
+    } else {
+        commands.remove_resource::<PendingHandDiscard>();
+        next_phase.set(next_after_discard);
+    }
+}
+
+fn card_hotkeys() -> [(KeyCode, usize); 18] {
+    [
+        (KeyCode::KeyZ, 0),
+        (KeyCode::KeyX, 1),
+        (KeyCode::KeyC, 2),
+        (KeyCode::KeyV, 3),
+        (KeyCode::KeyB, 4),
+        (KeyCode::KeyN, 5),
+        (KeyCode::KeyA, 6),
+        (KeyCode::KeyS, 7),
+        (KeyCode::KeyD, 8),
+        (KeyCode::KeyG, 9),
+        (KeyCode::KeyH, 10),
+        (KeyCode::KeyJ, 11),
+        (KeyCode::KeyK, 12),
+        (KeyCode::KeyL, 13),
+        (KeyCode::KeyU, 14),
+        (KeyCode::KeyI, 15),
+        (KeyCode::KeyO, 16),
+        (KeyCode::KeyP, 17),
+    ]
+}
+
+fn hand_len(side: Side, hand: &Hand) -> usize {
+    match side {
+        Side::Player => hand.player.len(),
+        Side::Enemy => hand.enemy.len(),
+    }
+}
+
+fn locally_controls_discard_side(side: Side, battle_mode: BattleControlMode) -> bool {
+    match battle_mode {
+        BattleControlMode::PlayerVsAi => side == Side::Player,
+        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote => true,
+    }
+}
+
+pub(crate) fn hand_discard_phase_system(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    pending: Option<Res<PendingHandDiscard>>,
+    battle_mode: Res<BattleControlMode>,
+    rules: Res<BattleRules>,
+    dbs: Res<BattleDbs>,
+    mut hand: ResMut<Hand>,
+    mut piles: ResMut<CardPiles>,
+    mut action_points: ResMut<ActionPoints>,
+    mut selected: ResMut<crate::battle::SelectedCards>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
+) {
+    let Some(pending) = pending else {
+        return;
+    };
+    let discard_side = pending.side;
+    let next_after_discard = pending.next_phase;
+
+    if locally_controls_discard_side(discard_side, *battle_mode) {
+        for (key, index) in card_hotkeys() {
+            if !keyboard.just_pressed(key) {
+                continue;
+            }
+            let _ = discard_card_from_hand(
+                discard_side,
+                index,
+                &mut hand,
+                &mut piles,
+                &rules,
+                &mut action_points,
+                &dbs,
+                &mut event_writer,
+            );
+            break;
+        }
+    } else {
+        while hand_len(discard_side, &hand) > rules.max_retained_hand {
+            let index = hand_len(discard_side, &hand) - 1;
+            if discard_card_from_hand(
+                discard_side,
+                index,
+                &mut hand,
+                &mut piles,
+                &rules,
+                &mut action_points,
+                &dbs,
+                &mut event_writer,
+            )
+            .is_none()
+            {
+                break;
+            }
+        }
+    }
+
+    match discard_side {
+        Side::Player => {
+            selected.player.index = None;
+            selected.player.discard_armed = false;
+        }
+        Side::Enemy => {
+            selected.enemy.index = None;
+            selected.enemy.discard_armed = false;
+        }
+    }
+
+    if hand_len(discard_side, &hand) <= rules.max_retained_hand {
+        commands.remove_resource::<PendingHandDiscard>();
+        next_phase.set(next_after_discard);
     }
 }
 

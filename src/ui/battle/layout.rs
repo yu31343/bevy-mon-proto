@@ -1173,21 +1173,19 @@ pub(crate) fn setup_ui_system(
                     left: Val::Px(184.0),
                     right: Val::Px(16.0),
                     bottom: Val::Px(92.0),
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::FlexEnd,
-                    column_gap: Val::Px(8.0),
+                    height: Val::Px(330.0),
                     ..default()
                 },
                 HandCardsRoot,
                 ZIndex(10),
             ))
             .with_children(|hand_container| {
-                for idx in 0..5 {
+                for idx in 0..18 {
                     hand_container
                         .spawn((
                             Button,
                             Node {
+                                position_type: PositionType::Absolute,
                                 width: Val::Px(130.0),
                                 height: Val::Px(180.0),
                                 padding: UiRect::px(10.0, 10.0, 12.0, 10.0),
@@ -1200,6 +1198,7 @@ pub(crate) fn setup_ui_system(
                             BackgroundColor(theme.card_bg),
                             BorderColor::all(theme.card_border),
                             theme.card_shadow(),
+                            ZIndex(10),
                             PlayerCardButton { index: idx },
                         ))
                         .with_children(|card| {
@@ -1213,6 +1212,7 @@ pub(crate) fn setup_ui_system(
                                     ..default()
                                 },
                                 ImageNode::solid_color(Color::srgba(0.18, 0.32, 0.48, 0.85)),
+                                PlayerCardHotkeyBadge { index: idx },
                             ))
                             .with_children(|hotkey_box| {
                                 hotkey_box.spawn((
