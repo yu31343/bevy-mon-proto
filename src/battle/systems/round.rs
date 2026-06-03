@@ -2,9 +2,10 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, Hand, PendingBoosts, PlayerTeam,
-        PvpTurnOrder, RoundOrder, SelectedCards, Side, Stats, StructuredBattleLog, TurnContext,
-        TurnCount, UiControlSide, note_round_phase, opposite_side, push_named_action_trace,
+        ActionPoints, ActionTrace, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Hand,
+        PendingBoosts, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Side, Stats,
+        StructuredBattleLog, TurnContext, TurnCount, UiControlSide, note_round_phase,
+        opposite_side, push_named_action_trace,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
@@ -32,10 +33,12 @@ pub(crate) struct RoundStartResources<'w> {
     enemy_team: Res<'w, crate::battle::EnemyTeam>,
     action_points: ResMut<'w, ActionPoints>,
     hand: ResMut<'w, Hand>,
+    card_piles: ResMut<'w, CardPiles>,
     turn_ctx: ResMut<'w, TurnContext>,
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
     pending_boosts: ResMut<'w, PendingBoosts>,
+    card_memory: ResMut<'w, CardTurnMemory>,
     selected: ResMut<'w, SelectedCards>,
     structured_log: ResMut<'w, StructuredBattleLog>,
     action_trace: ResMut<'w, ActionTrace>,
@@ -57,10 +60,12 @@ pub fn round_start_system(
     let enemy_team = &runtime.enemy_team;
     let action_points = &mut runtime.action_points;
     let hand = &mut runtime.hand;
+    let card_piles = &mut runtime.card_piles;
     let turn_ctx = &mut runtime.turn_ctx;
     let turn_count = &mut runtime.turn_count;
     let round_order = &mut runtime.round_order;
     let pending_boosts = &mut runtime.pending_boosts;
+    let card_memory = &mut runtime.card_memory;
     let selected = &mut runtime.selected;
     let structured_log = &mut runtime.structured_log;
     let action_trace = &mut runtime.action_trace;
@@ -72,45 +77,54 @@ pub fn round_start_system(
     turn_count.0 += 1;
     event_writer.write(BattleEvent::TurnStarted(turn_count.0));
 
-    hand.player.clear();
-    hand.enemy.clear();
-    let deck_len = card_deck.0.len();
-    let seed = turn_count.0 as usize;
-    let mut first_role_cards = Vec::new();
-    let mut second_role_cards = Vec::new();
-    for i in 0..rules.cards_per_round {
-        let idx = (seed * 7 + i * 3) % deck_len;
-        first_role_cards.push(card_deck.0[idx]);
-    }
-    for i in 0..rules.cards_per_round {
-        let idx = (seed * 11 + i * 5) % deck_len;
-        second_role_cards.push(card_deck.0[idx]);
-    }
-    if *battle_mode == BattleControlMode::PlayerVsRemote
-        && pvp_turn_order
-            .as_ref()
-            .is_some_and(|order| !order.local_first)
-    {
-        hand.player = second_role_cards;
-        hand.enemy = first_role_cards;
-    } else {
-        hand.player = first_role_cards;
-        hand.enemy = second_role_cards;
-    }
+    super::cards::auto_discard_excess_hand(
+        Side::Player,
+        hand,
+        card_piles,
+        rules,
+        action_points,
+        dbs,
+        &mut event_writer,
+    );
+    super::cards::auto_discard_excess_hand(
+        Side::Enemy,
+        hand,
+        card_piles,
+        rules,
+        action_points,
+        dbs,
+        &mut event_writer,
+    );
+
+    super::cards::draw_cards(
+        Side::Player,
+        rules.cards_per_round,
+        hand,
+        card_piles,
+        &card_deck,
+    );
+    super::cards::draw_cards(
+        Side::Enemy,
+        rules.cards_per_round,
+        hand,
+        card_piles,
+        &card_deck,
+    );
 
     let player_cards = hand_names(&hand.player, &dbs);
     let enemy_cards = hand_names(&hand.enemy, &dbs);
     println!("玩家抽到: {}", player_cards);
     println!("敌方抽到: {}", enemy_cards);
 
-    action_points.player += rules.ap_per_round;
-    action_points.enemy += rules.ap_per_round;
+    super::cards::gain_ap(Side::Player, rules.ap_per_round, rules, action_points);
+    super::cards::gain_ap(Side::Enemy, rules.ap_per_round, rules, action_points);
 
     turn_ctx.player_ended = false;
     turn_ctx.enemy_ended = false;
     turn_ctx.player_end_requested = false;
     turn_ctx.enemy_end_requested = false;
     **pending_boosts = PendingBoosts::default();
+    **card_memory = CardTurnMemory::default();
     **selected = SelectedCards::default();
 
     let Some(player_entity) = player_team.0.active_combatant() else {

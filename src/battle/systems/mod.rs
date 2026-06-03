@@ -1,3 +1,4 @@
+mod cards;
 mod combat;
 mod end;
 mod enemy_turn;
@@ -16,6 +17,7 @@ pub use init::init_battle_system;
 pub use player_turn::player_turn_input_system;
 pub use round::{round_start_system, sync_ui_control_side_system};
 
+pub(crate) use cards::{card_trigger_event_system, clear_action_scoped_card_effects};
 pub(crate) use combat::{
     SkillExecutionMode, SkillTargetMode, WindSpreadTarget, apply_effect, apply_self_effect,
     apply_wind_effect, skill_execution_mode, skill_target_mode,

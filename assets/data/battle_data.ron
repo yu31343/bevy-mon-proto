@@ -33,8 +33,12 @@
 
     rules: (
         max_team_size: 3,   //这里暂时不能超过3
-        cards_per_round: 4,
+        initial_cards: 2,
+        cards_per_round: 2,
         ap_per_round: 6,
+        max_ap: 12,
+        max_retained_hand: 4,
+        discard_ap_gain: 1,
     ),
 
     statuses: [
@@ -773,16 +777,52 @@
     ],
     cards: [
         (
+            id: ElementWarmup,
+            name: "元素预热",
+            cost_ap: 1,
+            effect: NextElementAttachmentGainAp(amount: 3),
+        ),
+        (
+            id: ReactionCatalyst,
+            name: "反应催化",
+            cost_ap: 2,
+            effect: NextReactionFixedDamage(amount: 20, ignore_shield: false),
+        ),
+        (
+            id: WindSpreadFlow,
+            name: "扩散气流",
+            cost_ap: 2,
+            effect: NextWindSpreadDamage(amount: 35, elements: [Fire, Water, Thunder], ignore_shield: false),
+        ),
+        (
+            id: ReactionCountdown,
+            name: "反应读秒",
+            cost_ap: 1,
+            effect: NextAuraAttackDraw(amount: 1),
+        ),
+        (
             id: GainAp,
             name: "行动充能",
             cost_ap: 0,
             effect: GainAp(amount: 2),
         ),
         (
-            id: NextAttackBoost,
-            name: "火力全开",
-            cost_ap: 2,
-            effect: NextAttackBoost(amount: 7), //注意是倍率提升
+            id: TacticalRefresh,
+            name: "战术整理",
+            cost_ap: 1,
+            effect: DiscardOtherDrawGainAp(draw: 1, gain_ap: 1),
+        ),
+        (
+            id: ReadyToAct,
+            name: "蓄势待发",
+            cost_ap: 1,
+            effect: NextSkillCostDraw(skill_cost: 4, draw: 1),
+        ),
+        (
+            id: Pursuit,
+            name: "乘胜追击",
+            cost_ap: 1,
+            effect: DrawIfKnockedOutThisTurn(amount: 2),
         ),
         (
             id: NextShieldBoost,
@@ -791,23 +831,72 @@
             effect: NextShieldBoost(amount: 15),
         ),
         (
+            id: EmergencyShield,
+            name: "应急护幕",
+            cost_ap: 2,
+            effect: GainShield(amount: 15),
+        ),
+        (
+            id: GuardCounter,
+            name: "以守为攻",
+            cost_ap: 1,
+            effect: ShieldAbsorbGainAp(amount: 2),
+        ),
+        (
+            id: FortifiedLine,
+            name: "稳固阵线",
+            cost_ap: 2,
+            effect: ModifyStages(attribute: Def, amount: 1, duration_turns: 2),
+        ),
+        (
+            id: CleanseConversion,
+            name: "净化转化",
+            cost_ap: 2,
+            effect: CleanseOrGainAp(categories: [Aura, Debuff, Special], fallback_ap: 4),
+        ),
+        (
+            id: NextAttackBoost,
+            name: "火力全开",
+            cost_ap: 2,
+            effect: NextAttackBoost(amount: 7), //注意是倍率提升
+        ),
+        (
             id: NextHealBoost,
             name: "良药苦口",
             cost_ap: 2,
             effect: NextHealBoost(amount: 10),
         ),
+        (
+            id: TeamCommand,
+            name: "连携指令",
+            cost_ap: 1,
+            effect: DrawAndGainApIfAliveTeam(draw: 1, min_alive: 2, gain_ap: 2),
+        ),
+        (
+            id: RotationCover,
+            name: "轮换掩护",
+            cost_ap: 2,
+            effect: GainShieldDrawIfSwitchedThisTurn(shield: 10, draw: 1),
+        ),
     ],
-    //卡组
+    //共享牌库：按技能牌设计.md 首版 140 张配比配置。
     deck: [
-        GainAp,
-        GainAp,
-        NextAttackBoost,
-        NextShieldBoost,
-        GainAp,
-        NextHealBoost,
-        NextAttackBoost,
-        GainAp,
-        NextShieldBoost,
-        NextHealBoost,
+        GainAp, GainAp, GainAp, GainAp, GainAp, GainAp, GainAp, GainAp,
+        TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh, TacticalRefresh,
+        ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct, ReadyToAct,
+        Pursuit, Pursuit, Pursuit, Pursuit, Pursuit, Pursuit, Pursuit, Pursuit,
+        ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup, ElementWarmup,
+        ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst, ReactionCatalyst,
+        WindSpreadFlow, WindSpreadFlow, WindSpreadFlow, WindSpreadFlow, WindSpreadFlow,
+        ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown, ReactionCountdown,
+        NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost, NextShieldBoost,
+        EmergencyShield, EmergencyShield, EmergencyShield, EmergencyShield, EmergencyShield, EmergencyShield, EmergencyShield, EmergencyShield,
+        GuardCounter, GuardCounter, GuardCounter, GuardCounter, GuardCounter, GuardCounter, GuardCounter, GuardCounter,
+        FortifiedLine, FortifiedLine, FortifiedLine, FortifiedLine, FortifiedLine, FortifiedLine,
+        CleanseConversion, CleanseConversion, CleanseConversion, CleanseConversion, CleanseConversion,
+        NextAttackBoost, NextAttackBoost, NextAttackBoost, NextAttackBoost, NextAttackBoost, NextAttackBoost, NextAttackBoost, NextAttackBoost,
+        NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost, NextHealBoost,
+        TeamCommand, TeamCommand, TeamCommand, TeamCommand, TeamCommand,
+        RotationCover, RotationCover, RotationCover, RotationCover, RotationCover,
     ],
 )

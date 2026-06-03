@@ -27,7 +27,9 @@ impl Plugin for BattlePlugin {
             .init_resource::<RoundOrder>()
             .init_resource::<AccuracyRng>()
             .init_resource::<Hand>()
+            .init_resource::<CardPiles>()
             .init_resource::<PendingBoosts>()
+            .init_resource::<CardTurnMemory>()
             .init_resource::<BattleControlMode>()
             .init_resource::<UiControlSide>()
             .init_resource::<SelectedCards>()
@@ -77,6 +79,13 @@ impl Plugin for BattlePlugin {
             Update,
             systems::restart_from_result_system.run_if(in_state(GameState::Result)),
         )
-        .add_systems(Update, systems::consume_battle_events_system);
+        .add_systems(
+            Update,
+            (
+                systems::card_trigger_event_system,
+                systems::consume_battle_events_system,
+            )
+                .chain(),
+        );
     }
 }

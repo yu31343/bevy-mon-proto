@@ -448,18 +448,7 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Player,
                     card_name: card.name.to_string(),
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
+                let _ = boosts;
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -509,18 +498,7 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Enemy,
                     card_name: card.name.to_string(),
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
+                let _ = boosts;
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;

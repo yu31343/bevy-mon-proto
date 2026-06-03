@@ -379,6 +379,20 @@ mod tests {
         // 理论伤害为 0：不会吸收
         assert!(!shield_blocks_element_attachment(10, 0));
     }
+
+    #[test]
+    fn bundled_battle_data_parses_and_validates() {
+        let raw = fs::read_to_string("assets/data/battle_data.ron")
+            .expect("battle_data.ron should be readable from repository root");
+        let config: BattleConfig = ron::from_str(&raw).expect("battle_data.ron should parse");
+        validate_battle_config(&config).expect("battle_data.ron should validate");
+        assert_eq!(config.rules.initial_cards, 2);
+        assert_eq!(config.rules.cards_per_round, 2);
+        assert_eq!(config.rules.max_ap, 12);
+        assert_eq!(config.rules.max_retained_hand, 4);
+        assert_eq!(config.deck.len(), 140);
+        assert_eq!(config.cards.len(), 17);
+    }
 }
 
 /// 技能唯一标识（逻辑层使用）。
@@ -526,8 +540,24 @@ fn default_cards_per_round() -> usize {
     5
 }
 
+fn default_initial_cards() -> usize {
+    0
+}
+
 fn default_ap_per_round() -> i32 {
     6
+}
+
+fn default_max_ap() -> i32 {
+    12
+}
+
+fn default_max_retained_hand() -> usize {
+    4
+}
+
+fn default_discard_ap_gain() -> i32 {
+    1
 }
 
 fn default_accuracy_percent() -> i32 {
@@ -538,18 +568,30 @@ fn default_accuracy_percent() -> i32 {
 pub struct BattleRulesConfig {
     #[serde(default = "default_max_team_size")]
     pub max_team_size: usize,
+    #[serde(default = "default_initial_cards")]
+    pub initial_cards: usize,
     #[serde(default = "default_cards_per_round")]
     pub cards_per_round: usize,
     #[serde(default = "default_ap_per_round")]
     pub ap_per_round: i32,
+    #[serde(default = "default_max_ap")]
+    pub max_ap: i32,
+    #[serde(default = "default_max_retained_hand")]
+    pub max_retained_hand: usize,
+    #[serde(default = "default_discard_ap_gain")]
+    pub discard_ap_gain: i32,
 }
 
 impl Default for BattleRulesConfig {
     fn default() -> Self {
         Self {
             max_team_size: default_max_team_size(),
+            initial_cards: default_initial_cards(),
             cards_per_round: default_cards_per_round(),
             ap_per_round: default_ap_per_round(),
+            max_ap: default_max_ap(),
+            max_retained_hand: default_max_retained_hand(),
+            discard_ap_gain: default_discard_ap_gain(),
         }
     }
 }
@@ -557,16 +599,24 @@ impl Default for BattleRulesConfig {
 #[derive(Resource, Debug, Clone)]
 pub struct BattleRules {
     pub max_team_size: usize,
+    pub initial_cards: usize,
     pub cards_per_round: usize,
     pub ap_per_round: i32,
+    pub max_ap: i32,
+    pub max_retained_hand: usize,
+    pub discard_ap_gain: i32,
 }
 
 impl BattleRules {
     pub fn from_config(config: &BattleRulesConfig) -> Self {
         Self {
             max_team_size: config.max_team_size,
+            initial_cards: config.initial_cards,
             cards_per_round: config.cards_per_round,
             ap_per_round: config.ap_per_round,
+            max_ap: config.max_ap,
+            max_retained_hand: config.max_retained_hand,
+            discard_ap_gain: config.discard_ap_gain,
         }
     }
 }
@@ -804,6 +854,15 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     }
     if rules.ap_per_round < 0 {
         return Err("rules.ap_per_round 必须 >= 0".to_string());
+    }
+    if rules.max_ap < 0 {
+        return Err("rules.max_ap 必须 >= 0".to_string());
+    }
+    if rules.max_ap < rules.ap_per_round {
+        return Err("rules.max_ap 必须 >= rules.ap_per_round".to_string());
+    }
+    if rules.discard_ap_gain < 0 {
+        return Err("rules.discard_ap_gain 必须 >= 0".to_string());
     }
 
     if config.formulas.attribute_stage_bounds.min > config.formulas.attribute_stage_bounds.max {

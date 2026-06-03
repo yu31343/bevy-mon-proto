@@ -2,13 +2,13 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, Combatant, ElementAura,
-        Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
-        SkillCount, SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
-        UiControlSide, clear_runtime_battle_logs, clear_turn_context, note_structured_phase,
-        push_battle_line,
+        AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, CardPiles, CardTurnMemory,
+        Combatant, ElementAura, Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder,
+        SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StatusBoard,
+        StructuredBattleLog, TurnContext, TurnCount, UiControlSide, clear_runtime_battle_logs,
+        clear_turn_context, note_structured_phase, push_battle_line,
     },
-    data::{BattleDataStatus, BattleDbs, BattleRules, MonsterPool, TeamSelections},
+    data::{BattleDataStatus, BattleDbs, BattleRules, CardDeck, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
 
@@ -26,6 +26,7 @@ fn normalize_skill_slots(skills: &[crate::data::SkillId]) -> ([crate::data::Skil
 pub(crate) struct InitBattleRuntime<'w> {
     dbs: Res<'w, BattleDbs>,
     battle_rules: Res<'w, BattleRules>,
+    card_deck: Res<'w, CardDeck>,
     data_status: Option<Res<'w, BattleDataStatus>>,
     turn_ctx: ResMut<'w, TurnContext>,
     battle_log: ResMut<'w, BattleLog>,
@@ -49,6 +50,7 @@ pub fn init_battle_system(
 ) {
     let dbs = &runtime.dbs;
     let battle_rules = &runtime.battle_rules;
+    let card_deck = &runtime.card_deck;
     let data_status = &runtime.data_status;
     let turn_ctx = &mut runtime.turn_ctx;
     let battle_log = &mut runtime.battle_log;
@@ -87,12 +89,30 @@ pub fn init_battle_system(
     );
 
     // 回合进度状态初始化（在每次“战斗重开”时重置）。
+    let mut initial_hand = Hand::default();
+    let mut card_piles = CardPiles::from_deck(&card_deck.0);
+    super::cards::draw_cards(
+        Side::Player,
+        battle_rules.initial_cards,
+        &mut initial_hand,
+        &mut card_piles,
+        card_deck,
+    );
+    super::cards::draw_cards(
+        Side::Enemy,
+        battle_rules.initial_cards,
+        &mut initial_hand,
+        &mut card_piles,
+        card_deck,
+    );
     commands.insert_resource(ActionPoints {
         player: 0,
         enemy: 0,
     });
-    commands.insert_resource(Hand::default());
+    commands.insert_resource(initial_hand);
+    commands.insert_resource(card_piles);
     commands.insert_resource(PendingBoosts::default());
+    commands.insert_resource(CardTurnMemory::default());
     commands.insert_resource(SelectedCards::default());
     commands.insert_resource(UiControlSide(Side::Player));
 

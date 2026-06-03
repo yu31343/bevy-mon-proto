@@ -22,8 +22,8 @@ use crate::{
         transfer_status_by_id,
     },
     data::{
-        BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardEffect, CardId,
-        MonsterPool, SkillDef, TeamSelections,
+        BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardId, MonsterPool,
+        SkillDef, TeamSelections,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -543,8 +543,14 @@ pub fn data_hash(
 
 fn rules_hash_part(rules: &BattleRules) -> String {
     format!(
-        "rules:{}:{}:{}",
-        rules.max_team_size, rules.cards_per_round, rules.ap_per_round
+        "rules:{}:{}:{}:{}:{}:{}:{}",
+        rules.max_team_size,
+        rules.initial_cards,
+        rules.cards_per_round,
+        rules.ap_per_round,
+        rules.max_ap,
+        rules.max_retained_hand,
+        rules.discard_ap_gain
     )
 }
 
@@ -2476,12 +2482,7 @@ fn apply_remote_card(
     }
     hand.enemy.remove(card_index);
     action_points.enemy -= card.cost_ap;
-    match card.effect {
-        CardEffect::GainAp { amount } => action_points.enemy += amount,
-        CardEffect::NextAttackBoost { amount } => pending_boosts.enemy.next_attack_bonus += amount,
-        CardEffect::NextShieldBoost { amount } => pending_boosts.enemy.next_shield_bonus += amount,
-        CardEffect::NextHealBoost { amount } => pending_boosts.enemy.next_heal_bonus += amount,
-    }
+    let _ = pending_boosts;
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
         card_name,

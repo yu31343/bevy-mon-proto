@@ -645,6 +645,7 @@ fn finalize_enemy_turn(
     enemy_team: &crate::battle::EnemyTeam,
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
+    pending_boosts: &mut PendingBoosts,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut EnemyTurnLogs,
     writers: &mut EnemyTurnEventWriters,
@@ -687,6 +688,7 @@ fn finalize_enemy_turn(
             );
         }
     }
+    super::clear_action_scoped_card_effects(Side::Enemy, pending_boosts);
     turn_ctx.enemy_ended = true;
     ai_state.0 = 0.0;
     ai_state.1 = false;
@@ -747,12 +749,7 @@ fn try_play_boost_card_for_skill(
     };
 
     action_points.enemy -= card.cost_ap;
-    match card.effect {
-        CardEffect::NextAttackBoost { amount } => pending_boosts.enemy.next_attack_bonus += amount,
-        CardEffect::NextHealBoost { amount } => pending_boosts.enemy.next_heal_bonus += amount,
-        CardEffect::NextShieldBoost { amount } => pending_boosts.enemy.next_shield_bonus += amount,
-        CardEffect::GainAp { amount } => action_points.enemy += amount,
-    }
+    let _ = pending_boosts;
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
         card_name: card.name.to_string(),
@@ -1378,24 +1375,7 @@ pub fn enemy_turn_input_system(
                             card_name: card_name.clone(),
                         });
 
-                        let effect_detail = match card.effect {
-                            CardEffect::GainAp { amount } => {
-                                action_points.enemy += amount;
-                                format!("获得AP={amount}")
-                            }
-                            CardEffect::NextAttackBoost { amount } => {
-                                pending_boosts.enemy.next_attack_bonus = amount;
-                                format!("下次攻击加成={amount}")
-                            }
-                            CardEffect::NextShieldBoost { amount } => {
-                                pending_boosts.enemy.next_shield_bonus = amount;
-                                format!("下次护盾加成={amount}")
-                            }
-                            CardEffect::NextHealBoost { amount } => {
-                                pending_boosts.enemy.next_heal_bonus = amount;
-                                format!("下次治疗加成={amount}")
-                            }
-                        };
+                        let effect_detail = "效果已排入卡牌结算".to_string();
                         note_action_phase(
                             &mut logs.structured_log,
                             logs.turn_count.0,
@@ -1491,6 +1471,7 @@ pub fn enemy_turn_input_system(
             enemy_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -1789,6 +1770,7 @@ pub fn enemy_turn_ai_system(
             enemy_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -2490,6 +2472,7 @@ pub fn enemy_turn_ai_system(
         enemy_team,
         &mut turn_ctx,
         &round_order,
+        pending_boosts,
         &formula_rules,
         &mut logs,
         &mut writers,

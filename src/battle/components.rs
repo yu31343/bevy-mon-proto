@@ -534,17 +534,113 @@ pub struct Hand {
     pub enemy: Vec<CardId>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Default)]
+pub struct CardPiles {
+    pub player_draw: Vec<CardId>,
+    pub player_discard: Vec<CardId>,
+    pub enemy_draw: Vec<CardId>,
+    pub enemy_discard: Vec<CardId>,
+    pub reshuffle_counter: u32,
+}
+
+impl CardPiles {
+    pub fn from_deck(deck: &[CardId]) -> Self {
+        Self {
+            player_draw: shuffled_cards(deck, 0x1357_2468),
+            player_discard: Vec::new(),
+            enemy_draw: shuffled_cards(deck, 0x2468_1357),
+            enemy_discard: Vec::new(),
+            reshuffle_counter: 0,
+        }
+    }
+
+    fn draw_and_discard_mut(&mut self, side: Side) -> (&mut Vec<CardId>, &mut Vec<CardId>) {
+        match side {
+            Side::Player => (&mut self.player_draw, &mut self.player_discard),
+            Side::Enemy => (&mut self.enemy_draw, &mut self.enemy_discard),
+        }
+    }
+
+    pub fn push_discard(&mut self, side: Side, card_id: CardId) {
+        match side {
+            Side::Player => self.player_discard.push(card_id),
+            Side::Enemy => self.enemy_discard.push(card_id),
+        }
+    }
+
+    pub fn draw_one(&mut self, side: Side, fallback_deck: &[CardId]) -> Option<CardId> {
+        let seed = self.reshuffle_counter;
+        let mut reshuffled = false;
+        {
+            let (draw, discard) = self.draw_and_discard_mut(side);
+            if draw.is_empty() {
+                if !discard.is_empty() {
+                    *draw = shuffled_cards(discard, seed.wrapping_add(side as u32).wrapping_add(1));
+                    discard.clear();
+                    reshuffled = true;
+                } else if !fallback_deck.is_empty() {
+                    *draw = shuffled_cards(
+                        fallback_deck,
+                        seed.wrapping_add(side as u32).wrapping_add(17),
+                    );
+                    reshuffled = true;
+                }
+            }
+        }
+        if reshuffled {
+            self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
+        }
+        let (draw, _) = self.draw_and_discard_mut(side);
+        draw.pop()
+    }
+}
+
+fn shuffled_cards(cards: &[CardId], seed: u32) -> Vec<CardId> {
+    let mut result = cards.to_vec();
+    if result.len() <= 1 {
+        return result;
+    }
+    let mut state = (seed as u64)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1);
+    for i in (1..result.len()).rev() {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let j = (state as usize) % (i + 1);
+        result.swap(i, j);
+    }
+    result
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct PendingBoost {
     pub next_attack_bonus: i32,
     pub next_shield_bonus: i32,
     pub next_heal_bonus: i32,
+    pub next_element_attachment_ap: Option<i32>,
+    pub next_reaction_fixed_damage: Option<i32>,
+    pub next_wind_spread_damage: Option<(i32, Vec<crate::data::ElementType>)>,
+    pub next_aura_attack_draw: Option<usize>,
+    pub next_skill_cost_draw: Option<(i32, usize)>,
+    pub next_switch_draw: Option<usize>,
+    pub shield_absorb_ap: Option<i32>,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PendingBoosts {
     pub player: PendingBoost,
     pub enemy: PendingBoost,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SideTurnMemory {
+    pub knocked_out_opponent_this_turn: bool,
+    pub switched_this_turn: bool,
+}
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct CardTurnMemory {
+    pub player: SideTurnMemory,
+    pub enemy: SideTurnMemory,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

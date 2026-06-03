@@ -8,7 +8,7 @@ use crate::{
         StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
         note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
     },
-    data::{BattleDbs, CardEffect},
+    data::BattleDbs,
     game_state::{BattlePhase, GameState},
     pvp,
 };
@@ -80,6 +80,7 @@ fn finalize_player_turn(
     player_team: &crate::battle::PlayerTeam,
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
+    pending_boosts: &mut PendingBoosts,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut PlayerTurnLogs,
     writers: &mut PlayerTurnEventWriters,
@@ -121,6 +122,7 @@ fn finalize_player_turn(
             );
         }
     }
+    super::clear_action_scoped_card_effects(Side::Player, pending_boosts);
     turn_ctx.player_ended = true;
     if let Ok((_, _, stats, _, _, _, _, _, _)) = query.get(p_entity) {
         if stats.hp <= 0 {
@@ -680,6 +682,7 @@ pub fn player_turn_input_system(
             player_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -829,24 +832,7 @@ pub fn player_turn_input_system(
                         card_name: card_name.clone(),
                     });
 
-                    let effect_detail = match card.effect {
-                        CardEffect::GainAp { amount } => {
-                            action_points.player += amount;
-                            format!("获得AP={amount}")
-                        }
-                        CardEffect::NextAttackBoost { amount } => {
-                            pending_boosts.player.next_attack_bonus = amount;
-                            format!("下次攻击加成={amount}")
-                        }
-                        CardEffect::NextShieldBoost { amount } => {
-                            pending_boosts.player.next_shield_bonus = amount;
-                            format!("下次护盾加成={amount}")
-                        }
-                        CardEffect::NextHealBoost { amount } => {
-                            pending_boosts.player.next_heal_bonus = amount;
-                            format!("下次治疗加成={amount}")
-                        }
-                    };
+                    let effect_detail = "效果已排入卡牌结算".to_string();
                     note_action_phase(
                         &mut logs.structured_log,
                         logs.turn_count.0,
