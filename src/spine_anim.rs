@@ -34,6 +34,7 @@ impl Plugin for SpineAnimPlugin {
                 Update,
                 systems::tick_death_fade
                     .run_if(in_state(GameState::Battle).or(in_state(GameState::Result))),
-            );
+            )
+            .add_systems(PostUpdate, systems::despawn_ready_spine_ui_nodes);
     }
 }

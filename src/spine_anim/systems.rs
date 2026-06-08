@@ -9,11 +9,11 @@ use bevy_spine::{
 use crate::battle::{
     BattleEvent, Combatant, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard,
 };
-use crate::ui::battle::components::BattleUiRoot;
+use crate::ui::battle::components::{BattleUiCleanupPending, BattleUiRoot};
 
 use super::components::{
     AnimationCompleteAction, BattleVfx, DeathFade, MonsterAnimationHandle, MonsterVisual,
-    PendingAnimationAction, PendingVfxDespawn, PersistentCursedChainVfx,
+    PendingAnimationAction, PendingSpineUiDespawn, PendingVfxDespawn, PersistentCursedChainVfx,
 };
 use super::config::{
     MONSTER_NAMES, NODE_SIZE, REFERENCE_SIZE, VFX_ADRENALINE, VFX_BITE, VFX_CHAIN, VFX_CONFIGS,
@@ -61,7 +61,7 @@ pub(super) fn load_monster_skeletons(
 pub(super) fn spawn_monster_ui_visuals(
     mut commands: Commands,
     library: Option<Res<MonsterAnimationLibrary>>,
-    ui_root: Query<Entity, With<BattleUiRoot>>,
+    ui_root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
     new_battle_units: Query<(Entity, &Name, &Combatant), Added<InBattle>>,
 ) {
     let Some(library) = library else {
@@ -139,7 +139,10 @@ pub(super) fn spawn_monster_ui_visuals(
 pub(super) fn sync_active_visibility_and_facing(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    mut visuals: Query<(&MonsterVisual, &mut Node, &mut SpineUiNode)>,
+    mut visuals: Query<
+        (&MonsterVisual, &mut Node, &mut SpineUiNode),
+        Without<BattleUiCleanupPending>,
+    >,
 ) {
     let player_active = player_team.as_ref().and_then(|t| t.0.active_combatant());
     let enemy_active = enemy_team.as_ref().and_then(|t| t.0.active_combatant());
@@ -359,14 +362,17 @@ pub(super) fn react_to_battle_events(
     combatants: Query<&Stats, With<InBattle>>,
     shields: Query<&Shield, With<InBattle>>,
     vfx_library: Option<Res<VfxAnimationLibrary>>,
-    ui_root: Query<Entity, With<BattleUiRoot>>,
-    mut visuals: Query<(
-        Entity,
-        &MonsterAnimationHandle,
-        &mut MonsterVisual,
-        &mut Node,
-        &mut SpineUiNode,
-    )>,
+    ui_root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
+    mut visuals: Query<
+        (
+            Entity,
+            &MonsterAnimationHandle,
+            &mut MonsterVisual,
+            &mut Node,
+            &mut SpineUiNode,
+        ),
+        Without<BattleUiCleanupPending>,
+    >,
 ) {
     let root_entity = ui_root.single().ok();
     let player_team_ref = player_team.as_deref();
@@ -645,8 +651,8 @@ pub(super) fn sync_cursed_chain_vfx(
     enemy_team: Option<Res<EnemyTeam>>,
     statuses: Query<&StatusBoard, With<InBattle>>,
     vfx_library: Option<Res<VfxAnimationLibrary>>,
-    ui_root: Query<Entity, With<BattleUiRoot>>,
-    chains: Query<(Entity, &PersistentCursedChainVfx)>,
+    ui_root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
+    chains: Query<(Entity, &PersistentCursedChainVfx), Without<BattleUiCleanupPending>>,
 ) {
     let player_team_ref = player_team.as_deref();
     let enemy_team_ref = enemy_team.as_deref();
@@ -671,7 +677,7 @@ pub(super) fn sync_cursed_chain_vfx(
             Side::Enemy => enemy_cursed,
         };
         if !should_keep {
-            commands.entity(entity).despawn();
+            commands.entity(entity).insert(PendingSpineUiDespawn);
         }
     }
 
@@ -699,13 +705,16 @@ pub(super) fn sync_cursed_chain_vfx(
 pub(super) fn handle_spine_animation_complete(
     mut commands: Commands,
     mut events: MessageReader<SpineEvent>,
-    mut visuals: Query<(
-        Entity,
-        &MonsterAnimationHandle,
-        &mut MonsterVisual,
-        &SpineUiProxy,
-        Option<&PendingAnimationAction>,
-    )>,
+    mut visuals: Query<
+        (
+            Entity,
+            &MonsterAnimationHandle,
+            &mut MonsterVisual,
+            &SpineUiProxy,
+            Option<&PendingAnimationAction>,
+        ),
+        Without<BattleUiCleanupPending>,
+    >,
     mut ui_nodes: Query<(&mut Node, &mut SpineUiNode)>,
 ) {
     for event in events.read() {
@@ -764,7 +773,10 @@ pub(super) fn handle_spine_animation_complete(
 pub(super) fn handle_vfx_animation_complete(
     mut commands: Commands,
     mut events: MessageReader<SpineEvent>,
-    vfx_nodes: Query<(Entity, &SpineUiProxy, &PendingVfxDespawn), With<BattleVfx>>,
+    vfx_nodes: Query<
+        (Entity, &SpineUiProxy, &PendingVfxDespawn),
+        (With<BattleVfx>, Without<BattleUiCleanupPending>),
+    >,
 ) {
     for event in events.read() {
         let SpineEvent::Complete { entity, animation } = event else {
@@ -773,22 +785,40 @@ pub(super) fn handle_vfx_animation_complete(
 
         for (ui_entity, proxy, pending) in &vfx_nodes {
             if proxy.proxy_entity == *entity && pending.animation == *animation {
-                commands.entity(ui_entity).despawn();
+                commands.entity(ui_entity).insert(PendingSpineUiDespawn);
             }
         }
+    }
+}
+
+pub(super) fn despawn_ready_spine_ui_nodes(
+    mut commands: Commands,
+    query: Query<
+        Entity,
+        (
+            With<PendingSpineUiDespawn>,
+            Or<(With<SpineUiProxy>, Without<SpineUiNode>)>,
+        ),
+    >,
+) {
+    for entity in &query {
+        commands.entity(entity).despawn();
     }
 }
 
 pub(super) fn tick_death_fade(
     mut commands: Commands,
     time: Res<Time>,
-    mut dying_query: Query<(
-        Entity,
-        &mut MonsterVisual,
-        &mut Node,
-        &mut SpineUiNode,
-        &mut DeathFade,
-    )>,
+    mut dying_query: Query<
+        (
+            Entity,
+            &mut MonsterVisual,
+            &mut Node,
+            &mut SpineUiNode,
+            &mut DeathFade,
+        ),
+        Without<BattleUiCleanupPending>,
+    >,
 ) {
     for (entity, mut visual, mut node, mut spine_ui, mut fade) in &mut dying_query {
         fade.timer.tick(time.delta());

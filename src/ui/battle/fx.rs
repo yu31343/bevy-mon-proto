@@ -12,8 +12,8 @@ use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
-        BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton,
-        SwitchMonsterButton, TeamMemberButton,
+        BattleUiCleanupPending, BattleUiRoot, DiscardButton, EndTurnButton, SkillButton,
+        SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
@@ -51,7 +51,7 @@ pub struct ScreenFlashTimer(pub Timer);
 pub fn process_battle_fx_events(
     mut events: MessageReader<BattleEvent>,
     mut commands: Commands,
-    root: Query<Entity, With<BattleUiRoot>>,
+    root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
     slots: Query<(Entity, &SkillSlotId)>,
     mut discard_button: Query<
         (Entity, &mut BackgroundColor, &mut BorderColor),

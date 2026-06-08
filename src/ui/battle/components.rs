@@ -5,6 +5,11 @@ use crate::battle::Side;
 #[derive(Component)]
 pub(crate) struct BattleUiRoot;
 
+#[derive(Component)]
+pub(crate) struct BattleUiCleanupPending {
+    pub frames_remaining: u8,
+}
+
 #[derive(Component, Clone, Copy)]
 pub(crate) struct SkillSlotId {
     pub side: Side,

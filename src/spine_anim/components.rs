@@ -44,6 +44,9 @@ pub(super) struct PersistentCursedChainVfx {
     pub target_side: Side,
 }
 
+#[derive(Component)]
+pub(super) struct PendingSpineUiDespawn;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AnimationCompleteAction {
     ReturnToIdle,

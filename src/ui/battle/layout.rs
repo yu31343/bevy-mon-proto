@@ -533,7 +533,7 @@ pub(crate) fn setup_ui_system(
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
     retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
-    existing_ui: Query<(), With<BattleUiRoot>>,
+    existing_ui: Query<(), (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
 ) {
     if !existing_ui.is_empty() {
         return;

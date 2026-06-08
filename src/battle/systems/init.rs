@@ -44,7 +44,7 @@ pub fn init_battle_system(
     mut commands: Commands,
     monster_pool: Res<MonsterPool>,
     team_selections: Option<Res<TeamSelections>>,
-    cleanup_query: Query<Entity, With<InBattle>>,
+    cleanup_query: Query<Entity, (With<InBattle>, With<Combatant>)>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: InitBattleRuntime,
 ) {

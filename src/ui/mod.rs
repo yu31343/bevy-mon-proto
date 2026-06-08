@@ -4,7 +4,7 @@ pub(crate) mod battle;
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use battle::{
-    components::BattleUiRoot,
+    components::{BattleUiCleanupPending, BattleUiRoot},
     layout::{load_cjk_font_system, setup_ui_system, spawn_camera},
     resources::UiFontHandle,
     systems::*,
@@ -61,6 +61,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
         .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
+        .add_systems(OnEnter(GameState::Map), cleanup_battle_ui_system)
+        .add_systems(PostUpdate, despawn_pending_battle_ui_system)
         .add_systems(
             Update,
             (
@@ -139,10 +141,83 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     );
 }
 
-fn cleanup_battle_ui_system(mut commands: Commands, query: Query<Entity, With<BattleUiRoot>>) {
-    for entity in &query {
-        commands.entity(entity).despawn();
+fn cleanup_battle_ui_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Node), (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
+    children_query: Query<&Children>,
+) {
+    for (entity, mut node) in &mut query {
+        node.display = Display::None;
+        mark_battle_ui_cleanup_pending(&mut commands, entity, &children_query, 1);
     }
+}
+
+fn mark_battle_ui_cleanup_pending(
+    commands: &mut Commands,
+    entity: Entity,
+    children_query: &Query<&Children>,
+    frames_remaining: u8,
+) {
+    commands
+        .entity(entity)
+        .insert(BattleUiCleanupPending { frames_remaining });
+
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            mark_battle_ui_cleanup_pending(commands, child, children_query, frames_remaining);
+        }
+    }
+}
+
+fn despawn_pending_battle_ui_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut BattleUiCleanupPending), With<BattleUiRoot>>,
+    children_query: Query<&Children>,
+    uninitialized_spine_nodes: Query<
+        (),
+        (
+            With<bevy_spine::SpineUiNode>,
+            Without<bevy_spine::SpineUiProxy>,
+        ),
+    >,
+) {
+    for (entity, mut pending) in &mut query {
+        if has_uninitialized_spine_ui_descendant(
+            entity,
+            &children_query,
+            &uninitialized_spine_nodes,
+        ) {
+            continue;
+        }
+
+        if pending.frames_remaining > 0 {
+            pending.frames_remaining -= 1;
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn has_uninitialized_spine_ui_descendant(
+    entity: Entity,
+    children_query: &Query<&Children>,
+    uninitialized_spine_nodes: &Query<
+        (),
+        (
+            With<bevy_spine::SpineUiNode>,
+            Without<bevy_spine::SpineUiProxy>,
+        ),
+    >,
+) -> bool {
+    if uninitialized_spine_nodes.contains(entity) {
+        return true;
+    }
+
+    children_query.get(entity).is_ok_and(|children| {
+        children.iter().any(|child| {
+            has_uninitialized_spine_ui_descendant(child, children_query, uninitialized_spine_nodes)
+        })
+    })
 }
 
 #[allow(dead_code)]
