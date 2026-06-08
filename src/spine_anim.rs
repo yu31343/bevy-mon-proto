@@ -21,8 +21,10 @@ impl Plugin for SpineAnimPlugin {
                 Update,
                 (
                     systems::react_to_battle_events,
+                    systems::sync_cursed_chain_vfx,
                     systems::sync_active_visibility_and_facing,
                     systems::handle_spine_animation_complete,
+                    systems::handle_vfx_animation_complete,
                     systems::log_spine_ui_ready_events,
                     systems::log_spine_loader_failures,
                 )

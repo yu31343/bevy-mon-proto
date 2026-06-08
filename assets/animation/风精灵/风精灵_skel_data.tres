@@ -1,34 +1,28 @@
-[gd_resource type="SpineSkeletonDataResource" load_steps=8 format=3 uid="uid://nsykb6vjitkj"]
+[gd_resource type="SpineSkeletonDataResource" load_steps=7 format=3 uid="uid://bqlhf04mk2866"]
 
-[ext_resource type="SpineAtlasResource" uid="uid://beoc5ksn1so8q" path="res://animations/monsters/风精灵/风精灵.atlas" id="1_hirho"]
-[ext_resource type="SpineSkeletonFileResource" uid="uid://coi4r5bv4daor" path="res://animations/monsters/风精灵/风精灵.skel" id="2_nesn6"]
+[ext_resource type="SpineAtlasResource" uid="uid://dq7y3dlq1mmdq" path="res://animations/characters/风精灵/风精灵.atlas" id="1_tybe6"]
+[ext_resource type="SpineSkeletonFileResource" uid="uid://cbaww6gd7g743" path="res://animations/characters/风精灵/风精灵.skel" id="2_n4dcu"]
 
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_fbivn"]
-from = "attack"
-to = "idle_loop"
-mix = 0.1
-
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_neman"]
-from = "idle_loop"
-to = "hurt"
-mix = 0.05
-
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_jeikm"]
-from = "idle_loop"
-to = "attack"
-mix = 0.1
-
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_j1t7w"]
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_ej2q8"]
 from = "hurt"
 to = "hurt"
 
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_4uvv5"]
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_63nwy"]
 from = "hurt"
 to = "die"
 
-[resource]
-atlas_res = ExtResource("1_hirho")
-skeleton_file_res = ExtResource("2_nesn6")
-default_mix = 0.05
-animation_mixes = [SubResource("SpineAnimationMix_fbivn"), SubResource("SpineAnimationMix_neman"), SubResource("SpineAnimationMix_jeikm"), SubResource("SpineAnimationMix_j1t7w"), SubResource("SpineAnimationMix_4uvv5")]
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_di581"]
+from = "idle_loop"
+to = "hurt"
+mix = 0.02
 
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_ynr7g"]
+from = "cast"
+to = "idle_loop"
+mix = 0.02
+
+[resource]
+atlas_res = ExtResource("1_tybe6")
+skeleton_file_res = ExtResource("2_n4dcu")
+default_mix = 0.05
+animation_mixes = [SubResource("SpineAnimationMix_ej2q8"), SubResource("SpineAnimationMix_63nwy"), SubResource("SpineAnimationMix_di581"), SubResource("SpineAnimationMix_ynr7g")]
