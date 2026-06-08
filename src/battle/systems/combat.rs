@@ -549,13 +549,25 @@ fn supports_normal_attachment(element: ElementType) -> bool {
     )
 }
 
+fn take_next_heal_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
+    let pending = match side {
+        Side::Player => &mut pending_boosts.player,
+        Side::Enemy => &mut pending_boosts.enemy,
+    };
+    let bonus = pending.next_heal_bonus;
+    pending.next_heal_bonus = 0;
+    bonus
+}
+
 fn heal_target(
     heal_side: Side,
     raw_amount: i32,
     target_stats: &mut Stats,
     target_statuses: &StatusBoard,
+    pending_boosts: &mut PendingBoosts,
     event_writer: &mut MessageWriter<BattleEvent>,
 ) -> (i32, f32, i32) {
+    let raw_amount = raw_amount + take_next_heal_bonus(heal_side, pending_boosts);
     let multiplier = target_statuses.heal_taken_multiplier();
     let final_heal = ((raw_amount as f32) * multiplier).round() as i32;
     let before = target_stats.hp;
@@ -1037,6 +1049,7 @@ fn resolve_element_attachment_only(
     target_shield: &mut Shield,
     target_aura: &mut ElementAura,
     target_statuses: &mut StatusBoard,
+    pending_boosts: &mut PendingBoosts,
     status_db: &StatusDb,
     reaction_db: &ReactionDb,
     event_writer: &mut MessageWriter<BattleEvent>,
@@ -1208,11 +1221,15 @@ fn resolve_element_attachment_only(
             outcome.reaction_heal_raw,
             attacker_stats,
             attacker_statuses,
+            pending_boosts,
             event_writer,
         );
     }
 
-    if from != outcome.aura_to {
+    let refreshed_normal_attachment = supports_normal_attachment(incoming_element)
+        && outcome.reaction_name.is_none()
+        && from.contains(&incoming_element);
+    if from != outcome.aura_to || refreshed_normal_attachment {
         event_writer.write(BattleEvent::ElementAuraApplied {
             side: target_side,
             from: from.clone(),
@@ -1670,6 +1687,7 @@ pub(crate) fn apply_wind_effect(
             shield,
             aura,
             statuses,
+            pending_boosts,
             status_db,
             reaction_db,
             event_writer,
@@ -2984,11 +3002,15 @@ fn apply_effect_with_context(
                             reaction_heal_amount,
                             attacker_stats,
                             attacker_statuses,
+                            pending_boosts,
                             event_writer,
                         );
                     }
 
-                    if from != aura_after {
+                    let refreshed_normal_attachment = supports_normal_attachment(incoming_element)
+                        && reaction_name.is_none()
+                        && from.contains(&incoming_element);
+                    if from != aura_after || refreshed_normal_attachment {
                         event_writer.write(BattleEvent::ElementAuraApplied {
                             side: target_side,
                             from: from.clone(),
@@ -3048,6 +3070,7 @@ fn apply_effect_with_context(
                                     lifesteal_raw,
                                     attacker_stats,
                                     attacker_statuses,
+                                    pending_boosts,
                                     event_writer,
                                 );
                             if let Some(round) = round {
@@ -3186,6 +3209,7 @@ fn apply_effect_with_context(
                             lifesteal_raw,
                             attacker_stats,
                             attacker_statuses,
+                            pending_boosts,
                             event_writer,
                         );
                         if let Some(round) = round {

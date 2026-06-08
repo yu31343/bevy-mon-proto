@@ -4,9 +4,10 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        PendingKoResolution, RoundOrder, Shield, Side, SkillCount, SkillList, Stats,
-        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
-        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, PendingTacticalDiscard, RoundOrder, Shield, Side, SkillCount,
+        SkillList, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
+        next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        push_turn_action_trace, transfer_status_by_id,
     },
     data::{
         BattleDbs, BattleRules, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect,
@@ -647,6 +648,7 @@ fn finalize_enemy_turn(
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
     pending_boosts: &mut PendingBoosts,
+    action_points: &mut ActionPoints,
     hand: &Hand,
     battle_rules: &BattleRules,
     commands: &mut Commands,
@@ -684,6 +686,7 @@ fn finalize_enemy_turn(
                     side: Side::Enemy,
                     round: logs.turn_count.0,
                     formula_rules,
+                    pending_boosts: Some(&mut *pending_boosts),
                     event_writer: &mut writers.event_writer,
                     formula_writer: &mut writers.formula_writer,
                     status_writer: &mut writers.status_writer,
@@ -693,12 +696,16 @@ fn finalize_enemy_turn(
         }
     }
     super::clear_action_scoped_card_effects(Side::Enemy, pending_boosts);
+    commands.insert_resource(crate::battle::PendingGuardCounterClear {
+        acting_side: Side::Enemy,
+    });
     turn_ctx.enemy_ended = true;
     ai_state.0 = 0.0;
     ai_state.1 = false;
     ai_state.2 = false;
     if let Ok((_, _, stats, _, _, _, _, _, _)) = exec_query.get(e_entity) {
         if stats.hp <= 0 {
+            super::clamp_ap_to_max(Side::Enemy, battle_rules, action_points);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -708,6 +715,7 @@ fn finalize_enemy_turn(
         next_phase_after_side_end(round_order, Side::Enemy),
         hand,
         battle_rules,
+        action_points,
         commands,
         next_phase,
     );
@@ -771,6 +779,7 @@ fn try_play_boost_card_for_skill(
 pub fn enemy_turn_input_system(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut selected: ResMut<crate::battle::SelectedCards>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -893,6 +902,72 @@ pub fn enemy_turn_input_system(
                     );
                 }
             }
+        }
+        return;
+    }
+
+    if !remote_controlled
+        && pending_tactical_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy)
+    {
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0_usize),
+            (KeyCode::KeyX, 1_usize),
+            (KeyCode::KeyC, 2_usize),
+            (KeyCode::KeyV, 3_usize),
+            (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
+        ] {
+            if !keyboard.just_pressed(key) {
+                continue;
+            }
+            if idx >= hand.enemy.len() {
+                return;
+            }
+            let card_id = hand.enemy.remove(idx);
+            action_points.enemy += 1;
+            let card_name = dbs
+                .cards
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+            writers.event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Enemy,
+                card_name: card_name.clone(),
+            });
+            note_action_phase(
+                &mut logs.structured_log,
+                logs.turn_count.0,
+                Side::Enemy,
+                "敌方战术整理",
+                format!(
+                    "弃置卡牌={}；获得AP=1；当前AP={}",
+                    card_name, action_points.enemy
+                ),
+            );
+            push_named_action_trace(
+                &mut logs.action_trace,
+                logs.turn_count.0,
+                Side::Enemy,
+                "tactical_discard",
+                format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+            );
+            selected.enemy.index = None;
+            selected.enemy.discard_armed = false;
+            return;
         }
         return;
     }
@@ -1498,6 +1573,7 @@ pub fn enemy_turn_input_system(
             &mut turn_ctx,
             &round_order,
             pending_boosts,
+            action_points,
             hand,
             battle_rules,
             &mut commands,
@@ -1698,6 +1774,7 @@ mod tests {
 pub fn enemy_turn_ai_system(
     mut commands: Commands,
     time: Res<Time>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
@@ -1762,6 +1839,47 @@ pub fn enemy_turn_ai_system(
         ai_state.0 = ENEMY_AI_INITIAL_DELAY;
         return;
     }
+
+    if pending_tactical_discard
+        .as_ref()
+        .is_some_and(|pending| pending.side == Side::Enemy)
+    {
+        if hand.enemy.is_empty() {
+            commands.remove_resource::<PendingTacticalDiscard>();
+            return;
+        }
+        let card_id = hand.enemy.remove(0);
+        action_points.enemy += 1;
+        let card_name = dbs
+            .cards
+            .get(&card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| format!("{card_id:?}"));
+        writers.event_writer.write(BattleEvent::CardDiscarded {
+            side: Side::Enemy,
+            card_name: card_name.clone(),
+        });
+        note_action_phase(
+            &mut logs.structured_log,
+            logs.turn_count.0,
+            Side::Enemy,
+            "敌方战术整理",
+            format!(
+                "弃置卡牌={}；获得AP=1；当前AP={}",
+                card_name, action_points.enemy
+            ),
+        );
+        push_named_action_trace(
+            &mut logs.action_trace,
+            logs.turn_count.0,
+            Side::Enemy,
+            "tactical_discard",
+            format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+        );
+        ai_state.0 = ENEMY_AI_ACTION_DELAY;
+        return;
+    }
+
     let Some(p_entity) = player_team.0.active_combatant() else {
         abort_battle(
             "敌方 AI：玩家上场精灵无效。",
@@ -1802,6 +1920,7 @@ pub fn enemy_turn_ai_system(
             &mut turn_ctx,
             &round_order,
             pending_boosts,
+            action_points,
             hand,
             battle_rules,
             &mut commands,
@@ -2507,6 +2626,7 @@ pub fn enemy_turn_ai_system(
         &mut turn_ctx,
         &round_order,
         pending_boosts,
+        action_points,
         hand,
         battle_rules,
         &mut commands,

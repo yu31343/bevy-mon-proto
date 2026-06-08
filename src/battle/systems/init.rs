@@ -82,6 +82,8 @@ pub fn init_battle_system(
     commands.insert_resource(crate::pvp::PvpPendingLocalIntent::default());
     commands.insert_resource(crate::pvp::PvpLastRemoteIntentSeq::default());
     commands.remove_resource::<crate::battle::PendingHandDiscard>();
+    commands.remove_resource::<crate::battle::PendingGuardCounterClear>();
+    commands.remove_resource::<crate::battle::PendingTacticalDiscard>();
     note_structured_phase(
         structured_log,
         "battle-init",

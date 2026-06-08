@@ -2,9 +2,9 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        BattleEvent, BattleFormulaEvent, BattleStatusEvent, ElementAura, Shield, Side, Stats,
-        StatusBoard, StructuredBattleLog, decrement_status_durations_for_round, note_action_phase,
-        status_event, tick_statuses_for_timing,
+        BattleEvent, BattleFormulaEvent, BattleStatusEvent, ElementAura, PendingBoosts, Shield,
+        Side, Stats, StatusBoard, StructuredBattleLog, decrement_status_durations_for_round,
+        note_action_phase, status_event, tick_statuses_for_timing,
     },
     data::{BattleFormulaRules, ElementType, StatusTickTiming},
 };
@@ -13,6 +13,7 @@ pub(crate) struct SideEndTickParams<'a, 'event, 'formula, 'status> {
     pub side: Side,
     pub round: u32,
     pub formula_rules: &'a BattleFormulaRules,
+    pub pending_boosts: Option<&'a mut PendingBoosts>,
     pub event_writer: &'a mut MessageWriter<'event, BattleEvent>,
     pub formula_writer: &'a mut MessageWriter<'formula, BattleFormulaEvent>,
     pub status_writer: &'a mut MessageWriter<'status, BattleStatusEvent>,
@@ -27,6 +28,16 @@ fn aura_status_element(status_id: &str) -> Option<ElementType> {
         "paralysis_aura" => Some(ElementType::Thunder),
         _ => None,
     }
+}
+
+fn take_next_heal_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
+    let pending = match side {
+        Side::Player => &mut pending_boosts.player,
+        Side::Enemy => &mut pending_boosts.enemy,
+    };
+    let bonus = pending.next_heal_bonus;
+    pending.next_heal_bonus = 0;
+    bonus
 }
 
 fn apply_status_tick_heal(stats: &mut Stats, heal_amount: i32) -> Option<i32> {
@@ -44,7 +55,7 @@ pub(crate) fn process_side_end_statuses(
     shield: &mut Shield,
     _aura: &mut ElementAura,
     status_board: &mut StatusBoard,
-    params: SideEndTickParams<'_, '_, '_, '_>,
+    mut params: SideEndTickParams<'_, '_, '_, '_>,
 ) {
     let outcomes = tick_statuses_for_timing(status_board, StatusTickTiming::OwnerActionEnd);
     for outcome in outcomes {
@@ -107,41 +118,49 @@ pub(crate) fn process_side_end_statuses(
             ));
         }
 
-        if let Some(actual_heal) = apply_status_tick_heal(stats, outcome.heal_amount) {
-            params.event_writer.write(BattleEvent::Healed {
-                side: params.side,
-                amount: actual_heal,
-            });
-            params.formula_writer.write(crate::battle::formula_event(
-                params.round,
-                params.side,
-                params.side,
-                "status_tick_heal",
-                format!(
-                    "status_id={} heal_amount={} actual_heal={} target_hp={}",
-                    outcome.status_id, outcome.heal_amount, actual_heal, stats.hp
-                ),
-            ));
-            note_action_phase(
-                params.structured_log,
-                params.round,
-                params.side,
-                "状态触发",
-                format!(
-                    "状态={} 触发治疗={}；实际回复={}；当前HP={}",
-                    outcome.status_name, outcome.heal_amount, actual_heal, stats.hp
-                ),
-            );
-            params.status_writer.write(status_event(
-                params.round,
-                params.side,
-                outcome.status_id.clone(),
-                "triggered",
-                format!(
-                    "heal_amount={} actual_heal={} remaining_turns={}",
-                    outcome.heal_amount, actual_heal, outcome.remaining_turns
-                ),
-            ));
+        if outcome.heal_amount > 0 {
+            let heal_bonus = params
+                .pending_boosts
+                .as_deref_mut()
+                .map(|pending_boosts| take_next_heal_bonus(params.side, pending_boosts))
+                .unwrap_or(0);
+            let heal_amount = outcome.heal_amount + heal_bonus;
+            if let Some(actual_heal) = apply_status_tick_heal(stats, heal_amount) {
+                params.event_writer.write(BattleEvent::Healed {
+                    side: params.side,
+                    amount: actual_heal,
+                });
+                params.formula_writer.write(crate::battle::formula_event(
+                    params.round,
+                    params.side,
+                    params.side,
+                    "status_tick_heal",
+                    format!(
+                        "status_id={} heal_amount={} actual_heal={} target_hp={}",
+                        outcome.status_id, heal_amount, actual_heal, stats.hp
+                    ),
+                ));
+                note_action_phase(
+                    params.structured_log,
+                    params.round,
+                    params.side,
+                    "状态触发",
+                    format!(
+                        "状态={} 触发治疗={}；实际回复={}；当前HP={}",
+                        outcome.status_name, heal_amount, actual_heal, stats.hp
+                    ),
+                );
+                params.status_writer.write(status_event(
+                    params.round,
+                    params.side,
+                    outcome.status_id.clone(),
+                    "triggered",
+                    format!(
+                        "heal_amount={} actual_heal={} remaining_turns={}",
+                        heal_amount, actual_heal, outcome.remaining_turns
+                    ),
+                ));
+            }
         }
 
         params.status_writer.write(status_event(

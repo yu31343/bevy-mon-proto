@@ -3,8 +3,9 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Combatant,
-        ElementAura, EnemyTeam, Hand, InBattle, PendingBoost, PendingBoosts, PendingHandDiscard,
-        PlayerTeam, Shield, Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
+        ElementAura, EnemyTeam, Hand, InBattle, PendingBoost, PendingBoosts,
+        PendingGuardCounterClear, PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, Shield,
+        Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
     },
     data::{
         AttributeType, BattleDbs, BattleRules, CardDeck, CardDef, CardEffect, CardId, ElementType,
@@ -40,11 +41,36 @@ fn hand_mut(side: Side, hand: &mut Hand) -> &mut Vec<CardId> {
     }
 }
 
+fn selected_mut(
+    side: Side,
+    selected: &mut crate::battle::SelectedCards,
+) -> &mut crate::battle::SelectedCardState {
+    match side {
+        Side::Player => &mut selected.player,
+        Side::Enemy => &mut selected.enemy,
+    }
+}
+
 fn pending_mut(side: Side, pending_boosts: &mut PendingBoosts) -> &mut PendingBoost {
     match side {
         Side::Player => &mut pending_boosts.player,
         Side::Enemy => &mut pending_boosts.enemy,
     }
+}
+
+fn add_i32_pending(slot: &mut Option<i32>, amount: i32) {
+    *slot = Some(slot.unwrap_or(0) + amount);
+}
+
+fn add_usize_pending(slot: &mut Option<usize>, amount: usize) {
+    *slot = Some(slot.unwrap_or(0) + amount);
+}
+
+fn take_shield_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
+    let pending = pending_mut(side, pending_boosts);
+    let bonus = pending.next_shield_bonus;
+    pending.next_shield_bonus = 0;
+    bonus
 }
 
 fn active_entity(
@@ -82,11 +108,16 @@ fn team_alive_count(
 pub(crate) fn gain_ap(
     side: Side,
     amount: i32,
-    rules: &BattleRules,
+    _rules: &BattleRules,
     action_points: &mut ActionPoints,
 ) {
     let ap = ap_mut(side, action_points);
-    *ap = (*ap + amount).clamp(0, rules.max_ap);
+    *ap = (*ap + amount).max(0);
+}
+
+pub(crate) fn clamp_ap_to_max(side: Side, rules: &BattleRules, action_points: &mut ActionPoints) {
+    let ap = ap_mut(side, action_points);
+    *ap = (*ap).min(rules.max_ap);
 }
 
 pub(crate) fn draw_cards(
@@ -108,7 +139,40 @@ pub(crate) fn draw_cards(
 }
 
 pub(crate) fn clear_action_scoped_card_effects(side: Side, pending_boosts: &mut PendingBoosts) {
-    pending_mut(side, pending_boosts).next_switch_draw = None;
+    let pending = pending_mut(side, pending_boosts);
+    pending.next_attack_bonus = 0;
+    pending.next_shield_bonus = 0;
+    pending.next_heal_bonus = 0;
+    pending.next_element_attachment_ap = None;
+    pending.next_reaction_fixed_damage = None;
+    pending.next_wind_spread_damage = None;
+    pending.next_aura_attack_draw = None;
+    pending.next_skill_cost_draw = None;
+    pending.next_switch_draw = None;
+}
+
+pub(crate) fn clear_round_scoped_card_effects(pending_boosts: &mut PendingBoosts) {
+    let player_counter = pending_boosts.player.shield_absorb_ap;
+    let enemy_counter = pending_boosts.enemy.shield_absorb_ap;
+    pending_boosts.player = PendingBoost {
+        shield_absorb_ap: player_counter,
+        ..Default::default()
+    };
+    pending_boosts.enemy = PendingBoost {
+        shield_absorb_ap: enemy_counter,
+        ..Default::default()
+    };
+}
+
+pub(crate) fn clear_opponent_guard_counter_effects(
+    acting_side: Side,
+    pending_boosts: &mut PendingBoosts,
+) {
+    let counter_owner = match acting_side {
+        Side::Player => Side::Enemy,
+        Side::Enemy => Side::Player,
+    };
+    pending_mut(counter_owner, pending_boosts).shield_absorb_ap = None;
 }
 
 pub(crate) fn discard_card_from_hand(
@@ -173,6 +237,7 @@ pub(crate) fn enter_discard_phase_or_continue(
     next_after_discard: BattlePhase,
     hand: &Hand,
     rules: &BattleRules,
+    action_points: &mut ActionPoints,
     commands: &mut Commands,
     next_phase: &mut ResMut<NextState<BattlePhase>>,
 ) {
@@ -188,6 +253,7 @@ pub(crate) fn enter_discard_phase_or_continue(
         next_phase.set(BattlePhase::Discard);
     } else {
         commands.remove_resource::<PendingHandDiscard>();
+        clamp_ap_to_max(side, rules, action_points);
         next_phase.set(next_after_discard);
     }
 }
@@ -299,6 +365,7 @@ pub(crate) fn hand_discard_phase_system(
 
     if hand_len(discard_side, &hand) <= rules.max_retained_hand {
         commands.remove_resource::<PendingHandDiscard>();
+        clamp_ap_to_max(discard_side, &rules, &mut action_points);
         next_phase.set(next_after_discard);
     }
 }
@@ -314,6 +381,7 @@ pub(crate) struct CardPlayContext<'a, 'qw, 'qs, 'mw> {
     pub piles: &'a mut CardPiles,
     pub action_points: &'a mut ActionPoints,
     pub pending_boosts: &'a mut PendingBoosts,
+    pub pending_tactical_discard: Option<&'a mut Option<PendingTacticalDiscard>>,
     pub memory: &'a mut CardTurnMemory,
     pub player_team: Option<&'a PlayerTeam>,
     pub enemy_team: Option<&'a EnemyTeam>,
@@ -361,7 +429,10 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             format!("下次治疗加成={amount}")
         }
         CardEffect::NextElementAttachmentGainAp { amount } => {
-            pending_mut(ctx.side, ctx.pending_boosts).next_element_attachment_ap = Some(*amount);
+            add_i32_pending(
+                &mut pending_mut(ctx.side, ctx.pending_boosts).next_element_attachment_ap,
+                *amount,
+            );
             format!("下次元素附着/反应获得AP={amount}")
         }
         CardEffect::NextReactionFixedDamage {
@@ -369,7 +440,10 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             ignore_shield,
         } => {
             let _ = ignore_shield;
-            pending_mut(ctx.side, ctx.pending_boosts).next_reaction_fixed_damage = Some(*amount);
+            add_i32_pending(
+                &mut pending_mut(ctx.side, ctx.pending_boosts).next_reaction_fixed_damage,
+                *amount,
+            );
             format!("下次元素反应追加固定伤害={amount}")
         }
         CardEffect::NextWindSpreadDamage {
@@ -378,44 +452,51 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             ignore_shield,
         } => {
             let _ = ignore_shield;
-            pending_mut(ctx.side, ctx.pending_boosts).next_wind_spread_damage =
-                Some((*amount, elements.clone()));
+            let pending = pending_mut(ctx.side, ctx.pending_boosts);
+            match &mut pending.next_wind_spread_damage {
+                Some((existing_amount, existing_elements)) => {
+                    *existing_amount += *amount;
+                    for element in elements {
+                        if !existing_elements.contains(element) {
+                            existing_elements.push(*element);
+                        }
+                    }
+                }
+                None => pending.next_wind_spread_damage = Some((*amount, elements.clone())),
+            }
             format!("下次指定元素扩散追加固定伤害={amount}")
         }
         CardEffect::NextAuraAttackDraw { amount } => {
-            pending_mut(ctx.side, ctx.pending_boosts).next_aura_attack_draw = Some(*amount);
+            add_usize_pending(
+                &mut pending_mut(ctx.side, ctx.pending_boosts).next_aura_attack_draw,
+                *amount,
+            );
             format!("下次攻击命中附着目标抽牌={amount}")
         }
         CardEffect::DiscardOtherDrawGainAp {
             draw,
             gain_ap: ap_gain,
         } => {
-            let other_index = hand_mut(ctx.side, ctx.hand)
-                .iter()
-                .enumerate()
-                .find(|(_, card_id)| **card_id != card.id)
-                .map(|(idx, _)| idx);
-            if let Some(index) = other_index {
-                let _ = discard_card_from_hand(
-                    ctx.side,
-                    index,
-                    ctx.hand,
-                    ctx.piles,
-                    ctx.rules,
-                    ctx.action_points,
-                    ctx.dbs,
-                    ctx.event_writer,
-                );
-                draw_cards(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck);
-                gain_ap(ctx.side, *ap_gain, ctx.rules, ctx.action_points);
-                format!("弃置其他手牌1；抽牌={draw}；获得AP={ap_gain}")
-            } else {
+            if hand_mut(ctx.side, ctx.hand).is_empty() {
                 "没有其他手牌，效果未触发".to_string()
+            } else {
+                if let Some(pending_tactical_discard) = ctx.pending_tactical_discard {
+                    *pending_tactical_discard = Some(PendingTacticalDiscard {
+                        side: ctx.side,
+                        draw: *draw,
+                    });
+                }
+                format!("等待选择弃置其他手牌1；弃后抽牌={draw}；弃牌获得AP={ap_gain}")
             }
         }
         CardEffect::NextSkillCostDraw { skill_cost, draw } => {
-            pending_mut(ctx.side, ctx.pending_boosts).next_skill_cost_draw =
-                Some((*skill_cost, *draw));
+            let pending = pending_mut(ctx.side, ctx.pending_boosts);
+            match &mut pending.next_skill_cost_draw {
+                Some((existing_cost, existing_draw)) if *existing_cost == *skill_cost => {
+                    *existing_draw += *draw;
+                }
+                _ => pending.next_skill_cost_draw = Some((*skill_cost, *draw)),
+            }
             format!("下次使用{skill_cost}AP技能后抽牌={draw}")
         }
         CardEffect::DrawIfKnockedOutThisTurn { amount } => {
@@ -434,6 +515,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             let gained = gain_shield_on_active(
                 ctx.side,
                 *amount,
+                ctx.pending_boosts,
                 ctx.player_team,
                 ctx.enemy_team,
                 ctx.combat_query,
@@ -442,7 +524,10 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             format!("获得护盾={gained}")
         }
         CardEffect::ShieldAbsorbGainAp { amount } => {
-            pending_mut(ctx.side, ctx.pending_boosts).shield_absorb_ap = Some(*amount);
+            add_i32_pending(
+                &mut pending_mut(ctx.side, ctx.pending_boosts).shield_absorb_ap,
+                *amount,
+            );
             format!("敌方下次行动前护盾吸收伤害时获得AP={amount}")
         }
         CardEffect::ModifyStages {
@@ -504,6 +589,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             let gained = gain_shield_on_active(
                 ctx.side,
                 *shield,
+                ctx.pending_boosts,
                 ctx.player_team,
                 ctx.enemy_team,
                 ctx.combat_query,
@@ -517,7 +603,10 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 let drawn = draw_cards(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck);
                 format!("获得护盾={gained}；本行动已换人，抽牌={drawn}")
             } else {
-                pending_mut(ctx.side, ctx.pending_boosts).next_switch_draw = Some(*draw);
+                add_usize_pending(
+                    &mut pending_mut(ctx.side, ctx.pending_boosts).next_switch_draw,
+                    *draw,
+                );
                 format!("获得护盾={gained}；等待本行动内换人后抽牌={draw}")
             }
         }
@@ -527,6 +616,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
 fn gain_shield_on_active(
     side: Side,
     amount: i32,
+    pending_boosts: &mut PendingBoosts,
     player_team: Option<&PlayerTeam>,
     enemy_team: Option<&EnemyTeam>,
     query: &mut CardCombatQuery,
@@ -538,7 +628,7 @@ fn gain_shield_on_active(
     let Ok((_, _, mut shield, _, _)) = query.get_mut(entity) else {
         return 0;
     };
-    let amount = amount.max(0);
+    let amount = (amount + take_shield_bonus(side, pending_boosts)).max(0);
     shield.0 += amount;
     event_writer.write(BattleEvent::ShieldGained { side, amount });
     amount
@@ -660,7 +750,11 @@ fn apply_fixed_damage_to_active(
 }
 
 pub(crate) fn card_trigger_event_system(
+    mut commands: Commands,
     mut messages: ParamSet<(MessageReader<BattleEvent>, MessageWriter<BattleEvent>)>,
+    pending_guard_clear: Option<Res<PendingGuardCounterClear>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
+    mut selected: ResMut<crate::battle::SelectedCards>,
     mut pending_boosts: ResMut<PendingBoosts>,
     mut memory: ResMut<CardTurnMemory>,
     mut action_points: ResMut<ActionPoints>,
@@ -673,12 +767,21 @@ pub(crate) fn card_trigger_event_system(
     dbs: Res<BattleDbs>,
     mut query: CardCombatQuery,
 ) {
+    let pending_tactical = pending_tactical_discard.as_deref().copied();
+    let mut resolved_tactical_side = None;
+    let mut new_tactical_discard = None;
     let events: Vec<_> = messages.p0().read().cloned().collect();
     for event in events {
         match &event {
             BattleEvent::CardDiscarded { side, card_name } => {
                 if let Some(card) = dbs.cards.values().find(|card| card.name == *card_name) {
                     piles.push_discard(*side, card.id);
+                }
+                if resolved_tactical_side.is_none()
+                    && let Some(pending) = pending_tactical.filter(|pending| pending.side == *side)
+                {
+                    draw_cards(*side, pending.draw, &mut hand, &mut piles, &deck);
+                    resolved_tactical_side = Some(*side);
                 }
             }
             BattleEvent::CardUsed { side, card_name } => {
@@ -701,6 +804,7 @@ pub(crate) fn card_trigger_event_system(
                             piles: &mut piles,
                             action_points: &mut action_points,
                             pending_boosts: &mut pending_boosts,
+                            pending_tactical_discard: Some(&mut new_tactical_discard),
                             memory: &mut memory,
                             player_team: player_team.as_deref(),
                             enemy_team: enemy_team.as_deref(),
@@ -850,6 +954,25 @@ pub(crate) fn card_trigger_event_system(
             }
             _ => {}
         }
+    }
+
+    if let Some(side) = resolved_tactical_side {
+        let selected_state = selected_mut(side, &mut selected);
+        selected_state.index = None;
+        selected_state.discard_armed = false;
+        commands.remove_resource::<PendingTacticalDiscard>();
+    }
+
+    if let Some(pending) = new_tactical_discard {
+        let selected_state = selected_mut(pending.side, &mut selected);
+        selected_state.index = None;
+        selected_state.discard_armed = true;
+        commands.insert_resource(pending);
+    }
+
+    if let Some(pending_guard_clear) = pending_guard_clear {
+        clear_opponent_guard_counter_effects(pending_guard_clear.acting_side, &mut pending_boosts);
+        commands.remove_resource::<PendingGuardCounterClear>();
     }
 }
 

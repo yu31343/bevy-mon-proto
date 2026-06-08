@@ -104,7 +104,7 @@ pub fn round_start_system(
     turn_ctx.enemy_ended = false;
     turn_ctx.player_end_requested = false;
     turn_ctx.enemy_end_requested = false;
-    **pending_boosts = PendingBoosts::default();
+    super::clear_round_scoped_card_effects(pending_boosts);
     **card_memory = CardTurnMemory::default();
     **selected = SelectedCards::default();
 

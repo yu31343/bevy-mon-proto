@@ -649,6 +649,17 @@ pub struct PendingHandDiscard {
     pub next_phase: BattlePhase,
 }
 
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PendingGuardCounterClear {
+    pub acting_side: Side,
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PendingTacticalDiscard {
+    pub side: Side,
+    pub draw: usize,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SelectedCardState {
     pub index: Option<usize>,
