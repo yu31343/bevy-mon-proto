@@ -2,13 +2,13 @@
 
 importer="spine.atlas"
 type="SpineAtlasResource"
-uid="uid://beoc5ksn1so8q"
-path="res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"
+uid="uid://dq7y3dlq1mmdq"
+path="res://.godot/imported/风精灵.atlas-46990217b356d22b4cd3471fdb3c4d7a.spatlas"
 
 [deps]
 
-source_file="res://animations/monsters/nibbit/nibbit.atlas"
-dest_files=["res://.godot/imported/nibbit.atlas-fa0a3c4d2df5efd48e7fd4680e57bf1a.spatlas"]
+source_file="res://animations/characters/风精灵/风精灵.atlas"
+dest_files=["res://.godot/imported/风精灵.atlas-46990217b356d22b4cd3471fdb3c4d7a.spatlas"]
 
 [params]
 

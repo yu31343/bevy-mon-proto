@@ -1,34 +1,27 @@
-[gd_resource type="SpineSkeletonDataResource" load_steps=8 format=3 uid="uid://nsykb6vjitkj"]
+[gd_resource type="SpineSkeletonDataResource" load_steps=7 format=3 uid="uid://c2mrbqct15cgx"]
 
-[ext_resource type="SpineAtlasResource" uid="uid://beoc5ksn1so8q" path="res://animations/monsters/光精灵/光精灵.atlas" id="1_hirho"]
-[ext_resource type="SpineSkeletonFileResource" uid="uid://coi4r5bv4daor" path="res://animations/monsters/光精灵/光精灵.skel" id="2_nesn6"]
+[ext_resource type="SpineAtlasResource" uid="uid://bpm883hqkd573" path="res://animations/monsters/光精灵/光精灵.atlas" id="1_86jqo"]
+[ext_resource type="SpineSkeletonFileResource" uid="uid://dyyhq03h15cp3" path="res://animations/monsters/光精灵/光精灵.skel" id="2_xr0sn"]
 
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_fbivn"]
-from = "attack"
-to = "idle_loop"
-mix = 0.1
-
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_neman"]
-from = "idle_loop"
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_y55pg"]
+from = "cast"
 to = "hurt"
-mix = 0.05
 
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_jeikm"]
-from = "idle_loop"
-to = "attack"
-mix = 0.1
-
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_j1t7w"]
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_qn61g"]
 from = "hurt"
 to = "hurt"
 
-[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_4uvv5"]
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_awe6h"]
+from = "idle_loop"
+to = "hurt"
+mix = 0.02
+
+[sub_resource type="SpineAnimationMix" id="SpineAnimationMix_mlkqa"]
 from = "hurt"
 to = "die"
 
 [resource]
-atlas_res = ExtResource("1_hirho")
-skeleton_file_res = ExtResource("2_nesn6")
+atlas_res = ExtResource("1_86jqo")
+skeleton_file_res = ExtResource("2_xr0sn")
 default_mix = 0.05
-animation_mixes = [SubResource("SpineAnimationMix_fbivn"), SubResource("SpineAnimationMix_neman"), SubResource("SpineAnimationMix_jeikm"), SubResource("SpineAnimationMix_j1t7w"), SubResource("SpineAnimationMix_4uvv5")]
-
+animation_mixes = [SubResource("SpineAnimationMix_y55pg"), SubResource("SpineAnimationMix_qn61g"), SubResource("SpineAnimationMix_awe6h"), SubResource("SpineAnimationMix_mlkqa")]

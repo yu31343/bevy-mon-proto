@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://16gpavr3q35b"
-path="res://.godot/imported/nibbit.png-d45ecdef822d31e376a4e59ba4d2d88d.ctex"
+uid="uid://tdp81x7wrnhp"
+path="res://.godot/imported/水精灵.png-951f297c0f2b1329e6ad349f7bc33b77.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://animations/monsters/nibbit/nibbit.png"
-dest_files=["res://.godot/imported/nibbit.png-d45ecdef822d31e376a4e59ba4d2d88d.ctex"]
+source_file="res://animations/monsters/水精灵/水精灵.png"
+dest_files=["res://.godot/imported/水精灵.png-951f297c0f2b1329e6ad349f7bc33b77.ctex"]
 
 [params]
 
