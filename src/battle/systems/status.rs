@@ -40,14 +40,19 @@ fn take_next_heal_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
     bonus
 }
 
-fn apply_status_tick_heal(stats: &mut Stats, heal_amount: i32) -> Option<i32> {
-    if heal_amount <= 0 || stats.hp <= 0 {
+fn apply_status_tick_heal(
+    stats: &mut Stats,
+    raw_heal_amount: i32,
+    heal_multiplier: f32,
+) -> Option<(i32, i32)> {
+    if raw_heal_amount <= 0 || stats.hp <= 0 {
         return None;
     }
 
+    let heal_amount = ((raw_heal_amount as f32) * heal_multiplier).round() as i32;
     let before = stats.hp;
     stats.hp = (stats.hp + heal_amount).min(stats.max_hp);
-    Some(stats.hp - before)
+    Some((heal_amount, stats.hp - before))
 }
 
 pub(crate) fn process_side_end_statuses(
@@ -124,8 +129,11 @@ pub(crate) fn process_side_end_statuses(
                 .as_deref_mut()
                 .map(|pending_boosts| take_next_heal_bonus(params.side, pending_boosts))
                 .unwrap_or(0);
-            let heal_amount = outcome.heal_amount + heal_bonus;
-            if let Some(actual_heal) = apply_status_tick_heal(stats, heal_amount) {
+            let raw_heal_amount = outcome.heal_amount + heal_bonus;
+            let heal_multiplier = status_board.heal_taken_multiplier();
+            if let Some((heal_amount, actual_heal)) =
+                apply_status_tick_heal(stats, raw_heal_amount, heal_multiplier)
+            {
                 params.event_writer.write(BattleEvent::Healed {
                     side: params.side,
                     amount: actual_heal,
@@ -136,8 +144,13 @@ pub(crate) fn process_side_end_statuses(
                     params.side,
                     "status_tick_heal",
                     format!(
-                        "status_id={} heal_amount={} actual_heal={} target_hp={}",
-                        outcome.status_id, heal_amount, actual_heal, stats.hp
+                        "status_id={} raw_heal={} heal_multiplier={:.2} final_heal={} actual_heal={} target_hp={}",
+                        outcome.status_id,
+                        raw_heal_amount,
+                        heal_multiplier,
+                        heal_amount,
+                        actual_heal,
+                        stats.hp
                     ),
                 ));
                 note_action_phase(
@@ -146,8 +159,13 @@ pub(crate) fn process_side_end_statuses(
                     params.side,
                     "状态触发",
                     format!(
-                        "状态={} 触发治疗={}；实际回复={}；当前HP={}",
-                        outcome.status_name, heal_amount, actual_heal, stats.hp
+                        "状态={} 触发治疗={}；治疗修正={:.2}；最终治疗={}；实际回复={}；当前HP={}",
+                        outcome.status_name,
+                        raw_heal_amount,
+                        heal_multiplier,
+                        heal_amount,
+                        actual_heal,
+                        stats.hp
                     ),
                 );
                 params.status_writer.write(status_event(
@@ -156,8 +174,12 @@ pub(crate) fn process_side_end_statuses(
                     outcome.status_id.clone(),
                     "triggered",
                     format!(
-                        "heal_amount={} actual_heal={} remaining_turns={}",
-                        heal_amount, actual_heal, outcome.remaining_turns
+                        "raw_heal={} heal_multiplier={:.2} final_heal={} actual_heal={} remaining_turns={}",
+                        raw_heal_amount,
+                        heal_multiplier,
+                        heal_amount,
+                        actual_heal,
+                        outcome.remaining_turns
                     ),
                 ));
             }
@@ -261,9 +283,9 @@ mod tests {
     fn status_tick_heal_does_not_revive_fainted_combatant() {
         let mut stats = test_stats(0);
 
-        let actual_heal = apply_status_tick_heal(&mut stats, 6);
+        let heal_result = apply_status_tick_heal(&mut stats, 6, 0.85);
 
-        assert_eq!(actual_heal, None);
+        assert_eq!(heal_result, None);
         assert_eq!(stats.hp, 0);
     }
 
@@ -271,9 +293,19 @@ mod tests {
     fn status_tick_heal_still_heals_living_combatant() {
         let mut stats = test_stats(10);
 
-        let actual_heal = apply_status_tick_heal(&mut stats, 6);
+        let heal_result = apply_status_tick_heal(&mut stats, 6, 1.0);
 
-        assert_eq!(actual_heal, Some(6));
+        assert_eq!(heal_result, Some((6, 6)));
         assert_eq!(stats.hp, 16);
+    }
+
+    #[test]
+    fn status_tick_heal_uses_heal_taken_multiplier() {
+        let mut stats = test_stats(10);
+
+        let heal_result = apply_status_tick_heal(&mut stats, 20, 0.85);
+
+        assert_eq!(heal_result, Some((17, 17)));
+        assert_eq!(stats.hp, 27);
     }
 }
