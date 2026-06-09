@@ -149,6 +149,7 @@ pub(crate) fn clear_action_scoped_card_effects(side: Side, pending_boosts: &mut 
     pending.next_aura_attack_draw = None;
     pending.next_skill_cost_draw = None;
     pending.next_switch_draw = None;
+    pending.next_knockout_draw = None;
 }
 
 pub(crate) fn clear_round_scoped_card_effects(pending_boosts: &mut PendingBoosts) {
@@ -508,7 +509,11 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 let drawn = draw_cards(ctx.side, *amount, ctx.hand, ctx.piles, ctx.deck);
                 format!("本行动已击倒目标；抽牌={drawn}")
             } else {
-                "本行动尚未击倒目标，效果未触发".to_string()
+                add_usize_pending(
+                    &mut pending_mut(ctx.side, ctx.pending_boosts).next_knockout_draw,
+                    *amount,
+                );
+                format!("等待本行动内击倒敌方精灵后抽牌={amount}")
             }
         }
         CardEffect::GainShield { amount } => {
@@ -936,10 +941,24 @@ pub(crate) fn card_trigger_event_system(
                     draw_cards(*source, draw, &mut hand, &mut piles, &deck);
                 }
             }
-            BattleEvent::CombatantFainted { side, .. } => match side {
-                Side::Player => memory.enemy.knocked_out_opponent_this_turn = true,
-                Side::Enemy => memory.player.knocked_out_opponent_this_turn = true,
-            },
+            BattleEvent::CombatantFainted { side, .. } => {
+                let scoring_side = match side {
+                    Side::Player => {
+                        memory.enemy.knocked_out_opponent_this_turn = true;
+                        Side::Enemy
+                    }
+                    Side::Enemy => {
+                        memory.player.knocked_out_opponent_this_turn = true;
+                        Side::Player
+                    }
+                };
+                if let Some(draw) = pending_mut(scoring_side, &mut pending_boosts)
+                    .next_knockout_draw
+                    .take()
+                {
+                    draw_cards(scoring_side, draw, &mut hand, &mut piles, &deck);
+                }
+            }
             BattleEvent::Switched { side, .. } => {
                 match side {
                     Side::Player => memory.player.switched_this_turn = true,

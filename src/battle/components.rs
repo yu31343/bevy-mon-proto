@@ -622,6 +622,7 @@ pub struct PendingBoost {
     pub next_aura_attack_draw: Option<usize>,
     pub next_skill_cost_draw: Option<(i32, usize)>,
     pub next_switch_draw: Option<usize>,
+    pub next_knockout_draw: Option<usize>,
     pub shield_absorb_ap: Option<i32>,
 }
 

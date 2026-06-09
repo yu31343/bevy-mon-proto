@@ -624,7 +624,7 @@ pub(crate) fn card_description(card: &CardDef) -> String {
             format!("效果：下次使用 {} AP 技能后抽 {} 张牌。", skill_cost, draw)
         }
         CardEffect::DrawIfKnockedOutThisTurn { amount } => {
-            format!("效果：若本行动内击倒过敌方精灵，抽 {} 张牌。", amount)
+            format!("效果：若本行动内击倒敌方精灵，抽 {} 张牌。", amount)
         }
         CardEffect::GainShield { amount } => format!("效果：己方前场获得 {} 点护盾。", amount),
         CardEffect::ShieldAbsorbGainAp { amount } => {
