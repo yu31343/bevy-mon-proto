@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, ElementAura,
-        EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
-        RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
-        TurnContext, TurnCount, push_battle_line, recalculate_stage_modifiers,
-        transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, BattleShuffleSeed,
+        ElementAura, EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam,
+        PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance,
+        TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed, push_battle_line,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
     data::{
         BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardId, MonsterPool,
@@ -30,7 +30,7 @@ use crate::{
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
@@ -181,6 +181,7 @@ pub struct PvpTeamState {
     pub local_indices: Option<Vec<usize>>,
     pub remote_indices: Option<Vec<usize>>,
     pub battle_started: bool,
+    pub battle_seed: Option<u64>,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -1812,7 +1813,9 @@ fn pvp_poll_network_system(
                 PvpMessage::TeamSelected { monster_indices } => {
                     team_state.remote_indices = Some(monster_indices);
                 }
-                PvpMessage::BattleReady { .. } => {}
+                PvpMessage::BattleReady { seed } => {
+                    team_state.battle_seed = Some(seed);
+                }
                 PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(*snapshot),
                 PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
                 PvpMessage::Intent { seq, intent } => incoming_intents.0.push((seq, intent)),
@@ -1867,6 +1870,10 @@ fn pvp_apply_remote_team_system(
     ) else {
         return;
     };
+    let Some(seed) = pvp_battle_seed(&connection, &mut team_state) else {
+        return;
+    };
+    commands.insert_resource(BattleShuffleSeed(seed));
     commands.insert_resource(BattleControlMode::PlayerVsRemote);
     commands.insert_resource(PvpTurnOrder {
         local_first: connection.role == Some(PvpRole::Host),
@@ -1877,6 +1884,21 @@ fn pvp_apply_remote_team_system(
     });
     team_state.battle_started = true;
     next_state.set(GameState::Battle);
+}
+
+fn pvp_battle_seed(connection: &PvpConnection, team_state: &mut PvpTeamState) -> Option<u64> {
+    match connection.role {
+        Some(PvpRole::Host) => {
+            let seed = team_state
+                .battle_seed
+                .unwrap_or_else(new_battle_shuffle_seed);
+            team_state.battle_seed = Some(seed);
+            connection.send(PvpMessage::BattleReady { seed });
+            Some(seed)
+        }
+        Some(PvpRole::Client) => team_state.battle_seed,
+        None => None,
+    }
 }
 
 fn team_hp(team: &crate::battle::Team, query: &Query<&Stats, With<InBattle>>) -> Vec<i32> {

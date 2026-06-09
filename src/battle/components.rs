@@ -1,6 +1,11 @@
 //! 战斗系统组件定义
 
-use std::{collections::VecDeque, fmt};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -534,81 +539,87 @@ pub struct Hand {
     pub enemy: Vec<CardId>,
 }
 
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct BattleShuffleSeed(pub u64);
+
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CardPiles {
-    pub player_draw: Vec<CardId>,
-    pub player_discard: Vec<CardId>,
-    pub enemy_draw: Vec<CardId>,
-    pub enemy_discard: Vec<CardId>,
+    pub draw: Vec<CardId>,
+    pub discard: Vec<CardId>,
+    pub shuffle_seed: u64,
     pub reshuffle_counter: u32,
 }
 
 impl CardPiles {
-    pub fn from_deck(deck: &[CardId]) -> Self {
+    pub fn from_deck(deck: &[CardId], seed: u64) -> Self {
         Self {
-            player_draw: shuffled_cards(deck, 0x1357_2468),
-            player_discard: Vec::new(),
-            enemy_draw: shuffled_cards(deck, 0x2468_1357),
-            enemy_discard: Vec::new(),
+            draw: shuffled_cards(deck, seed),
+            discard: Vec::new(),
+            shuffle_seed: seed,
             reshuffle_counter: 0,
         }
     }
 
-    fn draw_and_discard_mut(&mut self, side: Side) -> (&mut Vec<CardId>, &mut Vec<CardId>) {
-        match side {
-            Side::Player => (&mut self.player_draw, &mut self.player_discard),
-            Side::Enemy => (&mut self.enemy_draw, &mut self.enemy_discard),
-        }
+    pub fn push_discard(&mut self, _side: Side, card_id: CardId) {
+        self.discard.push(card_id);
     }
 
-    pub fn push_discard(&mut self, side: Side, card_id: CardId) {
-        match side {
-            Side::Player => self.player_discard.push(card_id),
-            Side::Enemy => self.enemy_discard.push(card_id),
-        }
-    }
-
-    pub fn draw_one(&mut self, side: Side, fallback_deck: &[CardId]) -> Option<CardId> {
-        let seed = self.reshuffle_counter;
-        let mut reshuffled = false;
-        {
-            let (draw, discard) = self.draw_and_discard_mut(side);
-            if draw.is_empty() {
-                if !discard.is_empty() {
-                    *draw = shuffled_cards(discard, seed.wrapping_add(side as u32).wrapping_add(1));
-                    discard.clear();
-                    reshuffled = true;
-                } else if !fallback_deck.is_empty() {
-                    *draw = shuffled_cards(
-                        fallback_deck,
-                        seed.wrapping_add(side as u32).wrapping_add(17),
-                    );
-                    reshuffled = true;
-                }
+    pub fn draw_one(&mut self, fallback_deck: &[CardId]) -> Option<CardId> {
+        if self.draw.is_empty() {
+            if !self.discard.is_empty() {
+                self.draw = shuffled_cards(&self.discard, self.reshuffle_seed(1));
+                self.discard.clear();
+                self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
+            } else if !fallback_deck.is_empty() {
+                self.draw = shuffled_cards(fallback_deck, self.reshuffle_seed(17));
+                self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
             }
         }
-        if reshuffled {
-            self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
-        }
-        let (draw, _) = self.draw_and_discard_mut(side);
-        draw.pop()
+        self.draw.pop()
+    }
+
+    fn reshuffle_seed(&self, salt: u64) -> u64 {
+        mix_seed(
+            self.shuffle_seed
+                ^ (self.reshuffle_counter as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ salt,
+        )
     }
 }
 
-fn shuffled_cards(cards: &[CardId], seed: u32) -> Vec<CardId> {
+static BATTLE_SHUFFLE_SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn new_battle_shuffle_seed() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let time_seed = (now as u64) ^ ((now >> 64) as u64);
+    let counter = BATTLE_SHUFFLE_SEED_COUNTER
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1);
+    mix_seed(time_seed ^ counter.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+fn shuffled_cards(cards: &[CardId], seed: u64) -> Vec<CardId> {
     let mut result = cards.to_vec();
     if result.len() <= 1 {
         return result;
     }
-    let mut state = (seed as u64)
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1);
+    let mut state = mix_seed(seed);
     for i in (1..result.len()).rev() {
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
         let j = (state as usize) % (i + 1);
         result.swap(i, j);
     }
     result
+}
+
+fn mix_seed(mut seed: u64) -> u64 {
+    seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    seed = (seed ^ (seed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    seed = (seed ^ (seed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    seed ^ (seed >> 31)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -888,7 +899,7 @@ pub fn note_round_phase(log: &mut StructuredBattleLog, round: u32, detail: impl 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{SkillId, StatusCategory, StatusTickTiming};
+    use crate::data::{CardId, SkillId, StatusCategory, StatusTickTiming};
 
     fn test_stats() -> Stats {
         Stats {
@@ -903,6 +914,39 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    #[test]
+    fn shared_card_pile_draws_from_one_deck() {
+        let deck = [
+            CardId::GainAp,
+            CardId::NextAttackBoost,
+            CardId::NextShieldBoost,
+        ];
+        let mut piles = CardPiles::from_deck(&deck, 42);
+        let initial_draw = piles.draw.clone();
+
+        let first = piles.draw_one(&deck);
+        let second = piles.draw_one(&deck);
+
+        assert_eq!(first, initial_draw.last().copied());
+        assert_eq!(second, initial_draw.get(initial_draw.len() - 2).copied());
+        assert_eq!(piles.draw.len(), deck.len() - 2);
+    }
+
+    #[test]
+    fn shared_card_pile_keeps_one_discard_for_both_sides() {
+        let deck = [
+            CardId::GainAp,
+            CardId::NextAttackBoost,
+            CardId::NextShieldBoost,
+        ];
+        let mut piles = CardPiles::from_deck(&deck, 42);
+
+        piles.push_discard(Side::Player, CardId::GainAp);
+        piles.push_discard(Side::Enemy, CardId::NextAttackBoost);
+
+        assert_eq!(piles.discard, vec![CardId::GainAp, CardId::NextAttackBoost]);
     }
 
     #[test]

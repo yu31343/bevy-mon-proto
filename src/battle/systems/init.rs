@@ -2,11 +2,12 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, CardPiles, CardTurnMemory,
-        Combatant, ElementAura, Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder,
-        SelectedCards, Shield, Side, SkillCount, SkillList, Stats, StatusBoard,
-        StructuredBattleLog, TurnContext, TurnCount, UiControlSide, clear_runtime_battle_logs,
-        clear_turn_context, note_structured_phase, push_battle_line,
+        AccuracyRng, ActionPoints, ActionTrace, BattleControlMode, BattleLog, BattleResult,
+        BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand, InBattle,
+        PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side, SkillCount,
+        SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount, UiControlSide,
+        clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
+        note_structured_phase, push_battle_line,
     },
     data::{BattleDataStatus, BattleDbs, BattleRules, CardDeck, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
@@ -28,6 +29,8 @@ pub(crate) struct InitBattleRuntime<'w> {
     battle_rules: Res<'w, BattleRules>,
     card_deck: Res<'w, CardDeck>,
     data_status: Option<Res<'w, BattleDataStatus>>,
+    battle_mode: Res<'w, BattleControlMode>,
+    shuffle_seed: Option<Res<'w, BattleShuffleSeed>>,
     turn_ctx: ResMut<'w, TurnContext>,
     battle_log: ResMut<'w, BattleLog>,
     structured_log: ResMut<'w, StructuredBattleLog>,
@@ -52,6 +55,8 @@ pub fn init_battle_system(
     let battle_rules = &runtime.battle_rules;
     let card_deck = &runtime.card_deck;
     let data_status = &runtime.data_status;
+    let battle_mode = &runtime.battle_mode;
+    let shuffle_seed = &runtime.shuffle_seed;
     let turn_ctx = &mut runtime.turn_ctx;
     let battle_log = &mut runtime.battle_log;
     let structured_log = &mut runtime.structured_log;
@@ -92,8 +97,19 @@ pub fn init_battle_system(
     );
 
     // 回合进度状态初始化（在每次“战斗重开”时重置）。
+    let battle_seed = if **battle_mode == BattleControlMode::PlayerVsRemote {
+        shuffle_seed
+            .as_ref()
+            .map(|seed| seed.0)
+            .unwrap_or_else(new_battle_shuffle_seed)
+    } else {
+        new_battle_shuffle_seed()
+    };
+    if **battle_mode != BattleControlMode::PlayerVsRemote {
+        commands.remove_resource::<BattleShuffleSeed>();
+    }
     let mut initial_hand = Hand::default();
-    let mut card_piles = CardPiles::from_deck(&card_deck.0);
+    let mut card_piles = CardPiles::from_deck(&card_deck.0, battle_seed);
     super::cards::draw_cards(
         Side::Player,
         battle_rules.initial_cards,

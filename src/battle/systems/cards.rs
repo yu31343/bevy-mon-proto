@@ -129,7 +129,7 @@ pub(crate) fn draw_cards(
 ) -> usize {
     let mut drawn = 0;
     for _ in 0..amount {
-        let Some(card_id) = piles.draw_one(side, &deck.0) else {
+        let Some(card_id) = piles.draw_one(&deck.0) else {
             break;
         };
         hand_mut(side, hand).push(card_id);
