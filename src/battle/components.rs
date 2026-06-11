@@ -83,21 +83,21 @@ pub struct SkillCount(pub usize);
 pub struct Shield(pub i32);
 
 impl Shield {
-    pub fn max_for_hp(max_hp: i32) -> i32 {
-        max_hp.max(0) / 2
+    pub fn max_for_hp(max_hp: i32, max_hp_ratio: f32) -> i32 {
+        ((max_hp.max(0) as f32) * max_hp_ratio.max(0.0)).floor() as i32
     }
 
-    pub fn capped_value(value: i32, max_hp: i32) -> i32 {
-        value.clamp(0, Self::max_for_hp(max_hp))
+    pub fn capped_value(value: i32, max_hp: i32, max_hp_ratio: f32) -> i32 {
+        value.clamp(0, Self::max_for_hp(max_hp, max_hp_ratio))
     }
 
-    pub fn set_capped(&mut self, value: i32, max_hp: i32) {
-        self.0 = Self::capped_value(value, max_hp);
+    pub fn set_capped(&mut self, value: i32, max_hp: i32, max_hp_ratio: f32) {
+        self.0 = Self::capped_value(value, max_hp, max_hp_ratio);
     }
 
-    pub fn gain_capped(&mut self, amount: i32, max_hp: i32) -> i32 {
-        let max_shield = Self::max_for_hp(max_hp);
-        let before = Self::capped_value(self.0, max_hp);
+    pub fn gain_capped(&mut self, amount: i32, max_hp: i32, max_hp_ratio: f32) -> i32 {
+        let max_shield = Self::max_for_hp(max_hp, max_hp_ratio);
+        let before = Self::capped_value(self.0, max_hp, max_hp_ratio);
         let gained = amount.max(0).min(max_shield.saturating_sub(before));
         self.0 = before + gained;
         gained
@@ -985,7 +985,7 @@ mod tests {
     fn shield_gain_is_capped_at_half_max_hp() {
         let mut shield = Shield(8);
 
-        let gained = shield.gain_capped(10, 21);
+        let gained = shield.gain_capped(10, 21, 0.5);
 
         assert_eq!(gained, 2);
         assert_eq!(shield.0, 10);
@@ -995,7 +995,7 @@ mod tests {
     fn shield_set_clamps_to_half_max_hp() {
         let mut shield = Shield(0);
 
-        shield.set_capped(99, 20);
+        shield.set_capped(99, 20, 0.5);
 
         assert_eq!(shield.0, 10);
     }

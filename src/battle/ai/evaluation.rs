@@ -19,6 +19,7 @@ pub(crate) struct EnemyAiContext {
     pub(crate) enemy_hp: i32,
     pub(crate) enemy_max_hp: i32,
     pub(crate) enemy_shield: i32,
+    pub(crate) max_shield_hp_ratio: f32,
     pub(crate) enemy_atk: i32,
     pub(crate) enemy_def: i32,
     pub(crate) enemy_atk_stage: i32,
@@ -56,6 +57,7 @@ pub(crate) struct EnemySwitchCandidate {
     pub(crate) hp: i32,
     pub(crate) max_hp: i32,
     pub(crate) shield: i32,
+    pub(crate) max_shield_hp_ratio: f32,
     pub(crate) atk: i32,
     pub(crate) def: i32,
     pub(crate) atk_stage: i32,
@@ -276,8 +278,12 @@ pub(crate) fn score_card_for_skill(
                 Some(SkillEffect::Shield { amount }) => amount.max(&0),
                 _ => &0,
             };
-            let room_after_skill =
-                (remaining_shield_room(ctx.enemy_max_hp, ctx.enemy_shield) - *base_shield).max(0);
+            let room_after_skill = (remaining_shield_room(
+                ctx.enemy_max_hp,
+                ctx.enemy_shield,
+                ctx.max_shield_hp_ratio,
+            ) - *base_shield)
+                .max(0);
             let effective_amount = amount.max(&0).min(&room_after_skill);
             if *effective_amount <= 0 {
                 return None;
@@ -360,8 +366,12 @@ pub(crate) fn score_card_for_immediate_use(
     let score = match &card.effect {
         CardEffect::GainAp { amount } => 18.0 + *amount as f32 * 8.0,
         CardEffect::GainShield { amount } => {
-            let effective_amount =
-                effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+            let effective_amount = effective_shield_gain(
+                *amount,
+                ctx.enemy_max_hp,
+                ctx.enemy_shield,
+                ctx.max_shield_hp_ratio,
+            );
             if effective_amount <= 0 {
                 return None;
             }
@@ -372,8 +382,12 @@ pub(crate) fn score_card_for_immediate_use(
                 * weights.shield_value
         }
         CardEffect::GainShieldDrawIfSwitchedThisTurn { shield, draw } => {
-            let effective_shield =
-                effective_shield_gain(*shield, ctx.enemy_max_hp, ctx.enemy_shield);
+            let effective_shield = effective_shield_gain(
+                *shield,
+                ctx.enemy_max_hp,
+                ctx.enemy_shield,
+                ctx.max_shield_hp_ratio,
+            );
             (effective_shield as f32 * (0.5 + (1.0 - hp_ratio) * 0.6) + *draw as f32 * 2.5 + 7.0)
                 * weights.shield_value
         }
@@ -907,12 +921,14 @@ fn enemy_hp_ratio(ctx: &EnemyAiContext) -> f32 {
     }
 }
 
-fn remaining_shield_room(max_hp: i32, shield: i32) -> i32 {
-    (Shield::max_for_hp(max_hp) - shield.max(0)).max(0)
+fn remaining_shield_room(max_hp: i32, shield: i32, max_hp_ratio: f32) -> i32 {
+    (Shield::max_for_hp(max_hp, max_hp_ratio) - shield.max(0)).max(0)
 }
 
-fn effective_shield_gain(amount: i32, max_hp: i32, shield: i32) -> i32 {
-    amount.max(0).min(remaining_shield_room(max_hp, shield))
+fn effective_shield_gain(amount: i32, max_hp: i32, shield: i32, max_hp_ratio: f32) -> i32 {
+    amount
+        .max(0)
+        .min(remaining_shield_room(max_hp, shield, max_hp_ratio))
 }
 
 fn primary_effect(effect: &SkillEffect) -> Option<&SkillEffect> {
@@ -1442,8 +1458,12 @@ fn score_enemy_skill(
             }
         }
         SkillEffect::Shield { amount } => {
-            let effective_amount =
-                effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+            let effective_amount = effective_shield_gain(
+                *amount,
+                ctx.enemy_max_hp,
+                ctx.enemy_shield,
+                ctx.max_shield_hp_ratio,
+            );
             let mut score = if effective_amount > 0 {
                 effective_amount as f32 + 5.0
             } else {
@@ -1579,8 +1599,12 @@ fn score_enemy_skill(
                     (score, EnemyAiSkillKind::Heal)
                 }
                 Some(SkillEffect::Shield { amount }) => {
-                    let effective_amount =
-                        effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+                    let effective_amount = effective_shield_gain(
+                        *amount,
+                        ctx.enemy_max_hp,
+                        ctx.enemy_shield,
+                        ctx.max_shield_hp_ratio,
+                    );
                     let mut score = if effective_amount > 0 {
                         effective_amount as f32 + 5.0
                     } else {
@@ -1717,6 +1741,7 @@ pub(crate) fn best_action_value(
     action_ctx.enemy_hp = candidate.hp;
     action_ctx.enemy_max_hp = candidate.max_hp;
     action_ctx.enemy_shield = candidate.shield;
+    action_ctx.max_shield_hp_ratio = candidate.max_shield_hp_ratio;
     action_ctx.enemy_atk = candidate.atk;
     action_ctx.enemy_def = candidate.def;
     action_ctx.enemy_atk_stage = candidate.atk_stage;
@@ -1746,6 +1771,7 @@ fn threat_target_context(
         enemy_hp: 0,
         enemy_max_hp: 0,
         enemy_shield: 0,
+        max_shield_hp_ratio: target.max_shield_hp_ratio,
         enemy_atk: threat.atk,
         enemy_def: 0,
         enemy_atk_stage: 0,
@@ -1819,6 +1845,7 @@ fn active_player_threat_score(
         hp: ctx.enemy_hp,
         max_hp: ctx.enemy_max_hp,
         shield: ctx.enemy_shield,
+        max_shield_hp_ratio: ctx.max_shield_hp_ratio,
         atk: ctx.enemy_atk,
         def: ctx.enemy_def,
         atk_stage: ctx.enemy_atk_stage,
@@ -1906,8 +1933,12 @@ fn apply_player_threat_adjustment(
         }
         EnemyAiSkillKind::Shield => {
             if let Some(SkillEffect::Shield { amount }) = primary_effect(&skill.effect) {
-                let effective_amount =
-                    effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield) as f32;
+                let effective_amount = effective_shield_gain(
+                    *amount,
+                    ctx.enemy_max_hp,
+                    ctx.enemy_shield,
+                    ctx.max_shield_hp_ratio,
+                ) as f32;
                 let prevented = effective_amount.min(incoming_threat.max(0.0));
                 scored.score += prevented * (0.9 + danger_pressure * 0.4) * threat_weight;
             }
@@ -2348,6 +2379,7 @@ mod tests {
             enemy_hp: 20,
             enemy_max_hp: 20,
             enemy_shield: 0,
+            max_shield_hp_ratio: 0.5,
             enemy_atk: 5,
             enemy_def: 5,
             enemy_atk_stage: 0,
@@ -2417,6 +2449,7 @@ mod tests {
             hp,
             max_hp,
             shield,
+            max_shield_hp_ratio: 0.5,
             atk: 8,
             def: 5,
             atk_stage: 0,

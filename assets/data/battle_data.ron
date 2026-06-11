@@ -39,6 +39,7 @@
         max_ap: 12,
         max_retained_hand: 4,
         discard_ap_gain: 1,
+        max_shield_hp_ratio: 0.5,
     ),
 
     ai: (
@@ -437,7 +438,7 @@
             name: "火焰拳",
             category: NormalAttack,
             cost_ap: 2,
-            effect: Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
+            effect: Attack(power: 12, lifesteal_ratio: None, ignore_shield: false),
             element: None,
         ),
         (
@@ -445,7 +446,7 @@
             name: "烈焰风暴",
             category: ElementAttack,
             cost_ap: 4,
-            effect: Attack(power: 20, lifesteal_ratio: None, ignore_shield: false),
+            effect: Attack(power: 18, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Fire),
         ),
         (
@@ -455,7 +456,8 @@
             cost_ap: 2,
             effect: ModifyStages(
                 modifiers: [
-                    (attribute: Atk, amount: 2),
+                    (attribute: Atk, amount: 1),
+                    (attribute: Def, amount: -1),
                 ],
                 duration_turns: 2,
             ),
@@ -467,7 +469,7 @@
             category: ElementAttack,
             cost_ap: 3,
             effect: Sequence(effects: [
-                Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
+                Attack(power: 14, lifesteal_ratio: None, ignore_shield: false),
                 Conditional(branches: [
                     (
                         condition: TargetHadAura(element: Fire),
@@ -553,7 +555,7 @@
             name: "缠绕之藤",
             category: ElementAttack,
             cost_ap: 4,
-            effect: Attack(power: 19, lifesteal_ratio: None, ignore_shield: false),
+            effect: Attack(power: 22, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Grass),
         ),
         (

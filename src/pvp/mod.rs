@@ -568,14 +568,15 @@ pub fn data_hash(
 
 fn rules_hash_part(rules: &BattleRules) -> String {
     format!(
-        "rules:{}:{}:{}:{}:{}:{}:{}",
+        "rules:{}:{}:{}:{}:{}:{}:{}:{}",
         rules.max_team_size,
         rules.initial_cards,
         rules.cards_per_round,
         rules.ap_per_round,
         rules.max_ap,
         rules.max_retained_hand,
-        rules.discard_ap_gain
+        rules.discard_ap_gain,
+        rules.max_shield_hp_ratio
     )
 }
 
@@ -2038,6 +2039,7 @@ fn apply_team_hp(
 fn apply_team_shields(
     team: &crate::battle::Team,
     shield_values: &[i32],
+    max_shield_hp_ratio: f32,
     stats_query: &mut Query<&mut Stats, With<InBattle>>,
     shield_query: &mut Query<&mut Shield, With<InBattle>>,
 ) {
@@ -2047,7 +2049,7 @@ fn apply_team_shields(
             .map(|stats| stats.max_hp)
             .unwrap_or_default();
         if let Ok(mut shield_value) = shield_query.get_mut(entity) {
-            shield_value.set_capped(shield, max_hp);
+            shield_value.set_capped(shield, max_hp, max_shield_hp_ratio);
         }
     }
 }
@@ -2317,6 +2319,7 @@ struct PvpApplySnapshotResources<'w> {
     enemy_team: Option<ResMut<'w, EnemyTeam>>,
     hand: ResMut<'w, Hand>,
     action_points: ResMut<'w, ActionPoints>,
+    battle_rules: Res<'w, BattleRules>,
     battle_result: ResMut<'w, BattleResult>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     next_phase: ResMut<'w, NextState<BattlePhase>>,
@@ -2393,6 +2396,7 @@ fn pvp_apply_host_snapshot_system(
         apply_team_shields(
             &player_team.0,
             &snapshot.player_shields,
+            runtime.battle_rules.max_shield_hp_ratio,
             &mut stats_query,
             &mut shield_query,
         );
@@ -2412,6 +2416,7 @@ fn pvp_apply_host_snapshot_system(
         apply_team_shields(
             &enemy_team.0,
             &snapshot.enemy_shields,
+            runtime.battle_rules.max_shield_hp_ratio,
             &mut stats_query,
             &mut shield_query,
         );

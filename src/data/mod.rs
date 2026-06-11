@@ -589,6 +589,10 @@ fn default_discard_ap_gain() -> i32 {
     1
 }
 
+fn default_max_shield_hp_ratio() -> f32 {
+    0.5
+}
+
 fn default_accuracy_percent() -> i32 {
     100
 }
@@ -609,6 +613,8 @@ pub struct BattleRulesConfig {
     pub max_retained_hand: usize,
     #[serde(default = "default_discard_ap_gain")]
     pub discard_ap_gain: i32,
+    #[serde(default = "default_max_shield_hp_ratio")]
+    pub max_shield_hp_ratio: f32,
 }
 
 impl Default for BattleRulesConfig {
@@ -621,6 +627,7 @@ impl Default for BattleRulesConfig {
             max_ap: default_max_ap(),
             max_retained_hand: default_max_retained_hand(),
             discard_ap_gain: default_discard_ap_gain(),
+            max_shield_hp_ratio: default_max_shield_hp_ratio(),
         }
     }
 }
@@ -634,6 +641,7 @@ pub struct BattleRules {
     pub max_ap: i32,
     pub max_retained_hand: usize,
     pub discard_ap_gain: i32,
+    pub max_shield_hp_ratio: f32,
 }
 
 impl BattleRules {
@@ -646,6 +654,7 @@ impl BattleRules {
             max_ap: config.max_ap,
             max_retained_hand: config.max_retained_hand,
             discard_ap_gain: config.discard_ap_gain,
+            max_shield_hp_ratio: config.max_shield_hp_ratio.max(0.0),
         }
     }
 }

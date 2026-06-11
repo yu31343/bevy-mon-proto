@@ -611,6 +611,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 ctx.player_team,
                 ctx.enemy_team,
                 ctx.combat_query,
+                ctx.rules,
                 ctx.event_writer,
             );
             format!("获得护盾={gained}")
@@ -701,6 +702,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 ctx.player_team,
                 ctx.enemy_team,
                 ctx.combat_query,
+                ctx.rules,
                 ctx.event_writer,
             );
             let switched = match ctx.side {
@@ -745,6 +747,7 @@ fn gain_shield_on_active(
     player_team: Option<&PlayerTeam>,
     enemy_team: Option<&EnemyTeam>,
     query: &mut CardCombatQuery,
+    rules: &BattleRules,
     event_writer: &mut MessageWriter<BattleEvent>,
 ) -> i32 {
     let Some(entity) = active_entity(side, player_team, enemy_team) else {
@@ -754,7 +757,7 @@ fn gain_shield_on_active(
         return 0;
     };
     let amount = (amount + take_shield_bonus(side, pending_boosts)).max(0);
-    let gained = shield.gain_capped(amount, stats.max_hp);
+    let gained = shield.gain_capped(amount, stats.max_hp, rules.max_shield_hp_ratio);
     event_writer.write(BattleEvent::ShieldGained {
         side,
         amount: gained,
