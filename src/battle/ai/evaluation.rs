@@ -1024,6 +1024,18 @@ fn status_future_value(status_id: &str, dbs: &BattleDbs) -> f32 {
     (tick_damage_value + heal_pressure + stage_value + evade_value + category_value).max(0.0)
 }
 
+fn target_has_status(ctx: &EnemyAiContext, status_id: &str) -> bool {
+    ctx.target_status_ids.iter().any(|id| id == status_id)
+}
+
+fn apply_status_tactical_value(status_id: &str, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
+    if target_has_status(ctx, status_id) {
+        0.0
+    } else {
+        status_future_value(status_id, dbs)
+    }
+}
+
 fn modifier_pressure(modifier: &crate::data::AttributeStageModifier) -> f32 {
     (-modifier.amount).max(0) as f32 * 8.0
 }
@@ -1172,13 +1184,7 @@ fn fixed_damage_value(amount: i32, ctx: &EnemyAiContext) -> f32 {
 
 fn tactical_effect_value(effect: &SkillEffect, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
     match effect {
-        SkillEffect::ApplyStatus { status_id } => {
-            if ctx.target_status_ids.iter().any(|id| id == status_id) {
-                status_future_value(status_id, dbs) * 0.25
-            } else {
-                status_future_value(status_id, dbs)
-            }
-        }
+        SkillEffect::ApplyStatus { status_id } => apply_status_tactical_value(status_id, ctx, dbs),
         SkillEffect::ModifyStages { modifiers, .. } => {
             modifiers.iter().map(modifier_pressure).sum::<f32>()
         }
@@ -1317,8 +1323,23 @@ fn score_enemy_skill(
                 kind: EnemyAiSkillKind::Shield,
             }
         }
-        SkillEffect::ApplyStatus { .. }
-        | SkillEffect::ModifyStages { .. }
+        SkillEffect::ApplyStatus { status_id } => {
+            let mut score = if target_has_status(ctx, status_id) {
+                2.0
+            } else {
+                24.0 + status_future_value(status_id, dbs) + (1.0 - hp_ratio) * 8.0
+            };
+            if skill.category == SkillCategory::EnemyDebuff && !target_has_status(ctx, status_id) {
+                score += 10.0;
+            }
+            ScoredEnemySkill {
+                slot,
+                skill_id,
+                score,
+                kind: EnemyAiSkillKind::Debuff,
+            }
+        }
+        SkillEffect::ModifyStages { .. }
         | SkillEffect::Cleanse { .. }
         | SkillEffect::Dispel { .. }
         | SkillEffect::DealFixedDamage { .. }
@@ -1412,8 +1433,21 @@ fn score_enemy_skill(
                     24.0 + dispel_value(status_ids, ctx),
                     EnemyAiSkillKind::Debuff,
                 ),
-                Some(SkillEffect::ApplyStatus { .. })
-                | Some(SkillEffect::ModifyStages { .. })
+                Some(SkillEffect::ApplyStatus { status_id }) => {
+                    let mut score = if target_has_status(ctx, status_id) {
+                        tactical_effect_value(&skill.effect, ctx, dbs).min(4.0)
+                    } else {
+                        24.0 + tactical_effect_value(&skill.effect, ctx, dbs)
+                            + (1.0 - hp_ratio) * 8.0
+                    };
+                    if skill.category == SkillCategory::EnemyDebuff
+                        && !target_has_status(ctx, status_id)
+                    {
+                        score += 10.0;
+                    }
+                    (score, EnemyAiSkillKind::Debuff)
+                }
+                Some(SkillEffect::ModifyStages { .. })
                 | Some(SkillEffect::DealFixedDamage { .. })
                 | Some(SkillEffect::DealStatDifferenceDamage { .. })
                 | Some(SkillEffect::Conditional { .. }) => {
@@ -2759,6 +2793,120 @@ mod tests {
 
         assert!(fresh_score > duplicate_score);
         assert!(fresh_score > 40.0);
+        assert!(duplicate_score < 10.0);
+    }
+
+    #[test]
+    fn duplicate_status_skill_does_not_crowd_out_followup_attacks() {
+        let shadow_blade = SkillDef {
+            id: SkillId::ShadowBlade,
+            name: "暗影刃".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 2,
+            effect: SkillEffect::Attack {
+                power: 15,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let curse = SkillDef {
+            id: SkillId::CurseWhisper,
+            name: "诅咒低语".to_string(),
+            category: SkillCategory::EnemyDebuff,
+            cost_ap: 2,
+            effect: SkillEffect::ApplyStatus {
+                status_id: "cursed".to_string(),
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let blood_touch = SkillDef {
+            id: SkillId::BloodTouch,
+            name: "噬血之触".to_string(),
+            category: SkillCategory::SpecialAttack,
+            cost_ap: 3,
+            effect: SkillEffect::Sequence {
+                effects: vec![
+                    SkillEffect::Attack {
+                        power: 15,
+                        lifesteal_ratio: Some(0.25),
+                        ignore_shield: false,
+                    },
+                    SkillEffect::Conditional {
+                        branches: vec![crate::data::ConditionalSkillEffect {
+                            condition: crate::data::SkillCondition::TargetHadStatus {
+                                status_id: "cursed".to_string(),
+                            },
+                            effect: Box::new(SkillEffect::DealFixedDamage {
+                                amount: 6,
+                                ignore_shield: false,
+                                target: EffectTarget::Opponent,
+                            }),
+                        }],
+                    },
+                ],
+            },
+            element: Some(ElementType::Dark),
+            base_accuracy: None,
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([
+                (shadow_blade.id, shadow_blade),
+                (curse.id, curse),
+                (blood_touch.id, blood_touch),
+            ]),
+            cards: HashMap::new(),
+            elements: ElementDb::default(),
+            statuses: StatusDb {
+                statuses: HashMap::from([(
+                    "cursed".to_string(),
+                    StatusDef {
+                        id: "cursed".to_string(),
+                        name: "诅咒".to_string(),
+                        category: StatusCategory::Debuff,
+                        duration_turns: 2,
+                        tick_timing: None,
+                        stage_modifiers: vec![
+                            crate::data::AttributeStageModifier {
+                                attribute: crate::data::AttributeType::Atk,
+                                amount: -2,
+                            },
+                            crate::data::AttributeStageModifier {
+                                attribute: crate::data::AttributeType::Acc,
+                                amount: -2,
+                            },
+                        ],
+                        fixed_damage_on_tick: 0,
+                        heal_on_tick: 0,
+                        heal_taken_multiplier: None,
+                        evade_charges: 0,
+                    },
+                )]),
+            },
+            reactions: ReactionDb::default(),
+        };
+        let mut ctx = test_ai_context(vec!["cursed".to_string()]);
+        ctx.enemy_atk = 21;
+        ctx.player_def = 18;
+        ctx.player_hp = 60;
+        let chosen = choose_enemy_skill(
+            &[
+                SkillId::ShadowBlade,
+                SkillId::CurseWhisper,
+                SkillId::BloodTouch,
+                SkillId::FirePunch,
+            ],
+            3,
+            4,
+            &dbs,
+            &ctx,
+            &EnemyAiWeights::default(),
+        )
+        .expect("dark elf should have an attack available");
+
+        assert_ne!(chosen.skill_id, SkillId::CurseWhisper);
     }
 
     #[test]
