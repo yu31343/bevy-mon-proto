@@ -82,6 +82,28 @@ pub struct SkillCount(pub usize);
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Shield(pub i32);
 
+impl Shield {
+    pub fn max_for_hp(max_hp: i32) -> i32 {
+        max_hp.max(0) / 2
+    }
+
+    pub fn capped_value(value: i32, max_hp: i32) -> i32 {
+        value.clamp(0, Self::max_for_hp(max_hp))
+    }
+
+    pub fn set_capped(&mut self, value: i32, max_hp: i32) {
+        self.0 = Self::capped_value(value, max_hp);
+    }
+
+    pub fn gain_capped(&mut self, amount: i32, max_hp: i32) -> i32 {
+        let max_shield = Self::max_for_hp(max_hp);
+        let before = Self::capped_value(self.0, max_hp);
+        let gained = amount.max(0).min(max_shield.saturating_sub(before));
+        self.0 = before + gained;
+        gained
+    }
+}
+
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ElementAura {
     pub slots: [Option<ElementType>; 2],
@@ -957,6 +979,25 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    #[test]
+    fn shield_gain_is_capped_at_half_max_hp() {
+        let mut shield = Shield(8);
+
+        let gained = shield.gain_capped(10, 21);
+
+        assert_eq!(gained, 2);
+        assert_eq!(shield.0, 10);
+    }
+
+    #[test]
+    fn shield_set_clamps_to_half_max_hp() {
+        let mut shield = Shield(0);
+
+        shield.set_capped(99, 20);
+
+        assert_eq!(shield.0, 10);
     }
 
     #[test]

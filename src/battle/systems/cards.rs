@@ -750,13 +750,16 @@ fn gain_shield_on_active(
     let Some(entity) = active_entity(side, player_team, enemy_team) else {
         return 0;
     };
-    let Ok((_, _, mut shield, _, _)) = query.get_mut(entity) else {
+    let Ok((_, stats, mut shield, _, _)) = query.get_mut(entity) else {
         return 0;
     };
     let amount = (amount + take_shield_bonus(side, pending_boosts)).max(0);
-    shield.0 += amount;
-    event_writer.write(BattleEvent::ShieldGained { side, amount });
-    amount
+    let gained = shield.gain_capped(amount, stats.max_hp);
+    event_writer.write(BattleEvent::ShieldGained {
+        side,
+        amount: gained,
+    });
+    gained
 }
 
 fn apply_stage_status_on_active(

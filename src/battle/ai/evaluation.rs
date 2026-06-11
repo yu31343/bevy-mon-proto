@@ -1,6 +1,9 @@
-use crate::data::{
-    AttributeStageModifier, AttributeType, BattleDbs, CardDef, CardEffect, CardId, EffectTarget,
-    ElementType, EnemyAiWeights, SkillCategory, SkillDef, SkillEffect, SkillId,
+use crate::{
+    battle::Shield,
+    data::{
+        AttributeStageModifier, AttributeType, BattleDbs, CardDef, CardEffect, CardId,
+        EffectTarget, ElementType, EnemyAiWeights, SkillCategory, SkillDef, SkillEffect, SkillId,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +272,17 @@ pub(crate) fn score_card_for_skill(
             (12.0 + *amount as f32) * weights.card_value * weights.healing_value
         }
         (CardEffect::NextShieldBoost { amount }, EnemyAiSkillKind::Shield) => {
-            (12.0 + *amount as f32) * weights.card_value * weights.shield_value
+            let base_shield = match primary_effect(&skill.effect) {
+                Some(SkillEffect::Shield { amount }) => amount.max(&0),
+                _ => &0,
+            };
+            let room_after_skill =
+                (remaining_shield_room(ctx.enemy_max_hp, ctx.enemy_shield) - *base_shield).max(0);
+            let effective_amount = amount.max(&0).min(&room_after_skill);
+            if *effective_amount <= 0 {
+                return None;
+            }
+            (12.0 + *effective_amount as f32) * weights.card_value * weights.shield_value
         }
         (CardEffect::NextElementAttachmentGainAp { amount }, EnemyAiSkillKind::Attack)
         | (CardEffect::NextElementAttachmentGainAp { amount }, EnemyAiSkillKind::Debuff)
@@ -347,14 +360,21 @@ pub(crate) fn score_card_for_immediate_use(
     let score = match &card.effect {
         CardEffect::GainAp { amount } => 18.0 + *amount as f32 * 8.0,
         CardEffect::GainShield { amount } => {
-            (*amount as f32 * (0.6 + (1.0 - hp_ratio) * 0.7) + 8.0) * weights.shield_value
+            let effective_amount =
+                effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+            if effective_amount <= 0 {
+                return None;
+            }
+            (effective_amount as f32 * (0.6 + (1.0 - hp_ratio) * 0.7) + 8.0) * weights.shield_value
         }
         CardEffect::ShieldAbsorbGainAp { amount } if ctx.enemy_shield > 0 => {
             (10.0 + *amount as f32 * 6.0 + ctx.enemy_shield.min(12) as f32 * 0.5)
                 * weights.shield_value
         }
         CardEffect::GainShieldDrawIfSwitchedThisTurn { shield, draw } => {
-            (*shield as f32 * (0.5 + (1.0 - hp_ratio) * 0.6) + *draw as f32 * 2.5 + 7.0)
+            let effective_shield =
+                effective_shield_gain(*shield, ctx.enemy_max_hp, ctx.enemy_shield);
+            (effective_shield as f32 * (0.5 + (1.0 - hp_ratio) * 0.6) + *draw as f32 * 2.5 + 7.0)
                 * weights.shield_value
         }
         CardEffect::CleanseOrGainAp { fallback_ap, .. } => {
@@ -887,6 +907,14 @@ fn enemy_hp_ratio(ctx: &EnemyAiContext) -> f32 {
     }
 }
 
+fn remaining_shield_room(max_hp: i32, shield: i32) -> i32 {
+    (Shield::max_for_hp(max_hp) - shield.max(0)).max(0)
+}
+
+fn effective_shield_gain(amount: i32, max_hp: i32, shield: i32) -> i32 {
+    amount.max(0).min(remaining_shield_room(max_hp, shield))
+}
+
 fn primary_effect(effect: &SkillEffect) -> Option<&SkillEffect> {
     match effect {
         SkillEffect::Sequence { effects } => effects.first().and_then(primary_effect),
@@ -1414,11 +1442,17 @@ fn score_enemy_skill(
             }
         }
         SkillEffect::Shield { amount } => {
-            let mut score = *amount as f32 + 5.0;
-            if ctx.enemy_shield <= 0 {
+            let effective_amount =
+                effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+            let mut score = if effective_amount > 0 {
+                effective_amount as f32 + 5.0
+            } else {
+                1.0
+            };
+            if effective_amount > 0 && ctx.enemy_shield <= 0 {
                 score += 2.0;
             }
-            if hp_ratio <= 0.35 {
+            if effective_amount > 0 && hp_ratio <= 0.35 {
                 score += 3.0;
             }
             ScoredEnemySkill {
@@ -1545,11 +1579,17 @@ fn score_enemy_skill(
                     (score, EnemyAiSkillKind::Heal)
                 }
                 Some(SkillEffect::Shield { amount }) => {
-                    let mut score = *amount as f32 + 5.0;
-                    if ctx.enemy_shield <= 0 {
+                    let effective_amount =
+                        effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield);
+                    let mut score = if effective_amount > 0 {
+                        effective_amount as f32 + 5.0
+                    } else {
+                        1.0
+                    };
+                    if effective_amount > 0 && ctx.enemy_shield <= 0 {
                         score += 2.0;
                     }
-                    if hp_ratio <= 0.35 {
+                    if effective_amount > 0 && hp_ratio <= 0.35 {
                         score += 3.0;
                     }
                     (score, EnemyAiSkillKind::Shield)
@@ -1866,7 +1906,9 @@ fn apply_player_threat_adjustment(
         }
         EnemyAiSkillKind::Shield => {
             if let Some(SkillEffect::Shield { amount }) = primary_effect(&skill.effect) {
-                let prevented = (*amount as f32).min(incoming_threat.max(0.0));
+                let effective_amount =
+                    effective_shield_gain(*amount, ctx.enemy_max_hp, ctx.enemy_shield) as f32;
+                let prevented = effective_amount.min(incoming_threat.max(0.0));
                 scored.score += prevented * (0.9 + danger_pressure * 0.4) * threat_weight;
             }
             if lethal_threat {

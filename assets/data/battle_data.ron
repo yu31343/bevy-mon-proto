@@ -511,7 +511,7 @@
                 Shield(amount: 18),
                 ModifyStages(
                     modifiers: [
-                        (attribute: Def, amount: 2),
+                        (attribute: Def, amount: 1),
                     ],
                     duration_turns: 2,
                 ),

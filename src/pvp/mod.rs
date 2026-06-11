@@ -2038,11 +2038,16 @@ fn apply_team_hp(
 fn apply_team_shields(
     team: &crate::battle::Team,
     shield_values: &[i32],
-    query: &mut Query<&mut Shield, With<InBattle>>,
+    stats_query: &mut Query<&mut Stats, With<InBattle>>,
+    shield_query: &mut Query<&mut Shield, With<InBattle>>,
 ) {
     for (&entity, shield) in team.combatants.iter().zip(shield_values.iter().copied()) {
-        if let Ok(mut shield_value) = query.get_mut(entity) {
-            shield_value.0 = shield.max(0);
+        let max_hp = stats_query
+            .get_mut(entity)
+            .map(|stats| stats.max_hp)
+            .unwrap_or_default();
+        if let Ok(mut shield_value) = shield_query.get_mut(entity) {
+            shield_value.set_capped(shield, max_hp);
         }
     }
 }
@@ -2385,7 +2390,12 @@ fn pvp_apply_host_snapshot_system(
             .player_active_index
             .min(player_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&player_team.0, &snapshot.player_hp, &mut stats_query);
-        apply_team_shields(&player_team.0, &snapshot.player_shields, &mut shield_query);
+        apply_team_shields(
+            &player_team.0,
+            &snapshot.player_shields,
+            &mut stats_query,
+            &mut shield_query,
+        );
         apply_team_auras(&player_team.0, &snapshot.player_auras, &mut aura_query);
         apply_team_statuses(
             &player_team.0,
@@ -2399,7 +2409,12 @@ fn pvp_apply_host_snapshot_system(
             .enemy_active_index
             .min(enemy_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&enemy_team.0, &snapshot.enemy_hp, &mut stats_query);
-        apply_team_shields(&enemy_team.0, &snapshot.enemy_shields, &mut shield_query);
+        apply_team_shields(
+            &enemy_team.0,
+            &snapshot.enemy_shields,
+            &mut stats_query,
+            &mut shield_query,
+        );
         apply_team_auras(&enemy_team.0, &snapshot.enemy_auras, &mut aura_query);
         apply_team_statuses(
             &enemy_team.0,

@@ -1990,7 +1990,7 @@ fn apply_self_skill_effect_with_context(
                 pending_boosts.enemy.next_shield_bonus = 0;
             }
 
-            actor_shield.0 += shield_amount;
+            shield_amount = actor_shield.gain_capped(shield_amount, actor_stats.max_hp);
             event_writer.write(BattleEvent::ShieldGained {
                 side: actor_side,
                 amount: shield_amount,
@@ -3575,6 +3575,77 @@ mod tests {
         assert!(collected.iter().any(|event| matches!(
             event,
             BattleEvent::ReactionTriggered { reaction_name, .. } if reaction_name == "蒸发"
+        )));
+    }
+
+    #[test]
+    fn shield_skill_caps_at_half_max_hp() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(21);
+        let mut attacker_shield = Shield(9);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut target_stats = base_stats(30);
+        let mut target_shield = Shield(0);
+        let mut target_aura = ElementAura::default();
+        let mut target_statuses = StatusBoard::default();
+        let mut pending_boosts = PendingBoosts::default();
+        let mut accuracy_rng = AccuracyRng::default();
+        let element_db = ElementDb::from_default_config();
+        let status_db = empty_status_db();
+        let reaction_db = test_reaction_db();
+        let skill = SkillDef {
+            id: crate::data::SkillId::WaterScreen,
+            name: "水幕".to_string(),
+            category: SkillCategory::SelfUtility,
+            cost_ap: 1,
+            effect: SkillEffect::Shield { amount: 8 },
+            element: Some(ElementType::Water),
+            base_accuracy: Some(1.0),
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            apply_effect(
+                &skill,
+                Side::Player,
+                Side::Player,
+                ElementType::Water,
+                &mut attacker_stats,
+                &mut attacker_shield,
+                &mut attacker_statuses,
+                &mut target_stats,
+                &mut target_shield,
+                &mut target_aura,
+                &mut target_statuses,
+                &mut pending_boosts,
+                &formula_rules(),
+                &mut accuracy_rng,
+                &element_db,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                None,
+                Some(1),
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(attacker_shield.0, 10);
+        let events = world.resource::<Messages<BattleEvent>>();
+        let mut cursor = events.get_cursor();
+        let collected: Vec<_> = cursor.read(events).cloned().collect();
+        assert!(collected.iter().any(|event| matches!(
+            event,
+            BattleEvent::ShieldGained {
+                side: Side::Player,
+                amount: 1,
+            }
         )));
     }
 
