@@ -48,6 +48,7 @@ registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
 - **数据驱动战斗内容**：技能、精灵、卡牌、元素克制、状态、反应、战斗规则等统一从 `assets/data/battle_data.ron` 加载。
 - **双状态机战斗流程**：顶层 `GameState` 管理大厅、地图、队伍选择、战斗、结果；嵌套 `BattlePhase` 管理战斗初始化、回合开始、玩家回合、敌方回合、弃牌、结算、死亡处理。
 - **本地与 PVP 共用战斗系统**：Vs AI、调试双方控制、PVP 模式都复用同一套战斗资源和 UI。
+- **可配置人机 AI**：Vs AI 支持 Easy / Normal / Hard / Expert 难度预设；AI 会按评分和轻量规划选择技能、卡牌、弃牌、换人，并评估状态、元素反应、玩家威胁和重复增益的边际收益。
 - **卡牌与队伍策略**：每场战斗使用共享抽牌堆 / 弃牌堆，卡牌可影响 AP、护盾、治疗、元素附着、反应、抽牌和战术整理。
 - **结构化调试能力**：控制台日志、`StructuredBattleLog`、`ReplayEventLog`、`ActionTrace` 共同用于战斗复盘和问题定位。
 - **Spine 动画表现**：战斗中可加载 Spine 精灵动画和 VFX，并根据战斗消息驱动表现层反馈。
@@ -100,6 +101,11 @@ cargo test <test_name> -- --nocapture
 # 从仓库根目录启动游戏
 cargo run
 
+# 启动 PVP 中继服务器
+python relay_server.py
+# 或指定监听地址 / 端口
+python relay_server.py --host 0.0.0.0 --port 42043
+
 # 构建 release 版本
 cargo build --release
 ```
@@ -131,7 +137,7 @@ cargo build --release
 
 队伍选择支持三种入口模式：
 
-- **Vs AI**：玩家只选择我方队伍，敌方由地图目标或 AI 自动选择生成。
+- **Vs AI**：玩家只选择我方队伍，敌方由地图目标或 AI 自动选择生成；可在队伍选择界面选择 Easy / Normal / Hard / Expert AI 难度。
 - **Debug**：开发调试模式，玩家可先选我方，再选敌方，方便复现战斗问题。
 - **PVP**：本地提交队伍后等待远端队伍，通过 PVP 协议进入战斗。
 
@@ -152,12 +158,31 @@ cargo build --release
 PVP 支持：
 
 - 局域网直连 TCP。
-- 中继服务器模式。
+- 中继服务器模式，依赖仓库根目录下的 `relay_server.py`。
 - 协议版本校验。
 - 战斗数据 hash 校验。
 - Host 权威战斗：客户端发送意图，Host 应用并广播反馈 / 快照。
 
-当协议版本或双方战斗数据不一致时，握手会失败并在 UI 与控制台日志中提示原因。
+当协议版本或双方战斗数据不一致时，握手会失败并在 UI 与控制台日志中提示原因。修改 PVP 协议时，需要保持 `src/pvp/mod.rs` 与 `relay_server.py` 中的协议版本一致。
+
+## 6. 人机 AI
+
+Vs AI 模式下，敌方 AI 使用“评分启发式 + 轻量行动规划”的方式选择行动：
+
+- 会在技能、卡牌、主动换人、弃牌换 AP、结束回合之间选择当前最优行动。
+- 会评估攻击、击杀线、治疗、护盾、状态、元素反应、卡牌联动和换人收益。
+- 会根据难度预设调整搜索深度、Top-N 候选数、权重和玩家信息可见度。
+- Hard / Expert 会把玩家 AP、公开技能、可见手牌投影、进攻威胁和防守潜力纳入决策。
+- 对不可重复叠加或重复收益明显递减的效果会降权，例如重复诅咒、重复自属性增益和重复闪避。
+
+当前 AI 难度预设：
+
+| 难度 | 特点 |
+|---|---|
+| Easy | 较浅规划，不读取玩家威胁信息，倾向保守简单行动。 |
+| Normal | 标准体验，使用公开信息和基础规划。 |
+| Hard | 更深规划，增强卡牌、反应、换人和玩家威胁评分。 |
+| Expert | 最深候选规划，可使用完整玩家信息投影，决策更激进也更会防守。 |
 
 ---
 
@@ -195,12 +220,25 @@ assets/data/battle_data.ron
 - 精灵原型
 - 卡牌定义
 - 初始牌组顺序
+- AI 默认配置和评分权重
 
-启动时会插入 `BattleDbs`、`MonsterPool`、`CardDeck`、`BattleRules`、`BattleFormulaRules`、`BattleRulesBundle`、`BattleDataStatus` 等资源。
+启动时会插入 `BattleDbs`、`MonsterPool`、`CardDeck`、`BattleRules`、`BattleFormulaRules`、`BattleRulesBundle`、`EnemyAiConfig`、`BattleDataStatus` 等资源。
 
 如果读取、解析或校验失败，系统会插入 fallback 资源，并把失败原因写入 `BattleDataStatus.error`。下游系统应以该资源作为权威失败信号。
 
-## 3. 战斗资源与消息
+## 3. AI 决策模块
+
+人机 AI 的运行入口仍在 `src/battle/systems/enemy_turn.rs`，负责读取 ECS 战场状态、构造 AI 上下文并执行最终行动。纯评分与规划辅助集中在 `src/battle/ai/evaluation.rs`，便于单元测试和调参。
+
+AI 相关配置位于数据层：
+
+- `EnemyAiConfig`：难度、搜索深度、候选数、换人阈值、玩家信息可见度和权重。
+- `EnemyAiWeights`：攻击、击杀、治疗、护盾、状态、反应、换人、卡牌、弃牌、玩家威胁等评分权重。
+- `EnemyAiConfig::preset(...)`：为队伍选择界面的 Easy / Normal / Hard / Expert 提供预设配置。
+
+真实战斗结算仍由现有技能、卡牌和事件系统负责；AI 只做轻量预测与行动选择，避免复制一套独立战斗规则。
+
+## 4. 战斗资源与消息
 
 战斗参与者是 Bevy ECS 实体，通过组件组合描述：
 
@@ -256,7 +294,7 @@ assets/data/battle_data.ron
 - 回合先手、速度、AP、手牌数量。
 - 技能、卡牌、弃牌、伤害、治疗、护盾、元素附着、反应、换人、倒下、胜负。
 - PVP 建房、连接、握手、失败、断线摘要。
-- AI 实际选择：技能、换人、结束回合、辅助使用增益卡。
+- AI 实际选择：技能、换人、卡牌、弃牌、结束回合，以及所选难度摘要。
 - Spine 动画资源缺失 / 加载失败等表现层警告。
 
 日志示例：
@@ -280,7 +318,7 @@ assets/data/battle_data.ron
 | `BEVY_MON_LOG_BATTLE_DEBUG=1` | 只打开战斗结构化 debug 输出。 |
 | `BEVY_MON_LOG_CARDS=1` | 打开卡堆细节，例如牌堆耗尽、弃牌堆重洗、基础牌组重建；卡牌效果抽牌会默认记录来源和抽到的卡名。 |
 | `BEVY_MON_LOG_PVP=1` | 打开 PVP intent、snapshot、battle feedback、data hash 等同步细节。 |
-| `BEVY_MON_LOG_AI=1` | 打开完整 AI 技能候选、评分构成、候选换人等决策细节。 |
+| `BEVY_MON_LOG_AI=1` | 打开完整 AI 配置、玩家威胁、技能候选、评分构成、候选换人和 Top-N 行动规划等决策细节。 |
 | `BEVY_MON_LOG_SPINE=1` | 打开 Spine 动画生成、UI ready 等表现层细节。 |
 
 ## 3. 使用示例
@@ -330,7 +368,8 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 
 - 大厅、地图、队伍选择、战斗、结果返回的基本闭环。
 - Vs AI、Debug 双方控制、PVP 三类战斗入口。
-- 数据驱动技能、状态、反应、精灵、卡牌和规则。
+- Vs AI 难度预设、AI 轻量规划、状态 / 反应 / 卡牌 / 换人 / 玩家威胁评分。
+- 数据驱动技能、状态、反应、精灵、卡牌、AI 配置和规则。
 - 共享抽牌堆 / 弃牌堆与 per-battle 洗牌种子。
 - AP、手牌上限、强制弃牌、战术整理等卡牌资源系统。
 - 元素附着、元素克制、元素反应、风扩散、状态 tick、属性等级修正。
@@ -340,7 +379,8 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 
 ## 仍可深化
 
-- 更完整的 AI 战术策略，而不仅是当前评分启发式。
+- 将当前 AI 评分 / 上下文 / 规划 / 日志进一步拆分成更清晰的子模块。
+- 更完整的 AI 状态树模拟和固定战斗快照回归测试。
 - PVP 双端日志链路的手动实测与可视化调试工具。
 - 地图探索、养成、捕捉、图鉴等战斗外玩法。
 - 更完整的战斗 replay 回放与自动化复盘工具。
