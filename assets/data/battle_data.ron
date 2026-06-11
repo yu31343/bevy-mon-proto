@@ -41,6 +41,27 @@
         discard_ap_gain: 1,
     ),
 
+    ai: (
+        difficulty: Normal,
+        player_info_visibility: Public,
+        search_depth: 1,
+        top_candidates: 4,
+        switch_score_threshold: 18.0,
+        random_score_jitter: 0.0,
+        weights: (
+            attack_value: 1.0,
+            kill_bonus: 1.0,
+            healing_value: 1.0,
+            shield_value: 1.0,
+            status_value: 1.0,
+            reaction_value: 1.0,
+            switch_value: 1.0,
+            card_value: 1.0,
+            discard_value: 1.0,
+            player_threat: 1.0,
+        ),
+    ),
+
     statuses: [
         (
             id: "burning_aura",

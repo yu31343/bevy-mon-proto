@@ -1,3 +1,4 @@
+pub(crate) mod ai;
 mod components;
 mod events;
 mod systems;
