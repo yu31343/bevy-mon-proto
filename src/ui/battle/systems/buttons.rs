@@ -492,6 +492,17 @@ pub(crate) fn button_play_card_two_step_system(
                     break;
                 }
                 if *battle_phase.get() == BattlePhase::Discard {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
                     let card_id = cards.remove(idx);
                     *ap += 1;
                     let card_name = dbs

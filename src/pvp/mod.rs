@@ -16,10 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleShuffleSeed, ElementAura,
-        EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
-        RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
-        TurnContext, TurnCount, new_battle_shuffle_seed, recalculate_stage_modifiers,
-        transfer_status_by_id,
+        EnemyTeam, Hand, InBattle, PendingBoosts, PendingHandDiscard, PendingKoResolution,
+        PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard,
+        StatusInstance, TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{
@@ -31,11 +31,12 @@ use crate::{
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
+const PVP_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 
 pub struct PvpPlugin;
 
@@ -49,6 +50,7 @@ impl Plugin for PvpPlugin {
             .init_resource::<PvpIncomingFeedbacks>()
             .init_resource::<PvpPendingLocalIntent>()
             .init_resource::<PvpLastRemoteIntentSeq>()
+            .init_resource::<PvpSnapshotSync>()
             .add_systems(Update, pvp_poll_network_system)
             .add_systems(
                 Update,
@@ -200,6 +202,28 @@ pub struct PvpPendingLocalIntent(pub Option<u32>);
 #[derive(Resource, Debug, Default)]
 pub struct PvpLastRemoteIntentSeq(pub u32);
 
+#[derive(Resource, Debug)]
+struct PvpSnapshotSync {
+    interval: Timer,
+    last_sent: Option<PvpBattleSnapshot>,
+}
+
+impl Default for PvpSnapshotSync {
+    fn default() -> Self {
+        Self {
+            interval: Timer::new(PVP_SNAPSHOT_INTERVAL, TimerMode::Repeating),
+            last_sent: None,
+        }
+    }
+}
+
+impl PvpSnapshotSync {
+    fn reset(&mut self) {
+        self.interval.reset();
+        self.last_sent = None;
+    }
+}
+
 #[derive(Component)]
 pub struct PvpLobbyUiRoot;
 
@@ -342,7 +366,13 @@ enum PvpBattleFeedback {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PvpPendingDiscardSnapshot {
+    side: Side,
+    next_phase: BattlePhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct PvpBattleSnapshot {
     turn: u32,
     phase: BattlePhase,
@@ -361,6 +391,7 @@ struct PvpBattleSnapshot {
     enemy_ap: i32,
     player_hand: Vec<CardId>,
     enemy_hand: Vec<CardId>,
+    pending_discard: Option<PvpPendingDiscardSnapshot>,
     acknowledged_intent_seq: u32,
     player_defeated: bool,
     enemy_defeated: bool,
@@ -1002,6 +1033,7 @@ fn reset_pvp_state_on_lobby(
     mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
     mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
     mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
 ) {
     connection.stop();
     connection.status = PvpStatus::Idle;
@@ -1013,6 +1045,7 @@ fn reset_pvp_state_on_lobby(
     incoming_feedbacks.0.clear();
     *pending_local_intent = PvpPendingLocalIntent::default();
     *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
+    snapshot_sync.reset();
 }
 
 fn clear_pending_error_on_exit(mut input: ResMut<PvpLobbyInput>) {
@@ -1943,6 +1976,7 @@ fn pvp_apply_remote_team_system(
     mut commands: Commands,
     mut team_state: ResMut<PvpTeamState>,
     connection: Res<PvpConnection>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if team_state.battle_started || !connection.protocol_ready {
@@ -1966,6 +2000,7 @@ fn pvp_apply_remote_team_system(
         player_indices: local_indices,
         enemy_indices: remote_indices,
     });
+    snapshot_sync.reset();
     team_state.battle_started = true;
     next_state.set(GameState::Battle);
 }
@@ -2230,19 +2265,27 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
     }
 }
 
+#[derive(SystemParam)]
+struct PvpSendSnapshotResources<'w> {
+    last_remote_intent_seq: Res<'w, PvpLastRemoteIntentSeq>,
+    time: Res<'w, Time>,
+    snapshot_sync: ResMut<'w, PvpSnapshotSync>,
+    game_state: Res<'w, State<GameState>>,
+    battle_phase: Res<'w, State<BattlePhase>>,
+    turn_count: Res<'w, TurnCount>,
+    round_order: Res<'w, RoundOrder>,
+    player_team: Option<Res<'w, PlayerTeam>>,
+    enemy_team: Option<Res<'w, EnemyTeam>>,
+    hand: Res<'w, Hand>,
+    action_points: Res<'w, ActionPoints>,
+    battle_result: Res<'w, BattleResult>,
+    pending_discard: Option<Res<'w, PendingHandDiscard>>,
+}
+
 fn pvp_send_host_snapshot_system(
     connection: Res<PvpConnection>,
-    last_remote_intent_seq: Res<PvpLastRemoteIntentSeq>,
     battle_mode: Res<BattleControlMode>,
-    game_state: Res<State<GameState>>,
-    battle_phase: Res<State<BattlePhase>>,
-    turn_count: Res<TurnCount>,
-    round_order: Res<RoundOrder>,
-    player_team: Option<Res<PlayerTeam>>,
-    enemy_team: Option<Res<EnemyTeam>>,
-    hand: Res<Hand>,
-    action_points: Res<ActionPoints>,
-    battle_result: Res<BattleResult>,
+    mut runtime: PvpSendSnapshotResources,
     stats_query: Query<&Stats, With<InBattle>>,
     shield_query: Query<&Shield, With<InBattle>>,
     aura_query: Query<&ElementAura, With<InBattle>>,
@@ -2250,11 +2293,16 @@ fn pvp_send_host_snapshot_system(
 ) {
     if *battle_mode != BattleControlMode::PlayerVsRemote
         || connection.role != Some(PvpRole::Host)
-        || !matches!(*game_state.get(), GameState::Battle | GameState::Result)
+        || !matches!(
+            *runtime.game_state.get(),
+            GameState::Battle | GameState::Result
+        )
     {
         return;
     }
-    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+    let (Some(player_team), Some(enemy_team)) =
+        (runtime.player_team.as_ref(), runtime.enemy_team.as_ref())
+    else {
         return;
     };
     let player_hp = team_hp(&player_team.0, &stats_query);
@@ -2267,26 +2315,12 @@ fn pvp_send_host_snapshot_system(
     let enemy_statuses = team_statuses(&enemy_team.0, &status_query);
     let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
     let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
-    let mirrored_result =
-        (!battle_result.message.is_empty()).then(|| mirror_result_message(&battle_result.message));
-    console_log(
-        ConsoleLogCategory::PvpDetail,
-        format!(
-            "[snapshot-send] round={} phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} result={}",
-            turn_count.0,
-            *battle_phase.get(),
-            last_remote_intent_seq.0,
-            action_points.player,
-            action_points.enemy,
-            hand.player.len(),
-            hand.enemy.len(),
-            mirrored_result.as_deref().unwrap_or("<none>")
-        ),
-    );
-    connection.send(PvpMessage::BattleSnapshot(Box::new(PvpBattleSnapshot {
-        turn: turn_count.0,
-        phase: *battle_phase.get(),
-        first_side: round_order.first,
+    let mirrored_result = (!runtime.battle_result.message.is_empty())
+        .then(|| mirror_result_message(&runtime.battle_result.message));
+    let snapshot = PvpBattleSnapshot {
+        turn: runtime.turn_count.0,
+        phase: *runtime.battle_phase.get(),
+        first_side: runtime.round_order.first,
         player_active_index: enemy_team.0.active_index,
         enemy_active_index: player_team.0.active_index,
         player_hp: enemy_hp,
@@ -2297,15 +2331,52 @@ fn pvp_send_host_snapshot_system(
         enemy_auras: player_auras,
         player_statuses: enemy_statuses,
         enemy_statuses: player_statuses,
-        player_ap: action_points.enemy,
-        enemy_ap: action_points.player,
-        player_hand: hand.enemy.clone(),
-        enemy_hand: hand.player.clone(),
-        acknowledged_intent_seq: last_remote_intent_seq.0,
+        player_ap: runtime.action_points.enemy,
+        enemy_ap: runtime.action_points.player,
+        player_hand: runtime.hand.enemy.clone(),
+        enemy_hand: runtime.hand.player.clone(),
+        pending_discard: runtime.pending_discard.as_ref().map(|pending| {
+            PvpPendingDiscardSnapshot {
+                side: pending.side,
+                next_phase: pending.next_phase,
+            }
+        }),
+        acknowledged_intent_seq: runtime.last_remote_intent_seq.0,
         player_defeated: host_enemy_defeated,
         enemy_defeated: host_player_defeated,
         result_message: mirrored_result,
-    })));
+    };
+
+    let changed = runtime.snapshot_sync.last_sent.as_ref() != Some(&snapshot);
+    let interval_elapsed = matches!(*runtime.game_state.get(), GameState::Battle)
+        && runtime
+            .snapshot_sync
+            .interval
+            .tick(runtime.time.delta())
+            .just_finished();
+    if !changed && !interval_elapsed {
+        return;
+    }
+    if changed {
+        runtime.snapshot_sync.interval.reset();
+    }
+
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!(
+            "[snapshot-send] round={} phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} result={}",
+            snapshot.turn,
+            snapshot.phase,
+            snapshot.acknowledged_intent_seq,
+            snapshot.enemy_ap,
+            snapshot.player_ap,
+            snapshot.enemy_hand.len(),
+            snapshot.player_hand.len(),
+            snapshot.result_message.as_deref().unwrap_or("<none>")
+        ),
+    );
+    runtime.snapshot_sync.last_sent = Some(snapshot.clone());
+    connection.send(PvpMessage::BattleSnapshot(Box::new(snapshot)));
 }
 
 #[derive(SystemParam)]
@@ -2327,6 +2398,7 @@ struct PvpApplySnapshotResources<'w> {
 }
 
 fn pvp_apply_host_snapshot_system(
+    mut commands: Commands,
     mut runtime: PvpApplySnapshotResources,
     connection: Res<PvpConnection>,
     battle_mode: Res<BattleControlMode>,
@@ -2372,6 +2444,14 @@ fn pvp_apply_host_snapshot_system(
         player: snapshot.player_hand,
         enemy: snapshot.enemy_hand,
     };
+    if let Some(pending) = snapshot.pending_discard {
+        commands.insert_resource(PendingHandDiscard {
+            side: mirror_side(pending.side),
+            next_phase: host_phase_for_local_phase(pending.next_phase),
+        });
+    } else {
+        commands.remove_resource::<PendingHandDiscard>();
+    }
     runtime.action_points.player = snapshot.player_ap;
     runtime.action_points.enemy = snapshot.enemy_ap;
     if runtime
@@ -2463,6 +2543,7 @@ fn pvp_apply_remote_intents_system(
     mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
     connection: Res<PvpConnection>,
     battle_phase: Res<State<BattlePhase>>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut selected: ResMut<SelectedCards>,
@@ -2475,9 +2556,13 @@ fn pvp_apply_remote_intents_system(
     dbs: Res<BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
+    let remote_discard_phase = *battle_phase.get() == BattlePhase::Discard
+        && pending_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy);
     if *battle_mode != BattleControlMode::PlayerVsRemote
         || connection.role != Some(PvpRole::Host)
-        || *battle_phase.get() != BattlePhase::EnemyTurn
+        || (*battle_phase.get() != BattlePhase::EnemyTurn && !remote_discard_phase)
     {
         return;
     }
@@ -2490,6 +2575,16 @@ fn pvp_apply_remote_intents_system(
         ConsoleLogCategory::PvpDetail,
         format!("[intent-apply] seq={} intent={:?}", seq, intent),
     );
+    if remote_discard_phase && !matches!(intent, BattleIntent::DiscardCard { .. }) {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[intent-ignore] discard phase only accepts discard intents: {:?}",
+                intent
+            ),
+        );
+        return;
+    }
     match intent {
         BattleIntent::UseSkill { slot } => {
             let Some(enemy_team) = enemy_team.as_ref() else {

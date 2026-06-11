@@ -67,8 +67,10 @@ pub(crate) fn update_player_hand_ui_system(
         && pending_discard
             .as_ref()
             .is_some_and(|pending| pending.side == Side::Enemy)
-        && *battle_mode == BattleControlMode::PlayerVsAi
-    {
+        && matches!(
+            *battle_mode,
+            BattleControlMode::PlayerVsAi | BattleControlMode::PlayerVsRemote
+        ) {
         Side::Player
     } else {
         ui_control_side.0
@@ -144,6 +146,12 @@ pub(crate) fn update_player_hand_ui_system(
                     && *battle_mode == BattleControlMode::PlayerVsAi
                 {
                     "弃牌阶段：敌方手牌超过上限，AI 正在自动弃牌。".to_string()
+                } else if pending_discard
+                    .as_ref()
+                    .is_some_and(|pending| pending.side == Side::Enemy)
+                    && *battle_mode == BattleControlMode::PlayerVsRemote
+                {
+                    "弃牌阶段：对方手牌超过上限，等待对方弃牌。".to_string()
                 } else {
                     format!(
                         "弃牌阶段：{}手牌超过上限，请点击手牌或按 Z/X/C/V/B/N/A/S/D/G/H/J/K/L/U/I/O/P 弃到上限；每弃1张获得 AP。",

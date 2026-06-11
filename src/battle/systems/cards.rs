@@ -13,6 +13,7 @@ use crate::{
         StatusCategory,
     },
     game_state::BattlePhase,
+    pvp,
 };
 
 pub(crate) type CardCombatQuery<'w, 's> = Query<
@@ -353,11 +354,58 @@ fn hand_len(side: Side, hand: &Hand) -> usize {
     }
 }
 
-fn locally_controls_discard_side(side: Side, battle_mode: BattleControlMode) -> bool {
+enum DiscardPhaseControl {
+    Local,
+    Auto,
+    WaitRemote,
+}
+
+fn discard_phase_control(side: Side, battle_mode: BattleControlMode) -> DiscardPhaseControl {
     match battle_mode {
-        BattleControlMode::PlayerVsAi => side == Side::Player,
-        BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote => true,
+        BattleControlMode::PlayerVsAi => {
+            if side == Side::Player {
+                DiscardPhaseControl::Local
+            } else {
+                DiscardPhaseControl::Auto
+            }
+        }
+        BattleControlMode::DebugPlayerControlsBoth => DiscardPhaseControl::Local,
+        BattleControlMode::PlayerVsRemote => {
+            if side == Side::Player {
+                DiscardPhaseControl::Local
+            } else {
+                DiscardPhaseControl::WaitRemote
+            }
+        }
     }
+}
+
+fn send_pvp_discard_intent(
+    battle_mode: BattleControlMode,
+    connection: &mut Option<ResMut<pvp::PvpConnection>>,
+    pending_intent: &mut Option<ResMut<pvp::PvpPendingLocalIntent>>,
+    card_index: usize,
+) -> bool {
+    if battle_mode != BattleControlMode::PlayerVsRemote {
+        return false;
+    }
+    let Some(connection) = connection.as_mut() else {
+        return false;
+    };
+    if connection.role != Some(pvp::PvpRole::Client) {
+        return false;
+    }
+    if let Some(pending_intent) = pending_intent.as_mut() {
+        if pending_intent.0.is_some() {
+            return true;
+        }
+        pvp::send_local_intent(
+            connection,
+            pending_intent,
+            pvp::BattleIntent::DiscardCard { card_index },
+        );
+    }
+    true
 }
 
 pub(crate) fn hand_discard_phase_system(
@@ -371,6 +419,8 @@ pub(crate) fn hand_discard_phase_system(
     mut piles: ResMut<CardPiles>,
     mut action_points: ResMut<ActionPoints>,
     mut selected: ResMut<crate::battle::SelectedCards>,
+    mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
+    mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
@@ -380,41 +430,53 @@ pub(crate) fn hand_discard_phase_system(
     let discard_side = pending.side;
     let next_after_discard = pending.next_phase;
 
-    if locally_controls_discard_side(discard_side, *battle_mode) {
-        for (key, index) in card_hotkeys() {
-            if !keyboard.just_pressed(key) {
-                continue;
-            }
-            let _ = discard_card_from_hand(
-                discard_side,
-                index,
-                &mut hand,
-                &mut piles,
-                &rules,
-                &mut action_points,
-                &dbs,
-                &mut event_writer,
-            );
-            break;
-        }
-    } else {
-        while hand_len(discard_side, &hand) > rules.max_retained_hand {
-            let index = hand_len(discard_side, &hand) - 1;
-            if discard_card_from_hand(
-                discard_side,
-                index,
-                &mut hand,
-                &mut piles,
-                &rules,
-                &mut action_points,
-                &dbs,
-                &mut event_writer,
-            )
-            .is_none()
-            {
+    match discard_phase_control(discard_side, *battle_mode) {
+        DiscardPhaseControl::Local => {
+            for (key, index) in card_hotkeys() {
+                if !keyboard.just_pressed(key) {
+                    continue;
+                }
+                if send_pvp_discard_intent(
+                    *battle_mode,
+                    &mut pvp_connection,
+                    &mut pvp_pending_intent,
+                    index,
+                ) {
+                    break;
+                }
+                let _ = discard_card_from_hand(
+                    discard_side,
+                    index,
+                    &mut hand,
+                    &mut piles,
+                    &rules,
+                    &mut action_points,
+                    &dbs,
+                    &mut event_writer,
+                );
                 break;
             }
         }
+        DiscardPhaseControl::Auto => {
+            while hand_len(discard_side, &hand) > rules.max_retained_hand {
+                let index = hand_len(discard_side, &hand) - 1;
+                if discard_card_from_hand(
+                    discard_side,
+                    index,
+                    &mut hand,
+                    &mut piles,
+                    &rules,
+                    &mut action_points,
+                    &dbs,
+                    &mut event_writer,
+                )
+                .is_none()
+                {
+                    break;
+                }
+            }
+        }
+        DiscardPhaseControl::WaitRemote => {}
     }
 
     match discard_side {

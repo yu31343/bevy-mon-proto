@@ -225,7 +225,11 @@ pub fn sync_ui_control_side_system(
         BattlePhase::Discard => pending_discard
             .as_ref()
             .map(|pending| match *battle_mode {
-                BattleControlMode::PlayerVsAi if pending.side == Side::Enemy => Side::Player,
+                BattleControlMode::PlayerVsAi | BattleControlMode::PlayerVsRemote
+                    if pending.side == Side::Enemy =>
+                {
+                    Side::Player
+                }
                 _ => pending.side,
             })
             .unwrap_or(Side::Player),
