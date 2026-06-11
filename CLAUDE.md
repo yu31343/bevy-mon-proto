@@ -26,6 +26,11 @@ cargo test <test_name> -- --nocapture
 # Run the game from the repository root
 cargo run
 
+# Run the relay server for PVP relay mode
+python relay_server.py
+# or choose bind address/port explicitly
+python relay_server.py --host 0.0.0.0 --port 42043
+
 # Build a release executable
 cargo build --release
 ```
@@ -35,6 +40,8 @@ cargo build --release
 > Builds require at least one `.ttf`, `.otf`, or `.ttc` file under `assets/fonts/`. `build.rs` sorts that directory, embeds the first supported font it finds, and fails fast if none exist.
 >
 > Gameplay data is loaded from `assets/data/battle_data.ron` through a fixed relative path, so run the game and data-parsing tests from the repository root.
+
+Debug logging is controlled by environment variables. `BEVY_MON_LOG_DEBUG=1` enables broad battle/formula/status/card/PVP/AI detail; use narrower flags when needed: `BEVY_MON_LOG_BATTLE_DEBUG=1`, `BEVY_MON_LOG_CARDS=1`, `BEVY_MON_LOG_PVP=1`, `BEVY_MON_LOG_AI=1`, or `BEVY_MON_LOG_SPINE=1`.
 
 ## Repository workflow
 
@@ -57,7 +64,7 @@ GameState::Lobby
   -> CheckEnd
   -> DeathResolve or next RoundStart
   -> GameState::Result
-  -> GameState::Lobby
+  -> GameState::Map on restart
 ```
 
 Important state details:
@@ -66,7 +73,7 @@ Important state details:
 - `MapPlugin` owns `GameState::Map`: it spawns the simple overworld, character, monster sprites, and a return-to-lobby UI. Clicking a map monster records `MapBattleContext.enemy_monster_index`, switches `SelectionEntryMode` to `VsAi`, and enters team selection.
 - `TeamSelectionPlugin` has three modes via `SelectionEntryMode`: `VsAi` selects only the player team and auto-generates or uses the mapped enemy team, `Debug` is a two-step flow where the user selects both sides, and `Pvp` submits the local team then waits for the remote team.
 - `PvpPlugin` owns `GameState::PvpLobby`, performs connection setup, then switches into `TeamSelection` once the protocol/data handshake succeeds.
-- `restart_from_result_system` returns to `GameState::Lobby`, resets selection state, and restores `VsAi` mode when the player restarts.
+- `restart_from_result_system` returns to `GameState::Map`, resets selection state, and restores `VsAi` mode when the player restarts.
 
 ### Data-driven battle setup
 
@@ -100,7 +107,7 @@ Important runtime rules:
 
 ### PVP networking flow
 
-- `src/pvp/mod.rs` handles both direct TCP LAN play and relay-server play. Network IO runs on background threads that send `NetEvent`s back into Bevy resources; Bevy systems poll those events in `Update`.
+- `src/pvp/mod.rs` handles both direct TCP LAN play and relay-server play. Network IO runs on background threads that send `NetEvent`s back into Bevy resources; Bevy systems poll those events in `Update`. Relay mode depends on `relay_server.py`; keep its `RELAY_PROTOCOL_VERSION` in sync with `src/pvp/mod.rs`.
 - PVP sessions start in `GameState::PvpLobby`. A `Hello`/`HelloAck` handshake checks both `PROTOCOL_VERSION` and a stable hash of battle data, rules, formulas, cards, monsters, and deck order before allowing team selection.
 - When both players submit teams, `pvp_apply_remote_team_system` inserts `BattleControlMode::PlayerVsRemote`, `PvpTurnOrder`, and `TeamSelections`, then enters the normal battle state.
 - The host is authoritative during PVP battles: clients send `BattleIntent`s, the host applies remote intents during its enemy turn, broadcasts battle feedback, and sends snapshots that the client mirrors into local ECS state.
