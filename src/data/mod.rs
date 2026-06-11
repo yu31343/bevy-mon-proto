@@ -392,20 +392,24 @@ mod tests {
         assert_eq!(config.rules.cards_per_round, 2);
         assert_eq!(config.rules.max_ap, 12);
         assert_eq!(config.rules.max_retained_hand, 4);
-        assert_eq!(config.ai.difficulty, AiDifficulty::Normal);
-        assert_eq!(config.ai.search_depth, 1);
+        assert_eq!(config.ai.default_difficulty, AiDifficulty::Normal);
+        assert_eq!(config.ai.default_config().search_depth, 1);
+        assert_eq!(config.ai.presets.len(), 4);
         assert_eq!(config.deck.len(), 140);
         assert_eq!(config.cards.len(), 17);
     }
 
     #[test]
-    fn ai_difficulty_presets_scale_planning_and_visibility() {
-        let easy = EnemyAiConfig::preset(AiDifficulty::Easy);
-        let normal = EnemyAiConfig::preset(AiDifficulty::Normal);
-        let hard = EnemyAiConfig::preset(AiDifficulty::Hard);
-        let expert = EnemyAiConfig::preset(AiDifficulty::Expert);
+    fn ai_difficulty_presets_are_loaded_from_config() {
+        let raw = fs::read_to_string("assets/data/battle_data.ron")
+            .expect("battle_data.ron should be readable from repository root");
+        let config: BattleConfig = ron::from_str(&raw).expect("battle_data.ron should parse");
 
-        assert_eq!(easy.difficulty, AiDifficulty::Easy);
+        let easy = config.ai.config_for(AiDifficulty::Easy).unwrap();
+        let normal = config.ai.config_for(AiDifficulty::Normal).unwrap();
+        let hard = config.ai.config_for(AiDifficulty::Hard).unwrap();
+        let expert = config.ai.config_for(AiDifficulty::Expert).unwrap();
+
         assert_eq!(easy.player_info_visibility, AiPlayerInfoVisibility::None);
         assert_eq!(easy.search_depth, 1);
         assert_eq!(
@@ -652,7 +656,7 @@ impl Default for BattleRules {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Default)]
 pub enum AiDifficulty {
     Easy,
     #[default]
@@ -748,74 +752,6 @@ pub struct EnemyAiConfig {
     pub weights: EnemyAiWeights,
 }
 
-impl EnemyAiConfig {
-    pub fn preset(difficulty: AiDifficulty) -> Self {
-        match difficulty {
-            AiDifficulty::Easy => Self {
-                difficulty,
-                player_info_visibility: AiPlayerInfoVisibility::None,
-                search_depth: 1,
-                top_candidates: 2,
-                switch_score_threshold: 24.0,
-                random_score_jitter: 2.0,
-                weights: EnemyAiWeights {
-                    attack_value: 0.85,
-                    kill_bonus: 0.8,
-                    healing_value: 0.75,
-                    shield_value: 0.75,
-                    status_value: 0.65,
-                    reaction_value: 0.65,
-                    switch_value: 0.7,
-                    card_value: 0.75,
-                    discard_value: 0.85,
-                    player_threat: 0.0,
-                },
-            },
-            AiDifficulty::Normal => Self::default(),
-            AiDifficulty::Hard => Self {
-                difficulty,
-                player_info_visibility: AiPlayerInfoVisibility::Public,
-                search_depth: 2,
-                top_candidates: 6,
-                switch_score_threshold: 14.0,
-                random_score_jitter: 0.0,
-                weights: EnemyAiWeights {
-                    attack_value: 1.1,
-                    kill_bonus: 1.2,
-                    healing_value: 1.1,
-                    shield_value: 1.1,
-                    status_value: 1.15,
-                    reaction_value: 1.2,
-                    switch_value: 1.15,
-                    card_value: 1.1,
-                    discard_value: 1.1,
-                    player_threat: 1.2,
-                },
-            },
-            AiDifficulty::Expert => Self {
-                difficulty,
-                player_info_visibility: AiPlayerInfoVisibility::Full,
-                search_depth: 3,
-                top_candidates: 8,
-                switch_score_threshold: 10.0,
-                random_score_jitter: 0.0,
-                weights: EnemyAiWeights {
-                    attack_value: 1.2,
-                    kill_bonus: 1.45,
-                    healing_value: 1.2,
-                    shield_value: 1.2,
-                    status_value: 1.3,
-                    reaction_value: 1.35,
-                    switch_value: 1.25,
-                    card_value: 1.2,
-                    discard_value: 1.2,
-                    player_threat: 1.55,
-                },
-            },
-        }
-    }
-}
-
 impl Default for EnemyAiConfig {
     fn default() -> Self {
         Self {
@@ -830,6 +766,40 @@ impl Default for EnemyAiConfig {
     }
 }
 
+#[derive(Resource, Debug, Clone, Deserialize)]
+pub struct EnemyAiPresets {
+    #[serde(default)]
+    pub default_difficulty: AiDifficulty,
+    #[serde(default = "default_ai_presets")]
+    pub presets: Vec<EnemyAiConfig>,
+}
+
+impl EnemyAiPresets {
+    pub fn config_for(&self, difficulty: AiDifficulty) -> Option<EnemyAiConfig> {
+        self.presets
+            .iter()
+            .find(|config| config.difficulty == difficulty)
+            .cloned()
+    }
+
+    pub fn default_config(&self) -> EnemyAiConfig {
+        self.config_for(self.default_difficulty).unwrap_or_default()
+    }
+}
+
+impl Default for EnemyAiPresets {
+    fn default() -> Self {
+        Self {
+            default_difficulty: AiDifficulty::Normal,
+            presets: default_ai_presets(),
+        }
+    }
+}
+
+fn default_ai_presets() -> Vec<EnemyAiConfig> {
+    vec![EnemyAiConfig::default()]
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct BattleConfig {
     #[serde(default)]
@@ -839,7 +809,7 @@ struct BattleConfig {
     #[serde(default)]
     formulas: BattleFormulaConfig,
     #[serde(default)]
-    ai: EnemyAiConfig,
+    ai: EnemyAiPresets,
     #[serde(default)]
     statuses: Vec<StatusDef>,
     #[serde(default)]
@@ -925,6 +895,7 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            commands.insert_resource(EnemyAiPresets::default());
             commands.insert_resource(EnemyAiConfig::default());
             console_log(
                 ConsoleLogCategory::Data,
@@ -951,6 +922,7 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            commands.insert_resource(EnemyAiPresets::default());
             commands.insert_resource(EnemyAiConfig::default());
             console_log(
                 ConsoleLogCategory::Data,
@@ -976,6 +948,7 @@ fn load_battle_data(mut commands: Commands) {
         commands.insert_resource(BattleRules::default());
         commands.insert_resource(BattleFormulaRules::default());
         commands.insert_resource(BattleRulesBundle::default());
+        commands.insert_resource(EnemyAiPresets::default());
         commands.insert_resource(EnemyAiConfig::default());
         console_log(
             ConsoleLogCategory::Data,
@@ -989,7 +962,8 @@ fn load_battle_data(mut commands: Commands) {
 
     let rules = BattleRules::from_config(&config.rules);
     let formulas = BattleFormulaRules::from_config(&config.formulas);
-    let ai_config = config.ai.clone();
+    let ai_presets = config.ai.clone();
+    let ai_config = ai_presets.default_config();
     let rules_bundle = BattleRulesBundle {
         battle: rules.clone(),
         formulas,
@@ -1071,8 +1045,99 @@ fn load_battle_data(mut commands: Commands) {
     commands.insert_resource(rules);
     commands.insert_resource(formulas);
     commands.insert_resource(rules_bundle);
+    commands.insert_resource(ai_presets);
     commands.insert_resource(ai_config);
     commands.insert_resource(BattleDataStatus::default());
+}
+
+fn validate_ai_presets(ai: &EnemyAiPresets) -> Result<(), String> {
+    if ai.presets.is_empty() {
+        return Err("ai.presets 不能为空".to_string());
+    }
+
+    let mut difficulties = HashSet::new();
+    for config in &ai.presets {
+        if !difficulties.insert(config.difficulty) {
+            return Err(format!("ai.presets 中重复定义了 {:?}", config.difficulty));
+        }
+        validate_ai_config(config, "ai.presets")?;
+    }
+
+    if !difficulties.contains(&ai.default_difficulty) {
+        return Err(format!(
+            "ai.default_difficulty {:?} 未在 ai.presets 中定义",
+            ai.default_difficulty
+        ));
+    }
+
+    for difficulty in [
+        AiDifficulty::Easy,
+        AiDifficulty::Normal,
+        AiDifficulty::Hard,
+        AiDifficulty::Expert,
+    ] {
+        if !difficulties.contains(&difficulty) {
+            return Err(format!("ai.presets 缺少 {:?} 预设", difficulty));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_ai_config(config: &EnemyAiConfig, field_prefix: &str) -> Result<(), String> {
+    match config.difficulty {
+        AiDifficulty::Easy | AiDifficulty::Normal | AiDifficulty::Hard | AiDifficulty::Expert => {}
+    }
+    match config.player_info_visibility {
+        AiPlayerInfoVisibility::None
+        | AiPlayerInfoVisibility::Public
+        | AiPlayerInfoVisibility::Full => {}
+    }
+    if config.search_depth == 0 || config.search_depth > 3 {
+        return Err(format!(
+            "{field_prefix}.{:?}.search_depth 必须在 1..=3 之间，当前为 {}",
+            config.difficulty, config.search_depth
+        ));
+    }
+    if config.top_candidates == 0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.top_candidates 必须 >= 1",
+            config.difficulty
+        ));
+    }
+    if !config.switch_score_threshold.is_finite() || config.switch_score_threshold < 0.0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.switch_score_threshold 必须是 >= 0.0 的有限数",
+            config.difficulty
+        ));
+    }
+    if !config.random_score_jitter.is_finite() || config.random_score_jitter < 0.0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.random_score_jitter 必须是 >= 0.0 的有限数",
+            config.difficulty
+        ));
+    }
+    for (name, value) in [
+        ("attack_value", config.weights.attack_value),
+        ("kill_bonus", config.weights.kill_bonus),
+        ("healing_value", config.weights.healing_value),
+        ("shield_value", config.weights.shield_value),
+        ("status_value", config.weights.status_value),
+        ("reaction_value", config.weights.reaction_value),
+        ("switch_value", config.weights.switch_value),
+        ("card_value", config.weights.card_value),
+        ("discard_value", config.weights.discard_value),
+        ("player_threat", config.weights.player_threat),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!(
+                "{field_prefix}.{:?}.weights.{name} 必须是 >= 0.0 的有限数",
+                config.difficulty
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
@@ -1125,45 +1190,7 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
         return Err("formulas.damage.min_damage 必须 >= 0".to_string());
     }
 
-    match config.ai.difficulty {
-        AiDifficulty::Easy | AiDifficulty::Normal | AiDifficulty::Hard | AiDifficulty::Expert => {}
-    }
-    match config.ai.player_info_visibility {
-        AiPlayerInfoVisibility::None
-        | AiPlayerInfoVisibility::Public
-        | AiPlayerInfoVisibility::Full => {}
-    }
-    if config.ai.search_depth == 0 || config.ai.search_depth > 3 {
-        return Err(format!(
-            "ai.search_depth 必须在 1..=3 之间，当前为 {}",
-            config.ai.search_depth
-        ));
-    }
-    if config.ai.top_candidates == 0 {
-        return Err("ai.top_candidates 必须 >= 1".to_string());
-    }
-    if !config.ai.switch_score_threshold.is_finite() || config.ai.switch_score_threshold < 0.0 {
-        return Err("ai.switch_score_threshold 必须是 >= 0.0 的有限数".to_string());
-    }
-    if !config.ai.random_score_jitter.is_finite() || config.ai.random_score_jitter < 0.0 {
-        return Err("ai.random_score_jitter 必须是 >= 0.0 的有限数".to_string());
-    }
-    for (name, value) in [
-        ("attack_value", config.ai.weights.attack_value),
-        ("kill_bonus", config.ai.weights.kill_bonus),
-        ("healing_value", config.ai.weights.healing_value),
-        ("shield_value", config.ai.weights.shield_value),
-        ("status_value", config.ai.weights.status_value),
-        ("reaction_value", config.ai.weights.reaction_value),
-        ("switch_value", config.ai.weights.switch_value),
-        ("card_value", config.ai.weights.card_value),
-        ("discard_value", config.ai.weights.discard_value),
-        ("player_threat", config.ai.weights.player_threat),
-    ] {
-        if !value.is_finite() || value < 0.0 {
-            return Err(format!("ai.weights.{name} 必须是 >= 0.0 的有限数"));
-        }
-    }
+    validate_ai_presets(&config.ai)?;
 
     if config.monsters.len() < rules.max_team_size {
         return Err(format!(

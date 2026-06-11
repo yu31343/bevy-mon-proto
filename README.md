@@ -48,7 +48,7 @@ registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
 - **数据驱动战斗内容**：技能、精灵、卡牌、元素克制、状态、反应、战斗规则等统一从 `assets/data/battle_data.ron` 加载。
 - **双状态机战斗流程**：顶层 `GameState` 管理大厅、地图、队伍选择、战斗、结果；嵌套 `BattlePhase` 管理战斗初始化、回合开始、玩家回合、敌方回合、弃牌、结算、死亡处理。
 - **本地与 PVP 共用战斗系统**：Vs AI、调试双方控制、PVP 模式都复用同一套战斗资源和 UI。
-- **可配置人机 AI**：Vs AI 支持 Easy / Normal / Hard / Expert 难度预设；AI 会按评分和轻量规划选择技能、卡牌、弃牌、换人，并评估状态、元素反应、玩家威胁和重复增益的边际收益。
+- **可配置人机 AI**：Vs AI 支持 Easy / Normal / Hard / Expert 难度预设，预设由 `assets/data/battle_data.ron` 读取；AI 会按评分和轻量规划选择技能、卡牌、弃牌、换人，并评估状态、元素反应、玩家威胁和重复增益的边际收益。
 - **卡牌与队伍策略**：每场战斗使用共享抽牌堆 / 弃牌堆，卡牌可影响 AP、护盾、治疗、元素附着、反应、抽牌和战术整理。
 - **结构化调试能力**：控制台日志、`StructuredBattleLog`、`ReplayEventLog`、`ActionTrace` 共同用于战斗复盘和问题定位。
 - **Spine 动画表现**：战斗中可加载 Spine 精灵动画和 VFX，并根据战斗消息驱动表现层反馈。
@@ -151,7 +151,7 @@ cargo build --release
 4. 玩家 / 敌方依次行动：使用技能、使用卡牌、弃牌换 AP、换人或结束回合。
 5. 若手牌超过保留上限，进入强制弃牌阶段。
 6. 检查倒下、自动或手动换人、胜负结果。
-7. 进入结果页，可返回大厅并重置选择状态。
+7. 进入结果页，按 R 返回地图并重置选择状态。
 
 ## 5. PVP
 
@@ -171,18 +171,18 @@ Vs AI 模式下，敌方 AI 使用“评分启发式 + 轻量行动规划”的�
 
 - 会在技能、卡牌、主动换人、弃牌换 AP、结束回合之间选择当前最优行动。
 - 会评估攻击、击杀线、治疗、护盾、状态、元素反应、卡牌联动和换人收益。
-- 会根据难度预设调整搜索深度、Top-N 候选数、权重和玩家信息可见度。
-- Hard / Expert 会把玩家 AP、公开技能、可见手牌投影、进攻威胁和防守潜力纳入决策。
+- 会根据难度预设调整搜索深度、Top-N 候选数、权重、换人阈值和玩家信息可见度。
+- Hard / Expert 会把玩家 AP、公开技能、进攻威胁和防守潜力纳入决策；其中 Expert 当前使用完整信息可见度，还会把玩家手牌投影纳入威胁评估。
 - 对不可重复叠加或重复收益明显递减的效果会降权，例如重复诅咒、重复自属性增益和重复闪避。
 
-当前 AI 难度预设：
+当前 AI 难度预设由 `assets/data/battle_data.ron` 中的 `ai.default_difficulty` 和 `ai.presets` 提供：
 
-| 难度 | 特点 |
-|---|---|
-| Easy | 较浅规划，不读取玩家威胁信息，倾向保守简单行动。 |
-| Normal | 标准体验，使用公开信息和基础规划。 |
-| Hard | 更深规划，增强卡牌、反应、换人和玩家威胁评分。 |
-| Expert | 最深候选规划，可使用完整玩家信息投影，决策更激进也更会防守。 |
+| 难度 | 信息可见度 | 搜索深度 | 候选数 | 换人阈值 | 特点 |
+|---|---|---:|---:|---:|---|
+| Easy | None | 1 | 2 | 24.0 | 不读取玩家威胁信息，权重整体偏低，换人更保守。 |
+| Normal | Public | 1 | 4 | 18.0 | 标准体验，使用公开信息和基础规划。 |
+| Hard | Public | 2 | 6 | 14.0 | 更深规划，增强卡牌、反应、换人和玩家威胁评分。 |
+| Expert | Full | 3 | 8 | 10.0 | 可使用完整玩家信息投影，决策更激进也更会防守。 |
 
 ---
 
@@ -220,9 +220,9 @@ assets/data/battle_data.ron
 - 精灵原型
 - 卡牌定义
 - 初始牌组顺序
-- AI 默认配置和评分权重
+- AI 默认难度、难度预设和评分权重
 
-启动时会插入 `BattleDbs`、`MonsterPool`、`CardDeck`、`BattleRules`、`BattleFormulaRules`、`BattleRulesBundle`、`EnemyAiConfig`、`BattleDataStatus` 等资源。
+启动时会插入 `BattleDbs`、`MonsterPool`、`CardDeck`、`BattleRules`、`BattleFormulaRules`、`BattleRulesBundle`、`EnemyAiPresets`、`EnemyAiConfig`、`BattleDataStatus` 等资源。
 
 如果读取、解析或校验失败，系统会插入 fallback 资源，并把失败原因写入 `BattleDataStatus.error`。下游系统应以该资源作为权威失败信号。
 
@@ -232,9 +232,9 @@ assets/data/battle_data.ron
 
 AI 相关配置位于数据层：
 
-- `EnemyAiConfig`：难度、搜索深度、候选数、换人阈值、玩家信息可见度和权重。
+- `EnemyAiPresets`：从 `assets/data/battle_data.ron` 读取默认难度和 Easy / Normal / Hard / Expert 预设。
+- `EnemyAiConfig`：单个难度预设的完整配置，包含难度、搜索深度、候选数、换人阈值、玩家信息可见度和权重。
 - `EnemyAiWeights`：攻击、击杀、治疗、护盾、状态、反应、换人、卡牌、弃牌、玩家威胁等评分权重。
-- `EnemyAiConfig::preset(...)`：为队伍选择界面的 Easy / Normal / Hard / Expert 提供预设配置。
 
 真实战斗结算仍由现有技能、卡牌和事件系统负责；AI 只做轻量预测与行动选择，避免复制一套独立战斗规则。
 
@@ -369,7 +369,7 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 - 大厅、地图、队伍选择、战斗、结果返回的基本闭环。
 - Vs AI、Debug 双方控制、PVP 三类战斗入口。
 - Vs AI 难度预设、AI 轻量规划、状态 / 反应 / 卡牌 / 换人 / 玩家威胁评分。
-- 数据驱动技能、状态、反应、精灵、卡牌、AI 配置和规则。
+- 数据驱动技能、状态、反应、精灵、卡牌、AI 难度预设和规则。
 - 共享抽牌堆 / 弃牌堆与 per-battle 洗牌种子。
 - AP、手牌上限、强制弃牌、战术整理等卡牌资源系统。
 - 元素附着、元素克制、元素反应、风扩散、状态 tick、属性等级修正。

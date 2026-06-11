@@ -26,7 +26,10 @@ impl Plugin for TeamSelectionPlugin {
                         .and(resource_exists::<crate::ui::battle::theme::UiTheme>),
                 ),
             )
-            .add_systems(OnEnter(GameState::TeamSelection), clear_selection_state)
+            .add_systems(
+                OnEnter(GameState::TeamSelection),
+                (clear_selection_state, reset_selected_ai_difficulty_system),
+            )
             .add_systems(OnExit(GameState::TeamSelection), cleanup_selection_ui)
             .add_systems(
                 Update,

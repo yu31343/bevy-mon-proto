@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::data::{AiDifficulty, EnemyAiConfig};
+use crate::data::{AiDifficulty, EnemyAiConfig, EnemyAiPresets};
 
 /// Root marker for the team selection UI.
 #[derive(Component)]
@@ -94,8 +94,10 @@ impl Default for SelectedAiDifficulty {
 }
 
 impl SelectedAiDifficulty {
-    pub fn config(self) -> EnemyAiConfig {
-        EnemyAiConfig::preset(self.difficulty)
+    pub fn config(self, presets: &EnemyAiPresets) -> EnemyAiConfig {
+        presets
+            .config_for(self.difficulty)
+            .unwrap_or_else(|| presets.default_config())
     }
 }
 

@@ -4,7 +4,7 @@ use rand::seq::SliceRandom;
 use crate::{
     battle::BattleControlMode,
     console_log::{ConsoleLogCategory, log as console_log},
-    data::{BattleRules, MapBattleContext, MonsterPool, TeamSelections},
+    data::{BattleRules, EnemyAiPresets, MapBattleContext, MonsterPool, TeamSelections},
     game_state::GameState,
     pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
     team_selection::{
@@ -89,6 +89,7 @@ pub fn button_confirm_selection_system(
     monster_pool: Res<MonsterPool>,
     rules: Res<BattleRules>,
     selected_ai: Res<SelectedAiDifficulty>,
+    ai_presets: Res<EnemyAiPresets>,
     mut map_battle_context: ResMut<MapBattleContext>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
@@ -150,7 +151,7 @@ pub fn button_confirm_selection_system(
                 );
                 console_log(ConsoleLogCategory::Selection, "================");
 
-                commands.insert_resource(selected_ai.config());
+                commands.insert_resource(selected_ai.config(&ai_presets));
                 commands.insert_resource(BattleControlMode::PlayerVsAi);
                 commands.insert_resource(TeamSelections {
                     player_indices: selection_state.selected_indices.clone(),
@@ -431,6 +432,7 @@ pub fn update_selection_ui_system(
 pub fn update_ai_difficulty_ui_system(
     entry_mode: Res<SelectionEntryMode>,
     selected_ai: Res<SelectedAiDifficulty>,
+    ai_presets: Res<EnemyAiPresets>,
     theme: Res<UiTheme>,
     mut root_query: Query<&mut Visibility, With<AiDifficultySelectorRoot>>,
     mut button_query: Query<
@@ -486,7 +488,7 @@ pub fn update_ai_difficulty_ui_system(
     }
 
     for mut text in &mut summary_query {
-        let config = selected_ai.config();
+        let config = selected_ai.config(&ai_presets);
         **text = format!(
             "当前：{} — {} 深度={}；候选={}；信息={:?}",
             ai_difficulty_label(selected_ai.difficulty),
@@ -508,4 +510,11 @@ fn generate_ai_selection(pool_size: usize, count: usize) -> Vec<usize> {
 /// System to clear selection state when entering TeamSelection state.
 pub fn clear_selection_state(mut selection_state: ResMut<SelectionState>) {
     selection_state.reset();
+}
+
+pub fn reset_selected_ai_difficulty_system(
+    mut selected_ai: ResMut<SelectedAiDifficulty>,
+    ai_presets: Res<EnemyAiPresets>,
+) {
+    selected_ai.difficulty = ai_presets.default_difficulty;
 }

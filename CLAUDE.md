@@ -77,11 +77,18 @@ Important state details:
 
 ### Data-driven battle setup
 
-- `src/data/mod.rs` loads all battle content from `assets/data/battle_data.ron` at startup: battle rules, formula rules, element matrix, statuses, reactions, skills, monster prototypes, cards, and deck order.
-- Startup inserts `BattleDbs`, `MonsterPool`, `CardDeck`, `BattleRules`, `BattleFormulaRules`, `BattleRulesBundle`, and `BattleDataStatus`.
+- `src/data/mod.rs` loads all battle content from `assets/data/battle_data.ron` at startup: battle rules, formula rules, element matrix, statuses, reactions, skills, monster prototypes, cards, deck order, and default AI config/weights.
+- Startup inserts `BattleDbs`, `MonsterPool`, `CardDeck`, `BattleRules`, `BattleFormulaRules`, `BattleRulesBundle`, `EnemyAiConfig`, and `BattleDataStatus`.
 - `BattleDbs` intentionally bundles skills, cards, elements, statuses, and reactions into one resource to stay under Bevy's system-parameter limit.
 - If loading, parsing, or validation fails, startup still inserts fallback resources and records the failure in `BattleDataStatus.error`; downstream systems should treat that resource as the authoritative load-failure signal.
 - `TeamSelectionPlugin` writes `TeamSelections`, and `init_battle_system` consumes that resource to despawn old `InBattle` entities, reset per-battle state, validate indices, initialize shuffled `CardPiles`, and spawn both teams.
+
+### Enemy AI tuning and tests
+
+- Vs AI difficulty is selected through `SelectedAiDifficulty`; confirming a Vs AI team inserts `EnemyAiConfig::preset(...)` before entering battle.
+- The runtime AI entry point is `src/battle/systems/enemy_turn.rs`: it reads the ECS battle state, builds AI context, applies pacing/logging, and executes the chosen real battle action.
+- Pure scoring and lightweight planning live in `src/battle/ai/evaluation.rs`; most AI behavior tests are colocated there, so prefer changing weights/scoring with focused unit tests instead of duplicating combat resolution.
+- `EnemyAiConfig` and `EnemyAiWeights` control search depth, top candidates, switch threshold, player-information visibility, and valuation of attacks, cards, statuses, reactions, threats, and defensive actions.
 
 ### Battle flow and authority boundaries
 
