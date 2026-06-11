@@ -364,9 +364,6 @@ fn reaction_matches(
     if reaction.trigger_element != incoming_element {
         return false;
     }
-    if reaction.required_elements.len() > 2 {
-        return false;
-    }
     if !reaction.required_elements.is_empty()
         && !reaction.required_elements.contains(&incoming_element)
     {
@@ -386,15 +383,30 @@ fn reaction_matches(
         .all(|status_id| has_status(current_statuses, status_id))
 }
 
+fn reaction_priority(reaction: &ReactionDef) -> (usize, usize) {
+    (
+        reaction.required_statuses.len(),
+        reaction.required_elements.len(),
+    )
+}
+
 fn detect_element_reaction<'a>(
     reaction_db: &'a ReactionDb,
     current_auras: &[ElementType],
     current_statuses: &StatusBoard,
     incoming_element: ElementType,
 ) -> Option<&'a ReactionDef> {
-    reaction_db.reactions.iter().find(|reaction| {
+    let mut best = None;
+    for reaction in reaction_db.reactions.iter().filter(|reaction| {
         reaction_matches(reaction, current_auras, current_statuses, incoming_element)
-    })
+    }) {
+        if best.is_none_or(|best_reaction| {
+            reaction_priority(reaction) > reaction_priority(best_reaction)
+        }) {
+            best = Some(reaction);
+        }
+    }
+    best
 }
 
 fn clear_status_by_id(
@@ -1070,6 +1082,8 @@ fn resolve_element_attachment_only(
     let mut reaction_required_statuses: Vec<&str> = Vec::new();
     let mut reaction_statuses_to_apply: Vec<&str> = Vec::new();
     let mut reaction_statuses_to_clear: Vec<&str> = Vec::new();
+    let mut reaction_clear_elements: Vec<ElementType> = Vec::new();
+    let mut reaction_preserve_current_auras = false;
 
     if let Some(round) = round {
         if let Some(writer) = formula_writer.as_deref_mut() {
@@ -1110,7 +1124,22 @@ fn resolve_element_attachment_only(
                 reaction.apply_statuses.iter().map(String::as_str).collect();
             reaction_statuses_to_clear =
                 reaction.clear_statuses.iter().map(String::as_str).collect();
-            outcome.aura_to = reaction.aura_results.clone();
+            reaction_clear_elements = reaction.clear_elements.clone();
+            reaction_preserve_current_auras = reaction.preserve_current_auras;
+            if reaction.preserve_current_auras {
+                outcome.aura_to = from
+                    .iter()
+                    .copied()
+                    .filter(|element| !reaction.clear_elements.contains(element))
+                    .collect();
+                for element in &reaction.aura_results {
+                    if !outcome.aura_to.contains(element) {
+                        outcome.aura_to.push(*element);
+                    }
+                }
+            } else {
+                outcome.aura_to = reaction.aura_results.clone();
+            }
         } else if !outcome.aura_to.contains(&incoming_element) {
             if outcome.aura_to.len() >= 2 {
                 outcome.evicted_aura = outcome.aura_to.first().copied();
@@ -1156,7 +1185,7 @@ fn resolve_element_attachment_only(
                 target_side,
                 format!("{}_resolved", action_label),
                 format!(
-                    "incoming_element={:?} reaction_id={:?} reaction_name={:?} required_elements={:?} required_statuses={:?} statuses_to_clear={:?} statuses_to_apply={:?} evicted_aura={:?} aura_before={:?} aura_after_candidate={:?}",
+                    "incoming_element={:?} reaction_id={:?} reaction_name={:?} required_elements={:?} required_statuses={:?} statuses_to_clear={:?} statuses_to_apply={:?} clear_elements={:?} preserve_current_auras={} evicted_aura={:?} aura_before={:?} aura_after_candidate={:?}",
                     incoming_element,
                     outcome.reaction_id,
                     outcome.reaction_name,
@@ -1164,6 +1193,8 @@ fn resolve_element_attachment_only(
                     reaction_required_statuses,
                     reaction_statuses_to_clear,
                     reaction_statuses_to_apply,
+                    reaction_clear_elements,
+                    reaction_preserve_current_auras,
                     outcome.evicted_aura,
                     from,
                     outcome.aura_to
@@ -3470,6 +3501,8 @@ mod tests {
                 heal_attacker: 0,
                 apply_statuses: vec![],
                 clear_statuses: vec![],
+                clear_elements: vec![],
+                preserve_current_auras: false,
                 aura_results: vec![],
             }],
         }
@@ -3488,6 +3521,225 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    fn status_board_with(status_id: &str) -> StatusBoard {
+        StatusBoard {
+            entries: vec![StatusInstance {
+                id: status_id.to_string(),
+                name: status_id.to_string(),
+                category: StatusCategory::Debuff,
+                remaining_turns: 2,
+                applied_round: 1,
+                source_side: Some(Side::Player),
+                tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                stage_modifiers: vec![],
+                fixed_damage_on_tick: 0,
+                heal_on_tick: 0,
+                heal_taken_multiplier: None,
+                evade_charges: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn reaction_matches_two_existing_auras_plus_incoming_element() {
+        let reaction = ReactionDef {
+            id: "steam_thunder_explosion".to_string(),
+            name: "蒸汽雷爆".to_string(),
+            required_elements: vec![ElementType::Water, ElementType::Thunder, ElementType::Fire],
+            required_statuses: vec![],
+            trigger_element: ElementType::Fire,
+            fixed_damage: 24,
+            heal_attacker: 0,
+            apply_statuses: vec!["armor_break".to_string()],
+            clear_statuses: vec!["electrocuted".to_string()],
+            clear_elements: vec![ElementType::Water, ElementType::Thunder],
+            preserve_current_auras: true,
+            aura_results: vec![],
+        };
+
+        assert!(reaction_matches(
+            &reaction,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        ));
+        assert!(!reaction_matches(
+            &reaction,
+            &[ElementType::Water],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        ));
+        assert!(!reaction_matches(
+            &reaction,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Grass,
+        ));
+    }
+
+    #[test]
+    fn detect_element_reaction_prefers_three_element_match_over_earlier_normal_reaction() {
+        let reaction_db = ReactionDb {
+            reactions: vec![
+                ReactionDef {
+                    id: "vaporize_reverse".to_string(),
+                    name: "蒸发".to_string(),
+                    required_elements: vec![ElementType::Water, ElementType::Fire],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 15,
+                    heal_attacker: 0,
+                    apply_statuses: vec![],
+                    clear_statuses: vec![],
+                    clear_elements: vec![],
+                    preserve_current_auras: false,
+                    aura_results: vec![],
+                },
+                ReactionDef {
+                    id: "steam_thunder_explosion".to_string(),
+                    name: "蒸汽雷爆".to_string(),
+                    required_elements: vec![
+                        ElementType::Water,
+                        ElementType::Thunder,
+                        ElementType::Fire,
+                    ],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 24,
+                    heal_attacker: 0,
+                    apply_statuses: vec!["armor_break".to_string()],
+                    clear_statuses: vec!["electrocuted".to_string()],
+                    clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                    preserve_current_auras: true,
+                    aura_results: vec![],
+                },
+            ],
+        };
+
+        let reaction = detect_element_reaction(
+            &reaction_db,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        );
+
+        assert_eq!(
+            reaction.map(|reaction| reaction.id.as_str()),
+            Some("steam_thunder_explosion")
+        );
+    }
+
+    #[test]
+    fn detect_element_reaction_prefers_status_fallback_over_earlier_normal_reaction() {
+        let reaction_db = ReactionDb {
+            reactions: vec![
+                ReactionDef {
+                    id: "vaporize_reverse".to_string(),
+                    name: "蒸发".to_string(),
+                    required_elements: vec![ElementType::Water, ElementType::Fire],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 15,
+                    heal_attacker: 0,
+                    apply_statuses: vec![],
+                    clear_statuses: vec![],
+                    clear_elements: vec![],
+                    preserve_current_auras: false,
+                    aura_results: vec![],
+                },
+                ReactionDef {
+                    id: "steam_thunder_explosion_from_electrocuted".to_string(),
+                    name: "蒸汽雷爆".to_string(),
+                    required_elements: vec![ElementType::Fire],
+                    required_statuses: vec!["electrocuted".to_string()],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 24,
+                    heal_attacker: 0,
+                    apply_statuses: vec!["armor_break".to_string()],
+                    clear_statuses: vec!["electrocuted".to_string()],
+                    clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                    preserve_current_auras: true,
+                    aura_results: vec![],
+                },
+            ],
+        };
+        let statuses = status_board_with("electrocuted");
+
+        let reaction = detect_element_reaction(
+            &reaction_db,
+            &[ElementType::Water],
+            &statuses,
+            ElementType::Fire,
+        );
+
+        assert_eq!(
+            reaction.map(|reaction| reaction.id.as_str()),
+            Some("steam_thunder_explosion_from_electrocuted")
+        );
+    }
+
+    #[test]
+    fn reaction_preserve_current_auras_clears_only_configured_elements() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(30);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut target_stats = base_stats(30);
+        let mut target_shield = Shield(0);
+        let mut target_aura = ElementAura {
+            slots: [Some(ElementType::Water), Some(ElementType::Grass)],
+        };
+        let mut target_statuses = status_board_with("electrocuted");
+        let mut pending_boosts = PendingBoosts::default();
+        let status_db = empty_status_db();
+        let reaction_db = ReactionDb {
+            reactions: vec![ReactionDef {
+                id: "steam_thunder_explosion_from_electrocuted".to_string(),
+                name: "蒸汽雷爆".to_string(),
+                required_elements: vec![ElementType::Fire],
+                required_statuses: vec!["electrocuted".to_string()],
+                trigger_element: ElementType::Fire,
+                fixed_damage: 0,
+                heal_attacker: 0,
+                apply_statuses: vec![],
+                clear_statuses: vec![],
+                clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                preserve_current_auras: true,
+                aura_results: vec![],
+            }],
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            resolve_element_attachment_only(
+                ElementType::Fire,
+                Side::Player,
+                Side::Enemy,
+                &mut attacker_stats,
+                &mut attacker_statuses,
+                &mut target_stats,
+                &mut target_shield,
+                &mut target_aura,
+                &mut target_statuses,
+                &mut pending_boosts,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                None,
+                None,
+                "test_attachment",
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(target_aura.elements(), vec![ElementType::Grass]);
     }
 
     #[test]

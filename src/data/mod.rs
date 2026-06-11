@@ -210,6 +210,10 @@ pub struct ReactionDef {
     #[serde(default)]
     pub clear_statuses: Vec<String>,
     #[serde(default)]
+    pub clear_elements: Vec<ElementType>,
+    #[serde(default)]
+    pub preserve_current_auras: bool,
+    #[serde(default)]
     pub aura_results: Vec<ElementType>,
 }
 
@@ -1378,9 +1382,9 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     }
 
     for reaction in &config.reactions {
-        if reaction.required_elements.len() > 2 {
+        if reaction.required_elements.len() > 3 {
             return Err(format!(
-                "反应 {} 的 required_elements 不能超过 2 个",
+                "反应 {} 的 required_elements 不能超过 3 个",
                 reaction.id
             ));
         }

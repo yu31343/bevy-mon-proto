@@ -2,7 +2,8 @@ use crate::{
     battle::Shield,
     data::{
         AttributeStageModifier, AttributeType, BattleDbs, CardDef, CardEffect, CardId,
-        EffectTarget, ElementType, EnemyAiWeights, SkillCategory, SkillDef, SkillEffect, SkillId,
+        EffectTarget, ElementType, EnemyAiWeights, ReactionDb, SkillCategory, SkillDef,
+        SkillEffect, SkillId,
     },
 };
 
@@ -1190,7 +1191,6 @@ fn reaction_matches_context(
     incoming_element: ElementType,
 ) -> bool {
     reaction.trigger_element == incoming_element
-        && reaction.required_elements.len() <= 2
         && (reaction.required_elements.is_empty()
             || reaction.required_elements.contains(&incoming_element))
         && reaction
@@ -1202,6 +1202,37 @@ fn reaction_matches_context(
             .required_statuses
             .iter()
             .all(|status_id| current_status_ids.iter().any(|id| id == status_id))
+}
+
+fn reaction_priority(reaction: &crate::data::ReactionDef) -> (usize, usize) {
+    (
+        reaction.required_statuses.len(),
+        reaction.required_elements.len(),
+    )
+}
+
+fn choose_reaction<'a>(
+    reactions: &'a ReactionDb,
+    current_auras: &[ElementType],
+    current_status_ids: &[String],
+    incoming_element: ElementType,
+) -> Option<&'a crate::data::ReactionDef> {
+    let mut best = None;
+    for reaction in reactions.reactions.iter().filter(|reaction| {
+        reaction_matches_context(
+            reaction,
+            current_auras,
+            current_status_ids,
+            incoming_element,
+        )
+    }) {
+        if best.is_none_or(|best_reaction| {
+            reaction_priority(reaction) > reaction_priority(best_reaction)
+        }) {
+            best = Some(reaction);
+        }
+    }
+    best
 }
 
 fn reaction_value(
@@ -1245,14 +1276,12 @@ fn estimate_reaction_value(
         .flatten()
         .copied()
         .collect::<Vec<_>>();
-    let Some(reaction) = dbs.reactions.reactions.iter().find(|reaction| {
-        reaction_matches_context(
-            reaction,
-            &current_auras,
-            &ctx.target_status_ids,
-            incoming_element,
-        )
-    }) else {
+    let Some(reaction) = choose_reaction(
+        &dbs.reactions,
+        &current_auras,
+        &ctx.target_status_ids,
+        incoming_element,
+    ) else {
         return 0.0;
     };
 
@@ -2960,6 +2989,8 @@ mod tests {
                 heal_attacker: 0,
                 apply_statuses: Vec::new(),
                 clear_statuses: Vec::new(),
+                clear_elements: Vec::new(),
+                preserve_current_auras: false,
                 aura_results: Vec::new(),
             }],
         };
@@ -3002,6 +3033,8 @@ mod tests {
                 heal_attacker: 0,
                 apply_statuses: Vec::new(),
                 clear_statuses: Vec::new(),
+                clear_elements: Vec::new(),
+                preserve_current_auras: false,
                 aura_results: Vec::new(),
             }],
         };
