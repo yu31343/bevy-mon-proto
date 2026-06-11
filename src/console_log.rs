@@ -13,6 +13,8 @@ pub enum ConsoleLogCategory {
     AiDetail,
     Selection,
     Map,
+    Spine,
+    SpineDetail,
     Formula,
     Status,
     Trace,
@@ -34,6 +36,8 @@ impl ConsoleLogCategory {
             Self::AiDetail => "ai",
             Self::Selection => "selection",
             Self::Map => "map",
+            Self::Spine => "spine",
+            Self::SpineDetail => "spine",
             Self::Formula => "formula",
             Self::Status => "status",
             Self::Trace => "trace",
@@ -52,11 +56,13 @@ impl ConsoleLogCategory {
             | Self::Ai
             | Self::Selection
             | Self::Map
+            | Self::Spine
             | Self::Result => true,
             Self::BattleDebug => settings.battle_debug,
             Self::CardsDetail => settings.cards_detail,
             Self::PvpDetail => settings.pvp_detail,
             Self::AiDetail => settings.ai_detail,
+            Self::SpineDetail => settings.spine_detail,
             Self::Formula | Self::Status | Self::Trace | Self::State => settings.battle_debug,
         }
     }
@@ -68,6 +74,7 @@ pub struct ConsoleLogSettings {
     pub cards_detail: bool,
     pub pvp_detail: bool,
     pub ai_detail: bool,
+    pub spine_detail: bool,
 }
 
 impl ConsoleLogSettings {
@@ -78,6 +85,7 @@ impl ConsoleLogSettings {
             cards_detail: debug || env_flag("BEVY_MON_LOG_CARDS"),
             pvp_detail: debug || env_flag("BEVY_MON_LOG_PVP"),
             ai_detail: debug || env_flag("BEVY_MON_LOG_AI"),
+            spine_detail: debug || env_flag("BEVY_MON_LOG_SPINE"),
         }
     }
 }

@@ -63,10 +63,6 @@ fn add_i32_pending(slot: &mut Option<i32>, amount: i32) {
     *slot = Some(slot.unwrap_or(0) + amount);
 }
 
-fn add_usize_pending(slot: &mut Option<usize>, amount: usize) {
-    *slot = Some(slot.unwrap_or(0) + amount);
-}
-
 fn take_shield_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
     let pending = pending_mut(side, pending_boosts);
     let bonus = pending.next_shield_bonus;
@@ -137,6 +133,73 @@ pub(crate) fn draw_cards(
         drawn += 1;
     }
     drawn
+}
+
+fn card_name(dbs: &BattleDbs, card_id: CardId) -> String {
+    dbs.cards
+        .get(&card_id)
+        .map(|card| card.name.clone())
+        .unwrap_or_else(|| format!("{card_id:?}"))
+}
+
+fn draw_cards_with_names(
+    side: Side,
+    amount: usize,
+    hand: &mut Hand,
+    piles: &mut CardPiles,
+    deck: &CardDeck,
+    dbs: &BattleDbs,
+) -> Vec<String> {
+    let mut drawn_cards = Vec::new();
+    for _ in 0..amount {
+        let Some(card_id) = piles.draw_one(&deck.0) else {
+            break;
+        };
+        hand_mut(side, hand).push(card_id);
+        drawn_cards.push(card_name(dbs, card_id));
+    }
+    drawn_cards
+}
+
+fn merge_card_effect_sources(existing: &mut String, source_card: &str) {
+    if !existing.split(" + ").any(|source| source == source_card) {
+        existing.push_str(" + ");
+        existing.push_str(source_card);
+    }
+}
+
+fn drawn_cards_text(drawn_cards: &[String]) -> String {
+    if drawn_cards.is_empty() {
+        "无".to_string()
+    } else {
+        drawn_cards.join(" / ")
+    }
+}
+
+fn log_card_effect_draw(
+    side: Side,
+    source_card: &str,
+    reason: &str,
+    requested: usize,
+    drawn_cards: &[String],
+    hand: &Hand,
+    piles: &CardPiles,
+) {
+    console_log(
+        ConsoleLogCategory::Cards,
+        format!(
+            "[{}] 卡牌效果抽牌：来源={}；原因={}；请求 {} 张；实际 {} 张；抽到=[{}]；手牌 {} 张；牌堆 {} 张；弃牌 {} 张",
+            super::side_text(side),
+            source_card,
+            reason,
+            requested,
+            drawn_cards.len(),
+            drawn_cards_text(drawn_cards),
+            hand_len(side, hand),
+            piles.draw.len(),
+            piles.discard.len()
+        ),
+    );
 }
 
 pub(crate) fn clear_action_scoped_card_effects(side: Side, pending_boosts: &mut PendingBoosts) {
@@ -469,10 +532,14 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             format!("下次指定元素扩散追加固定伤害={amount}")
         }
         CardEffect::NextAuraAttackDraw { amount } => {
-            add_usize_pending(
-                &mut pending_mut(ctx.side, ctx.pending_boosts).next_aura_attack_draw,
-                *amount,
-            );
+            let pending = pending_mut(ctx.side, ctx.pending_boosts);
+            match &mut pending.next_aura_attack_draw {
+                Some((existing_amount, source_card)) => {
+                    *existing_amount += *amount;
+                    merge_card_effect_sources(source_card, &card.name);
+                }
+                None => pending.next_aura_attack_draw = Some((*amount, card.name.clone())),
+            }
             format!("下次攻击命中附着目标抽牌={amount}")
         }
         CardEffect::DiscardOtherDrawGainAp {
@@ -486,6 +553,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                     *pending_tactical_discard = Some(PendingTacticalDiscard {
                         side: ctx.side,
                         draw: *draw,
+                        source_card: card.name.clone(),
                     });
                 }
                 format!("等待选择弃置其他手牌1；弃后抽牌={draw}；弃牌获得AP={ap_gain}")
@@ -494,10 +562,13 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
         CardEffect::NextSkillCostDraw { skill_cost, draw } => {
             let pending = pending_mut(ctx.side, ctx.pending_boosts);
             match &mut pending.next_skill_cost_draw {
-                Some((existing_cost, existing_draw)) if *existing_cost == *skill_cost => {
+                Some((existing_cost, existing_draw, source_card))
+                    if *existing_cost == *skill_cost =>
+                {
                     *existing_draw += *draw;
+                    merge_card_effect_sources(source_card, &card.name);
                 }
-                _ => pending.next_skill_cost_draw = Some((*skill_cost, *draw)),
+                _ => pending.next_skill_cost_draw = Some((*skill_cost, *draw, card.name.clone())),
             }
             format!("下次使用{skill_cost}AP技能后抽牌={draw}")
         }
@@ -507,13 +578,28 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 Side::Enemy => ctx.memory.enemy.knocked_out_opponent_this_turn,
             };
             if can_draw {
-                let drawn = draw_cards(ctx.side, *amount, ctx.hand, ctx.piles, ctx.deck);
-                format!("本行动已击倒目标；抽牌={drawn}")
-            } else {
-                add_usize_pending(
-                    &mut pending_mut(ctx.side, ctx.pending_boosts).next_knockout_draw,
-                    *amount,
+                let drawn_cards = draw_cards_with_names(
+                    ctx.side, *amount, ctx.hand, ctx.piles, ctx.deck, ctx.dbs,
                 );
+                log_card_effect_draw(
+                    ctx.side,
+                    &card.name,
+                    "本行动已击倒目标",
+                    *amount,
+                    &drawn_cards,
+                    ctx.hand,
+                    ctx.piles,
+                );
+                format!("本行动已击倒目标；抽牌={}", drawn_cards.len())
+            } else {
+                let pending = pending_mut(ctx.side, ctx.pending_boosts);
+                match &mut pending.next_knockout_draw {
+                    Some((existing_amount, source_card)) => {
+                        *existing_amount += *amount;
+                        merge_card_effect_sources(source_card, &card.name);
+                    }
+                    None => pending.next_knockout_draw = Some((*amount, card.name.clone())),
+                }
                 format!("等待本行动内击倒敌方精灵后抽牌={amount}")
             }
         }
@@ -581,14 +667,30 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             min_alive,
             gain_ap: ap_gain,
         } => {
-            let drawn = draw_cards(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck);
+            let drawn_cards =
+                draw_cards_with_names(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck, ctx.dbs);
+            log_card_effect_draw(
+                ctx.side,
+                &card.name,
+                "立即抽牌并检查存活队友",
+                *draw,
+                &drawn_cards,
+                ctx.hand,
+                ctx.piles,
+            );
             let alive =
                 team_alive_count(ctx.side, ctx.player_team, ctx.enemy_team, ctx.combat_query);
             if alive >= *min_alive {
                 gain_ap(ctx.side, *ap_gain, ctx.rules, ctx.action_points);
-                format!("抽牌={drawn}；存活队友数={alive}，获得AP={ap_gain}")
+                format!(
+                    "抽牌={}；存活队友数={alive}，获得AP={ap_gain}",
+                    drawn_cards.len()
+                )
             } else {
-                format!("抽牌={drawn}；存活队友数={alive}，未获得额外AP")
+                format!(
+                    "抽牌={}；存活队友数={alive}，未获得额外AP",
+                    drawn_cards.len()
+                )
             }
         }
         CardEffect::GainShieldDrawIfSwitchedThisTurn { shield, draw } => {
@@ -606,13 +708,30 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 Side::Enemy => ctx.memory.enemy.switched_this_turn,
             };
             if switched {
-                let drawn = draw_cards(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck);
-                format!("获得护盾={gained}；本行动已换人，抽牌={drawn}")
-            } else {
-                add_usize_pending(
-                    &mut pending_mut(ctx.side, ctx.pending_boosts).next_switch_draw,
+                let drawn_cards =
+                    draw_cards_with_names(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck, ctx.dbs);
+                log_card_effect_draw(
+                    ctx.side,
+                    &card.name,
+                    "本行动已换人",
                     *draw,
+                    &drawn_cards,
+                    ctx.hand,
+                    ctx.piles,
                 );
+                format!(
+                    "获得护盾={gained}；本行动已换人，抽牌={}",
+                    drawn_cards.len()
+                )
+            } else {
+                let pending = pending_mut(ctx.side, ctx.pending_boosts);
+                match &mut pending.next_switch_draw {
+                    Some((existing_amount, source_card)) => {
+                        *existing_amount += *draw;
+                        merge_card_effect_sources(source_card, &card.name);
+                    }
+                    None => pending.next_switch_draw = Some((*draw, card.name.clone())),
+                }
                 format!("获得护盾={gained}；等待本行动内换人后抽牌={draw}")
             }
         }
@@ -773,7 +892,7 @@ pub(crate) fn card_trigger_event_system(
     dbs: Res<BattleDbs>,
     mut query: CardCombatQuery,
 ) {
-    let pending_tactical = pending_tactical_discard.as_deref().copied();
+    let pending_tactical = pending_tactical_discard.as_deref().cloned();
     let mut resolved_tactical_side = None;
     let mut new_tactical_discard = None;
     let events: Vec<_> = messages.p0().read().cloned().collect();
@@ -794,22 +913,26 @@ pub(crate) fn card_trigger_event_system(
                     );
                 }
                 if resolved_tactical_side.is_none()
-                    && let Some(pending) = pending_tactical.filter(|pending| pending.side == *side)
+                    && let Some(pending) = pending_tactical
+                        .as_ref()
+                        .filter(|pending| pending.side == *side)
                 {
-                    let drawn = draw_cards(*side, pending.draw, &mut hand, &mut piles, &deck);
-                    console_log(
-                        ConsoleLogCategory::Cards,
-                        format!(
-                            "[{}] 战术整理触发抽牌：{} 张；手牌 {} 张；牌堆 {} 张；弃牌 {} 张",
-                            super::side_text(*side),
-                            drawn,
-                            match *side {
-                                Side::Player => hand.player.len(),
-                                Side::Enemy => hand.enemy.len(),
-                            },
-                            piles.draw.len(),
-                            piles.discard.len()
-                        ),
+                    let drawn_cards = draw_cards_with_names(
+                        *side,
+                        pending.draw,
+                        &mut hand,
+                        &mut piles,
+                        &deck,
+                        &dbs,
+                    );
+                    log_card_effect_draw(
+                        *side,
+                        &pending.source_card,
+                        "战术整理弃置其他手牌后抽牌",
+                        pending.draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
                     );
                     resolved_tactical_side = Some(*side);
                 }
@@ -862,11 +985,21 @@ pub(crate) fn card_trigger_event_system(
                 {
                     gain_ap(*source, amount, &rules, &mut action_points);
                 }
-                if let Some(draw) = pending_mut(*source, &mut pending_boosts)
+                if let Some((draw, source_card)) = pending_mut(*source, &mut pending_boosts)
                     .next_aura_attack_draw
                     .take()
                 {
-                    draw_cards(*source, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards =
+                        draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    log_card_effect_draw(
+                        *source,
+                        &source_card,
+                        "元素反应触发附着目标抽牌",
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
                 if let Some(amount) = pending_mut(*source, &mut pending_boosts)
                     .next_reaction_fixed_damage
@@ -899,11 +1032,21 @@ pub(crate) fn card_trigger_event_system(
                     gain_ap(source, amount, &rules, &mut action_points);
                 }
                 if !from.is_empty()
-                    && let Some(draw) = pending_mut(source, &mut pending_boosts)
+                    && let Some((draw, source_card)) = pending_mut(source, &mut pending_boosts)
                         .next_aura_attack_draw
                         .take()
                 {
-                    draw_cards(source, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards =
+                        draw_cards_with_names(source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    log_card_effect_draw(
+                        source,
+                        &source_card,
+                        "元素附着变化触发抽牌",
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
             }
             BattleEvent::WindSpreadTriggered {
@@ -941,17 +1084,30 @@ pub(crate) fn card_trigger_event_system(
                 }
             }
             BattleEvent::SkillUsed { side, .. } => {
-                let Some((skill_cost, draw)) =
-                    pending_mut(*side, &mut pending_boosts).next_skill_cost_draw
+                let Some((skill_cost, draw, source_card)) = pending_mut(*side, &mut pending_boosts)
+                    .next_skill_cost_draw
+                    .clone()
                 else {
                     continue;
                 };
-                let matched = dbs.skills.values().any(|skill| {
-                    skill.cost_ap == skill_cost && skill.name == skill_name_from_event(&event)
-                });
+                let skill_name = skill_name_from_event(&event);
+                let matched = dbs
+                    .skills
+                    .values()
+                    .any(|skill| skill.cost_ap == skill_cost && skill.name == skill_name);
                 if matched {
                     pending_mut(*side, &mut pending_boosts).next_skill_cost_draw = None;
-                    draw_cards(*side, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards =
+                        draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    log_card_effect_draw(
+                        *side,
+                        &source_card,
+                        &format!("使用{}AP技能：{}", skill_cost, skill_name),
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
             }
             BattleEvent::DamageDealt {
@@ -969,11 +1125,21 @@ pub(crate) fn card_trigger_event_system(
                         })
                         .unwrap_or(false);
                 if has_aura
-                    && let Some(draw) = pending_mut(*source, &mut pending_boosts)
+                    && let Some((draw, source_card)) = pending_mut(*source, &mut pending_boosts)
                         .next_aura_attack_draw
                         .take()
                 {
-                    draw_cards(*source, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards =
+                        draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    log_card_effect_draw(
+                        *source,
+                        &source_card,
+                        "攻击命中附着目标",
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
             }
             BattleEvent::CombatantFainted { side, .. } => {
@@ -987,11 +1153,27 @@ pub(crate) fn card_trigger_event_system(
                         Side::Player
                     }
                 };
-                if let Some(draw) = pending_mut(scoring_side, &mut pending_boosts)
+                if let Some((draw, source_card)) = pending_mut(scoring_side, &mut pending_boosts)
                     .next_knockout_draw
                     .take()
                 {
-                    draw_cards(scoring_side, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards = draw_cards_with_names(
+                        scoring_side,
+                        draw,
+                        &mut hand,
+                        &mut piles,
+                        &deck,
+                        &dbs,
+                    );
+                    log_card_effect_draw(
+                        scoring_side,
+                        &source_card,
+                        "本行动击倒敌方精灵",
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
             }
             BattleEvent::Switched { side, .. } => {
@@ -999,11 +1181,21 @@ pub(crate) fn card_trigger_event_system(
                     Side::Player => memory.player.switched_this_turn = true,
                     Side::Enemy => memory.enemy.switched_this_turn = true,
                 }
-                if let Some(draw) = pending_mut(*side, &mut pending_boosts)
+                if let Some((draw, source_card)) = pending_mut(*side, &mut pending_boosts)
                     .next_switch_draw
                     .take()
                 {
-                    draw_cards(*side, draw, &mut hand, &mut piles, &deck);
+                    let drawn_cards =
+                        draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    log_card_effect_draw(
+                        *side,
+                        &source_card,
+                        "本行动换人后抽牌",
+                        draw,
+                        &drawn_cards,
+                        &hand,
+                        &piles,
+                    );
                 }
             }
             _ => {}

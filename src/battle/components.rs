@@ -647,10 +647,10 @@ pub struct PendingBoost {
     pub next_element_attachment_ap: Option<i32>,
     pub next_reaction_fixed_damage: Option<i32>,
     pub next_wind_spread_damage: Option<(i32, Vec<crate::data::ElementType>)>,
-    pub next_aura_attack_draw: Option<usize>,
-    pub next_skill_cost_draw: Option<(i32, usize)>,
-    pub next_switch_draw: Option<usize>,
-    pub next_knockout_draw: Option<usize>,
+    pub next_aura_attack_draw: Option<(usize, String)>,
+    pub next_skill_cost_draw: Option<(i32, usize, String)>,
+    pub next_switch_draw: Option<(usize, String)>,
+    pub next_knockout_draw: Option<(usize, String)>,
     pub shield_absorb_ap: Option<i32>,
 }
 
@@ -683,10 +683,11 @@ pub struct PendingGuardCounterClear {
     pub acting_side: Side,
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone)]
 pub struct PendingTacticalDiscard {
     pub side: Side,
     pub draw: usize,
+    pub source_card: String,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

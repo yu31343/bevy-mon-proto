@@ -9,6 +9,7 @@ use bevy_spine::{
 use crate::battle::{
     BattleEvent, Combatant, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard,
 };
+use crate::console_log::{ConsoleLogCategory, log as console_log};
 use crate::ui::battle::components::{BattleUiCleanupPending, BattleUiRoot};
 
 use super::components::{
@@ -65,11 +66,17 @@ pub(super) fn spawn_monster_ui_visuals(
     new_battle_units: Query<(Entity, &Name, &Combatant), Added<InBattle>>,
 ) {
     let Some(library) = library else {
-        warn!("Spine: animation library is not ready yet.");
+        console_log(
+            ConsoleLogCategory::Spine,
+            "动画库尚未就绪，跳过生成怪物动画 UI",
+        );
         return;
     };
     let Ok(root_entity) = ui_root.single() else {
-        warn!("Spine: BattleUiRoot not found, skip spawning monster UI.");
+        console_log(
+            ConsoleLogCategory::Spine,
+            "未找到 BattleUiRoot，跳过生成怪物动画 UI",
+        );
         return;
     };
 
@@ -82,10 +89,9 @@ pub(super) fn spawn_monster_ui_visuals(
             continue;
         };
 
-        info!(
-            "Spine: spawning animation for {} ({:?})",
-            name.as_str(),
-            combatant.side
+        console_log(
+            ConsoleLogCategory::SpineDetail,
+            format!("生成怪物动画：{}（{:?}）", name.as_str(), combatant.side),
         );
 
         let (left, right, top, bottom) = side_node_bounds(combatant.side);
@@ -300,7 +306,10 @@ fn spawn_battle_vfx(
         return;
     };
     let Some(skeleton) = library.0.get(config.key) else {
-        warn!("Spine: VFX skeleton not loaded for {}.", config.key);
+        console_log(
+            ConsoleLogCategory::Spine,
+            format!("VFX 骨骼资源未加载：{}", config.key),
+        );
         return;
     };
 
@@ -838,9 +847,12 @@ pub(super) fn tick_death_fade(
 
 pub(super) fn log_spine_ui_ready_events(mut events: MessageReader<SpineUiReadyEvent>) {
     for evt in events.read() {
-        info!(
-            "Spine: UI node ready. ui_entity={:?}, proxy_entity={:?}",
-            evt.entity, evt.proxy_entity
+        console_log(
+            ConsoleLogCategory::SpineDetail,
+            format!(
+                "UI 节点就绪：ui_entity={:?}，proxy_entity={:?}",
+                evt.entity, evt.proxy_entity
+            ),
         );
     }
 }
@@ -853,9 +865,12 @@ pub(super) fn log_spine_loader_failures(
         if let Ok(loader) = proxy_loaders.get(proxy.proxy_entity)
             && matches!(loader, SpineLoader::Failed)
         {
-            warn!(
-                "Spine: loader failed for monster animation. ui_entity={:?}, proxy_entity={:?}, skeleton={:?}",
-                ui_entity, proxy.proxy_entity, handle.skeleton
+            console_log(
+                ConsoleLogCategory::Spine,
+                format!(
+                    "怪物动画加载失败：ui_entity={:?}，proxy_entity={:?}，skeleton={:?}",
+                    ui_entity, proxy.proxy_entity, handle.skeleton
+                ),
             );
         }
     }

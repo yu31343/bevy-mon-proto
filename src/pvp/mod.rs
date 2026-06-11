@@ -1886,7 +1886,13 @@ fn pvp_poll_network_system(
                     );
                     incoming_snapshots.0.push(*snapshot)
                 }
-                PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
+                PvpMessage::BattleFeedback(feedback) => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!("[feedback-recv] {:?}", feedback),
+                    );
+                    incoming_feedbacks.0.push(feedback)
+                }
                 PvpMessage::Intent { seq, intent } => {
                     console_log(
                         ConsoleLogCategory::PvpDetail,
@@ -2099,6 +2105,10 @@ fn pvp_forward_host_battle_events_system(
 
     for event in events.read() {
         if let Some(feedback) = battle_event_to_pvp_feedback(event) {
+            console_log(
+                ConsoleLogCategory::PvpDetail,
+                format!("[feedback-send] {:?}", feedback),
+            );
             connection.send(PvpMessage::BattleFeedback(feedback));
         }
     }
@@ -2250,6 +2260,22 @@ fn pvp_send_host_snapshot_system(
     let enemy_statuses = team_statuses(&enemy_team.0, &status_query);
     let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
     let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
+    let mirrored_result =
+        (!battle_result.message.is_empty()).then(|| mirror_result_message(&battle_result.message));
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!(
+            "[snapshot-send] round={} phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} result={}",
+            turn_count.0,
+            *battle_phase.get(),
+            last_remote_intent_seq.0,
+            action_points.player,
+            action_points.enemy,
+            hand.player.len(),
+            hand.enemy.len(),
+            mirrored_result.as_deref().unwrap_or("<none>")
+        ),
+    );
     connection.send(PvpMessage::BattleSnapshot(Box::new(PvpBattleSnapshot {
         turn: turn_count.0,
         phase: *battle_phase.get(),
@@ -2271,8 +2297,7 @@ fn pvp_send_host_snapshot_system(
         acknowledged_intent_seq: last_remote_intent_seq.0,
         player_defeated: host_enemy_defeated,
         enemy_defeated: host_player_defeated,
-        result_message: (!battle_result.message.is_empty())
-            .then(|| mirror_result_message(&battle_result.message)),
+        result_message: mirrored_result,
     })));
 }
 
@@ -2314,6 +2339,22 @@ fn pvp_apply_host_snapshot_system(
         return;
     };
     runtime.incoming.0.clear();
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!(
+            "[snapshot-apply] round={} host_phase={:?} local_phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} feedbacks={} result={}",
+            snapshot.turn,
+            snapshot.phase,
+            host_phase_for_local_phase(snapshot.phase),
+            snapshot.acknowledged_intent_seq,
+            snapshot.player_ap,
+            snapshot.enemy_ap,
+            snapshot.player_hand.len(),
+            snapshot.enemy_hand.len(),
+            runtime.incoming_feedbacks.0.len(),
+            snapshot.result_message.as_deref().unwrap_or("<none>")
+        ),
+    );
 
     runtime.turn_count.0 = snapshot.turn;
     runtime
@@ -2370,6 +2411,10 @@ fn pvp_apply_host_snapshot_system(
 
     for feedback in runtime.incoming_feedbacks.0.drain(..) {
         if should_replay_pvp_feedback_on_client(&feedback) {
+            console_log(
+                ConsoleLogCategory::PvpDetail,
+                format!("[feedback-apply] {:?}", feedback),
+            );
             event_writer.write(pvp_feedback_to_battle_event(feedback));
         }
     }
@@ -2421,6 +2466,10 @@ fn pvp_apply_remote_intents_system(
     };
     incoming.0.remove(0);
     last_remote_intent_seq.0 = last_remote_intent_seq.0.max(seq);
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!("[intent-apply] seq={} intent={:?}", seq, intent),
+    );
     match intent {
         BattleIntent::UseSkill { slot } => {
             let Some(enemy_team) = enemy_team.as_ref() else {

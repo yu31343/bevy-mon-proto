@@ -257,6 +257,7 @@ assets/data/battle_data.ron
 - 技能、卡牌、弃牌、伤害、治疗、护盾、元素附着、反应、换人、倒下、胜负。
 - PVP 建房、连接、握手、失败、断线摘要。
 - AI 实际选择：技能、换人、结束回合、辅助使用增益卡。
+- Spine 动画资源缺失 / 加载失败等表现层警告。
 
 日志示例：
 
@@ -277,9 +278,10 @@ assets/data/battle_data.ron
 |---|---|
 | `BEVY_MON_LOG_DEBUG=1` | 打开战斗 debug、公式、状态、状态快照、ActionTrace，并联动卡堆 / PVP / AI 细节。 |
 | `BEVY_MON_LOG_BATTLE_DEBUG=1` | 只打开战斗结构化 debug 输出。 |
-| `BEVY_MON_LOG_CARDS=1` | 打开卡堆细节，例如牌堆耗尽、弃牌堆重洗、基础牌组重建。 |
-| `BEVY_MON_LOG_PVP=1` | 打开 PVP intent、snapshot、data hash 等同步细节。 |
-| `BEVY_MON_LOG_AI=1` | 打开 AI 候选技能、候选换人等决策细节。 |
+| `BEVY_MON_LOG_CARDS=1` | 打开卡堆细节，例如牌堆耗尽、弃牌堆重洗、基础牌组重建；卡牌效果抽牌会默认记录来源和抽到的卡名。 |
+| `BEVY_MON_LOG_PVP=1` | 打开 PVP intent、snapshot、battle feedback、data hash 等同步细节。 |
+| `BEVY_MON_LOG_AI=1` | 打开完整 AI 技能候选、评分构成、候选换人等决策细节。 |
+| `BEVY_MON_LOG_SPINE=1` | 打开 Spine 动画生成、UI ready 等表现层细节。 |
 
 ## 3. 使用示例
 
@@ -290,6 +292,7 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 BEVY_MON_LOG_CARDS=1 cargo run
 BEVY_MON_LOG_PVP=1 cargo run
 BEVY_MON_LOG_AI=1 cargo run
+BEVY_MON_LOG_SPINE=1 cargo run
 ```
 
 Windows PowerShell：
@@ -299,6 +302,7 @@ $env:BEVY_MON_LOG_DEBUG="1"; cargo run
 $env:BEVY_MON_LOG_CARDS="1"; cargo run
 $env:BEVY_MON_LOG_PVP="1"; cargo run
 $env:BEVY_MON_LOG_AI="1"; cargo run
+$env:BEVY_MON_LOG_SPINE="1"; cargo run
 ```
 
 Git Bash / Bash on Windows：
@@ -336,10 +340,8 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 
 ## 仍可深化
 
-- 更完整的 AI 候选评分解释与战术策略。
-- 更多卡牌效果触发原因和抽牌细节日志。
-- PVP battle feedback、snapshot 发送 / 应用的更完整可视化调试。
-- Spine 表现层日志与统一控制台日志进一步整合。
+- 更完整的 AI 战术策略，而不仅是当前评分启发式。
+- PVP 双端日志链路的手动实测与可视化调试工具。
 - 地图探索、养成、捕捉、图鉴等战斗外玩法。
 - 更完整的战斗 replay 回放与自动化复盘工具。
 

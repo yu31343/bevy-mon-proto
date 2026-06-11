@@ -9,7 +9,7 @@ use crate::{
         next_phase_after_side_end, note_action_phase, push_named_action_trace,
         push_turn_action_trace, transfer_status_by_id,
     },
-    console_log::{ConsoleLogCategory, log as console_log},
+    console_log::{ConsoleLogCategory, log as console_log, log_enabled},
     data::{
         BattleDbs, BattleRules, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect,
         SkillId, StatusCategory,
@@ -580,6 +580,26 @@ fn choose_enemy_switch(
         })
 }
 
+fn enemy_skill_candidates(
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    current_ap: i32,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+) -> Vec<ScoredEnemySkill> {
+    skill_ids
+        .iter()
+        .copied()
+        .take(skill_count)
+        .enumerate()
+        .filter_map(|(slot, skill_id)| {
+            let skill = dbs.skills.get(&skill_id)?;
+            (current_ap >= skill.cost_ap)
+                .then(|| score_enemy_skill(slot, skill_id, skill, ctx, dbs))
+        })
+        .collect()
+}
+
 fn choose_enemy_skill(
     skill_ids: &[SkillId; 4],
     skill_count: usize,
@@ -587,28 +607,221 @@ fn choose_enemy_skill(
     dbs: &BattleDbs,
     ctx: &EnemyAiContext,
 ) -> Option<ScoredEnemySkill> {
-    let mut best: Option<ScoredEnemySkill> = None;
+    enemy_skill_candidates(skill_ids, skill_count, current_ap, dbs, ctx)
+        .into_iter()
+        .max_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.slot.cmp(&a.slot))
+        })
+}
 
-    for (slot, skill_id) in skill_ids.iter().copied().take(skill_count).enumerate() {
-        let Some(skill) = dbs.skills.get(&skill_id) else {
-            continue;
-        };
-        let cost = skill.cost_ap;
-        if current_ap < cost {
-            continue;
-        }
-
-        let scored = score_enemy_skill(slot, skill_id, skill, ctx, dbs);
-        match best {
-            Some(current_best)
-                if scored.score < current_best.score
-                    || (scored.score == current_best.score && scored.slot >= current_best.slot) => {
-            }
-            _ => best = Some(scored),
-        }
+fn skill_effect_summary(skill: &SkillDef) -> &'static str {
+    match primary_effect(&skill.effect) {
+        Some(SkillEffect::Attack { .. }) => "攻击",
+        Some(SkillEffect::Heal { .. }) => "治疗",
+        Some(SkillEffect::Shield { .. }) => "护盾",
+        Some(SkillEffect::Cleanse { .. }) => "净化",
+        Some(SkillEffect::Dispel { .. }) => "驱散",
+        Some(SkillEffect::ApplyStatus { .. }) => "施加状态",
+        Some(SkillEffect::ModifyStages { .. }) => "属性变化",
+        Some(SkillEffect::DealFixedDamage { .. }) => "固定伤害",
+        Some(SkillEffect::DealStatDifferenceDamage { .. }) => "属性差伤害",
+        Some(SkillEffect::Conditional { .. }) => "条件效果",
+        Some(SkillEffect::Sequence { .. }) => "复合效果",
+        None => "未知效果",
     }
+}
 
-    best
+fn enemy_skill_score_detail(
+    skill: &SkillDef,
+    scored: &ScoredEnemySkill,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+) -> String {
+    let hp_ratio = enemy_hp_ratio(ctx);
+    let mut detail = match primary_effect(&skill.effect) {
+        Some(SkillEffect::Attack { power, .. }) => {
+            let attack_value = estimate_attack_value(skill, ctx, dbs);
+            let element_text = skill
+                .element
+                .map(|element| format!("{:?}", element))
+                .unwrap_or_else(|| "无".to_string());
+            format!(
+                "构成=攻击；威力={}；攻击估值={:.2}；技能元素={}；目标HP={}；目标护盾={}；敌方HP率={:.0}%",
+                power,
+                attack_value,
+                element_text,
+                ctx.player_hp,
+                ctx.player_shield,
+                hp_ratio * 100.0
+            )
+        }
+        Some(SkillEffect::Heal { amount }) => {
+            let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0);
+            format!(
+                "构成=治疗；基础治疗={}；缺失HP={}；敌方HP率={:.0}%",
+                amount,
+                missing_hp,
+                hp_ratio * 100.0
+            )
+        }
+        Some(SkillEffect::Shield { amount }) => format!(
+            "构成=护盾；基础护盾={}；当前护盾={}；敌方HP率={:.0}%",
+            amount,
+            ctx.enemy_shield,
+            hp_ratio * 100.0
+        ),
+        Some(SkillEffect::Cleanse {
+            prefer_aura,
+            fallback_to_debuff,
+            amount,
+        }) => format!(
+            "构成=净化；可净化附着={}；可净化减益={}；偏好附着={}；回退减益={}；次数={}",
+            ctx.enemy_has_aura,
+            ctx.enemy_has_cleansable_debuff,
+            prefer_aura,
+            fallback_to_debuff,
+            amount
+        ),
+        Some(SkillEffect::Dispel { status_ids, .. }) => format!(
+            "构成=驱散；目标状态=[{}]；可驱散价值={:.2}",
+            ctx.target_status_ids.join(" / "),
+            dispel_value(status_ids, ctx)
+        ),
+        Some(SkillEffect::Sequence { effects }) => {
+            let conditional_bonus = effects
+                .iter()
+                .map(|effect| conditional_bonus_score(effect, ctx))
+                .sum::<f32>();
+            let followup_bonus = effects
+                .iter()
+                .map(|effect| match effect {
+                    SkillEffect::Dispel { status_ids, .. } => dispel_value(status_ids, ctx),
+                    _ => 0.0,
+                })
+                .sum::<f32>();
+            format!(
+                "构成=复合；段数={}；条件加分={:.2}；后续驱散价值={:.2}；主类型={}",
+                effects.len(),
+                conditional_bonus,
+                followup_bonus,
+                skill_effect_summary(skill)
+            )
+        }
+        _ => format!(
+            "构成={}；目标状态数={}；敌方HP率={:.0}%；类别={:?}",
+            skill_effect_summary(skill),
+            ctx.target_status_ids.len(),
+            hp_ratio * 100.0,
+            skill.category
+        ),
+    };
+    detail.push_str(&format!(
+        "；类型={:?}；总分={:.2}",
+        scored.kind, scored.score
+    ));
+    detail
+}
+
+fn enemy_skill_candidate_report(
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    current_ap: i32,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+) -> String {
+    let entries = skill_ids
+        .iter()
+        .copied()
+        .take(skill_count)
+        .enumerate()
+        .map(|(slot, skill_id)| {
+            let Some(skill) = dbs.skills.get(&skill_id) else {
+                return format!("槽位{}：未知技能 {:?}", slot, skill_id);
+            };
+            if current_ap < skill.cost_ap {
+                return format!(
+                    "槽位{}：{}；AP不足 {}/{}；类型={}",
+                    slot,
+                    skill.name,
+                    current_ap,
+                    skill.cost_ap,
+                    skill_effect_summary(skill)
+                );
+            }
+            let scored = score_enemy_skill(slot, skill_id, skill, ctx, dbs);
+            format!(
+                "槽位{}：{}；cost={}；{}",
+                slot,
+                skill.name,
+                skill.cost_ap,
+                enemy_skill_score_detail(skill, &scored, ctx, dbs)
+            )
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        "无技能候选".to_string()
+    } else {
+        entries.join(" | ")
+    }
+}
+
+fn enemy_switch_candidate_report(
+    current: &EnemySwitchCandidate,
+    candidates: &[EnemySwitchCandidate],
+    current_best_attack: f32,
+    current_ap: i32,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+    already_switched: bool,
+) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            if candidate.index == current.index {
+                return format!("#{} 当前前场", candidate.index + 1);
+            }
+            if candidate.hp <= 0 {
+                return format!("#{} 已倒下", candidate.index + 1);
+            }
+            if already_switched {
+                return format!("#{} 已本回合换人，跳过", candidate.index + 1);
+            }
+            if current_ap < 2 {
+                return format!(
+                    "#{} AP不足以换人后行动：{}",
+                    candidate.index + 1,
+                    current_ap
+                );
+            }
+            let score = score_switch_candidate(
+                current,
+                candidate,
+                current_best_attack,
+                current_ap,
+                dbs,
+                ctx,
+            );
+            format!(
+                "#{} HP {}/{} 护盾 {} ATK {} 元素 {:?}；换人评分={:.2}；{}",
+                candidate.index + 1,
+                candidate.hp,
+                candidate.max_hp,
+                candidate.shield,
+                candidate.atk,
+                candidate.element,
+                score,
+                if score >= 18.0 {
+                    "可选"
+                } else {
+                    "低于阈值"
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 #[derive(SystemParam)]
@@ -2008,6 +2221,22 @@ pub fn enemy_turn_ai_system(
             target_status_ids: p_status_ids,
         };
 
+        if log_enabled(ConsoleLogCategory::AiDetail) {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 技能候选列表：{}",
+                    logs.turn_count.0,
+                    enemy_skill_candidate_report(
+                        &e_skills_arr,
+                        e_skill_count,
+                        action_points.enemy,
+                        &dbs,
+                        &ai_ctx
+                    )
+                ),
+            );
+        }
         let chosen_skill = choose_enemy_skill(
             &e_skills_arr,
             e_skill_count,
@@ -2096,27 +2325,21 @@ pub fn enemy_turn_ai_system(
                 })
             })
             .collect::<Vec<_>>();
-        if crate::console_log::log_enabled(ConsoleLogCategory::AiDetail) {
-            let candidate_text = enemy_switch_candidates
-                .iter()
-                .map(|candidate| {
-                    format!(
-                        "#{} HP {}/{} 护盾 {} ATK {} 元素 {:?}",
-                        candidate.index + 1,
-                        candidate.hp,
-                        candidate.max_hp,
-                        candidate.shield,
-                        candidate.atk,
-                        candidate.element
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" | ");
+        if log_enabled(ConsoleLogCategory::AiDetail) {
             console_log(
                 ConsoleLogCategory::AiDetail,
                 format!(
-                    "[round {}][enemy] 换人候选：{}",
-                    logs.turn_count.0, candidate_text
+                    "[round {}][enemy] 换人候选列表：{}",
+                    logs.turn_count.0,
+                    enemy_switch_candidate_report(
+                        &current_switch_candidate,
+                        &enemy_switch_candidates,
+                        current_best_attack,
+                        action_points.enemy,
+                        &dbs,
+                        &ai_ctx,
+                        ai_state.2
+                    )
                 ),
             );
         }
