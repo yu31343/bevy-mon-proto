@@ -11,8 +11,8 @@ use crate::{
     },
     console_log::{ConsoleLogCategory, log as console_log, log_enabled},
     data::{
-        AiPlayerInfoVisibility, BattleDbs, BattleRules, CardDef, CardEffect, EnemyAiConfig,
-        StatusCategory,
+        AiDifficulty, AiPlayerInfoVisibility, BattleDbs, BattleRules, CardDef, CardEffect,
+        EnemyAiConfig, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
 };
@@ -24,10 +24,10 @@ use super::{
 };
 
 use crate::battle::ai::{
-    EnemyAiContext, EnemySwitchCandidate, PlayerThreatContext, ScoredEnemySkill, best_action_value,
-    choose_enemy_discard_card, choose_enemy_discard_for_followup, choose_enemy_immediate_card,
-    choose_enemy_skill, choose_enemy_switch, enemy_skill_candidate_report,
-    enemy_switch_candidate_report, score_card_for_skill,
+    EnemyAiContext, EnemyPlannedAction, EnemySwitchCandidate, ScoredEnemySkill, best_action_value,
+    build_player_threat_context, choose_enemy_discard_card, choose_enemy_plan_candidates,
+    choose_enemy_skill_with_threat, enemy_skill_candidate_report, enemy_switch_candidate_report,
+    score_card_for_skill,
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
@@ -1275,6 +1275,14 @@ pub fn enemy_turn_ai_system(
             enemy_max_hp: e_max_hp,
             enemy_shield: e_shield_value,
             enemy_atk: e_atk,
+            enemy_def: e_def,
+            enemy_element: e_combatant.element,
+            enemy_attached_auras: e_aura.slots,
+            enemy_status_ids: e_statuses
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
             enemy_has_aura,
             enemy_has_cleansable_debuff,
             player_def: p_def,
@@ -1284,19 +1292,30 @@ pub fn enemy_turn_ai_system(
             target_attached_auras: p_attached_aura,
             target_status_ids: p_status_ids,
         };
-        let player_threat = if matches!(
+        let player_info_visible = !matches!(
             ai_config.player_info_visibility,
             AiPlayerInfoVisibility::None
-        ) {
-            None
-        } else {
-            Some(PlayerThreatContext {
-                skill_ids: p_skills_arr,
-                skill_count: p_skill_count,
-                atk: p_atk,
-                current_ap: action_points.player,
-            })
-        };
+        );
+        let high_difficulty = matches!(
+            ai_config.difficulty,
+            AiDifficulty::Hard | AiDifficulty::Expert
+        );
+        let include_player_hand = matches!(
+            ai_config.player_info_visibility,
+            AiPlayerInfoVisibility::Full
+        );
+        let player_threat = player_info_visible.then(|| {
+            build_player_threat_context(
+                p_skills_arr,
+                p_skill_count,
+                p_atk,
+                action_points.player,
+                &hand.player,
+                high_difficulty && include_player_hand,
+                &dbs,
+            )
+        });
+        let advanced_player_threat = high_difficulty.then_some(player_threat).flatten();
 
         if log_enabled(ConsoleLogCategory::AiDetail) {
             console_log(
@@ -1311,6 +1330,20 @@ pub fn enemy_turn_ai_system(
                     ai_config.weights
                 ),
             );
+            if let Some(threat) = advanced_player_threat {
+                console_log(
+                    ConsoleLogCategory::AiDetail,
+                    format!(
+                        "[round {}][enemy] 高难度玩家威胁：玩家AP={}；预测AP={}；攻击加成={}；固定伤害加成={}；防守潜力={:.2}",
+                        logs.turn_count.0,
+                        threat.current_ap,
+                        threat.projected_ap,
+                        threat.attack_bonus,
+                        threat.fixed_damage_bonus,
+                        threat.defensive_value
+                    ),
+                );
+            }
             console_log(
                 ConsoleLogCategory::AiDetail,
                 format!(
@@ -1327,13 +1360,14 @@ pub fn enemy_turn_ai_system(
                 ),
             );
         }
-        let chosen_skill = choose_enemy_skill(
+        let chosen_skill = choose_enemy_skill_with_threat(
             &e_skills_arr,
             e_skill_count,
             action_points.enemy,
             &dbs,
             &ai_ctx,
             &ai_config.weights,
+            advanced_player_threat.as_ref(),
         );
         if let Some(candidate) = chosen_skill
             && let Some(skill) = dbs.skills.get(&candidate.skill_id)
@@ -1419,6 +1453,14 @@ pub fn enemy_turn_ai_system(
                 })
             })
             .collect::<Vec<_>>();
+        let switch_context = Some((
+            &current_switch_candidate,
+            enemy_switch_candidates.as_slice(),
+            current_best_action,
+            ai_state.2,
+            ai_config.switch_score_threshold,
+            player_threat,
+        ));
         if log_enabled(ConsoleLogCategory::AiDetail) {
             console_log(
                 ConsoleLogCategory::AiDetail,
@@ -1440,9 +1482,50 @@ pub fn enemy_turn_ai_system(
                 ),
             );
         }
+        let plan_candidates = choose_enemy_plan_candidates(
+            &hand.enemy,
+            action_points.enemy,
+            &e_skills_arr,
+            e_skill_count,
+            &dbs,
+            &ai_ctx,
+            switch_context,
+            &ai_config.weights,
+            advanced_player_threat.as_ref(),
+            ai_config.search_depth,
+            ai_config.top_candidates,
+        );
+        let planned_action = plan_candidates.first().cloned();
+        if log_enabled(ConsoleLogCategory::AiDetail) {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] Top行动规划：{}",
+                    logs.turn_count.0,
+                    plan_candidates
+                        .iter()
+                        .enumerate()
+                        .map(|(index, plan)| format!(
+                            "#{} {}；总分={:.2}",
+                            index + 1,
+                            plan.summary,
+                            plan.score
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ),
+            );
+        }
 
+        let planned_card_skill = match planned_action.as_ref().map(|plan| &plan.action) {
+            Some(EnemyPlannedAction::UseCardForSkill { card_index, skill }) => {
+                let _planned_card_index = *card_index;
+                Some(*skill)
+            }
+            _ => None,
+        };
         let mut played_card = false;
-        if let Some(chosen_skill) = chosen_skill {
+        if let Some(chosen_skill) = planned_card_skill {
             played_card = try_play_boost_card_for_skill(
                 chosen_skill,
                 hand,
@@ -1456,7 +1539,7 @@ pub fn enemy_turn_ai_system(
         }
 
         if played_card {
-            if let Some(chosen_skill) = chosen_skill {
+            if let Some(chosen_skill) = planned_card_skill {
                 console_log(
                     ConsoleLogCategory::Ai,
                     format!(
@@ -1489,18 +1572,9 @@ pub fn enemy_turn_ai_system(
             break;
         }
 
-        if let Some(chosen_switch) = choose_enemy_switch(
-            &current_switch_candidate,
-            &enemy_switch_candidates,
-            current_best_action,
-            action_points.enemy,
-            &dbs,
-            &ai_ctx,
-            ai_state.2,
-            ai_config.switch_score_threshold,
-            &ai_config.weights,
-            player_threat.as_ref(),
-        ) {
+        if let Some(EnemyPlannedAction::Switch(chosen_switch)) =
+            planned_action.as_ref().map(|plan| &plan.action)
+        {
             let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
             let target_entity = enemy_team.0.combatants[chosen_switch.index];
             let Ok(
@@ -1559,14 +1633,11 @@ pub fn enemy_turn_ai_system(
             }
         }
 
-        if let Some(chosen_skill) = choose_enemy_skill(
-            &e_skills_arr,
-            e_skill_count,
-            action_points.enemy,
-            &dbs,
-            &ai_ctx,
-            &ai_config.weights,
-        ) {
+        let planned_skill = match planned_action.as_ref().map(|plan| &plan.action) {
+            Some(EnemyPlannedAction::UseSkill(skill)) => Some(*skill),
+            _ => None,
+        };
+        if let Some(chosen_skill) = planned_skill {
             let slot = chosen_skill.slot;
             let skill_id = chosen_skill.skill_id;
             let Some(skill) = dbs.skills.get(&skill_id) else {
@@ -1964,14 +2035,12 @@ pub fn enemy_turn_ai_system(
             acted_this_update = true;
             break;
         } else {
-            // 没有可用技能：优先使用能改善资源/生存的卡牌，否则弃牌换 AP。
-            if let Some(immediate_card) = choose_enemy_immediate_card(
-                &hand.enemy,
-                action_points.enemy,
-                &dbs,
-                &ai_ctx,
-                &ai_config.weights,
-            ) {
+            // 规划器未选择技能时，按规划使用资源卡或弃牌换 AP。
+            let planned_immediate_card = match planned_action.as_ref().map(|plan| &plan.action) {
+                Some(EnemyPlannedAction::ImmediateCard(card)) => Some(card.clone()),
+                _ => None,
+            };
+            if let Some(immediate_card) = planned_immediate_card {
                 let card_id = hand.enemy.remove(immediate_card.index);
                 let (card_name, card_cost) = dbs
                     .cards
@@ -2019,23 +2088,13 @@ pub fn enemy_turn_ai_system(
             }
 
             if !hand.enemy.is_empty() {
-                let discard_choice = choose_enemy_discard_for_followup(
-                    &hand.enemy,
-                    action_points.enemy,
-                    &e_skills_arr,
-                    e_skill_count,
-                    &dbs,
-                    &ai_ctx,
-                    Some((
-                        &current_switch_candidate,
-                        &enemy_switch_candidates,
-                        current_best_action,
-                        ai_state.2,
-                        ai_config.switch_score_threshold,
-                        player_threat,
-                    )),
-                    &ai_config.weights,
-                );
+                let discard_choice = match planned_action.as_ref().map(|plan| &plan.action) {
+                    Some(EnemyPlannedAction::Discard(discard)) => Some(discard.clone()),
+                    _ => None,
+                };
+                if discard_choice.is_none() {
+                    break;
+                }
                 let discard_index = discard_choice
                     .as_ref()
                     .map(|choice| choice.index)

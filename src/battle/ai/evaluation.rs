@@ -17,6 +17,10 @@ pub(crate) struct EnemyAiContext {
     pub(crate) enemy_max_hp: i32,
     pub(crate) enemy_shield: i32,
     pub(crate) enemy_atk: i32,
+    pub(crate) enemy_def: i32,
+    pub(crate) enemy_element: ElementType,
+    pub(crate) enemy_attached_auras: [Option<ElementType>; 2],
+    pub(crate) enemy_status_ids: Vec<String>,
     pub(crate) enemy_has_aura: bool,
     pub(crate) enemy_has_cleansable_debuff: bool,
     pub(crate) player_def: i32,
@@ -58,6 +62,10 @@ pub(crate) struct PlayerThreatContext {
     pub(crate) skill_count: usize,
     pub(crate) atk: i32,
     pub(crate) current_ap: i32,
+    pub(crate) projected_ap: i32,
+    pub(crate) attack_bonus: i32,
+    pub(crate) fixed_damage_bonus: i32,
+    pub(crate) defensive_value: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +110,37 @@ pub(crate) struct ScoredEnemyDiscard {
     pub(crate) followup: EnemyDiscardFollowUp,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum EnemyPlannedAction {
+    UseCardForSkill {
+        card_index: usize,
+        skill: ScoredEnemySkill,
+    },
+    UseSkill(ScoredEnemySkill),
+    Switch(ScoredEnemySwitch),
+    ImmediateCard(ScoredEnemyCard),
+    Discard(ScoredEnemyDiscard),
+    EndTurn,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EnemyAiPlan {
+    pub(crate) action: EnemyPlannedAction,
+    pub(crate) score: f32,
+    pub(crate) summary: String,
+}
+
+fn planned_action_priority(action: &EnemyPlannedAction) -> u8 {
+    match action {
+        EnemyPlannedAction::UseCardForSkill { .. } => 6,
+        EnemyPlannedAction::UseSkill(_) => 5,
+        EnemyPlannedAction::Switch(_) => 4,
+        EnemyPlannedAction::ImmediateCard(_) => 3,
+        EnemyPlannedAction::Discard(_) => 2,
+        EnemyPlannedAction::EndTurn => 0,
+    }
+}
+
 fn apply_skill_weight(mut scored: ScoredEnemySkill, weights: &EnemyAiWeights) -> ScoredEnemySkill {
     scored.score *= match scored.kind {
         EnemyAiSkillKind::Attack => weights.attack_value,
@@ -110,6 +149,80 @@ fn apply_skill_weight(mut scored: ScoredEnemySkill, weights: &EnemyAiWeights) ->
         EnemyAiSkillKind::Debuff => weights.status_value,
     };
     scored
+}
+
+pub(crate) fn build_player_threat_context(
+    skill_ids: [SkillId; 4],
+    skill_count: usize,
+    atk: i32,
+    current_ap: i32,
+    hand: &[CardId],
+    include_hand: bool,
+    dbs: &BattleDbs,
+) -> PlayerThreatContext {
+    let mut projected_ap = current_ap;
+    let mut attack_bonus = 0;
+    let mut fixed_damage_bonus = 0;
+    let mut defensive_value = 0.0;
+
+    if include_hand {
+        for card_id in hand {
+            let Some(card) = dbs.cards.get(card_id) else {
+                continue;
+            };
+            match &card.effect {
+                CardEffect::GainAp { amount } => {
+                    if current_ap >= card.cost_ap {
+                        projected_ap += *amount - card.cost_ap;
+                    }
+                }
+                CardEffect::NextAttackBoost { amount } => {
+                    if current_ap >= card.cost_ap {
+                        attack_bonus = attack_bonus.max(*amount);
+                    }
+                }
+                CardEffect::NextReactionFixedDamage { amount, .. }
+                | CardEffect::NextWindSpreadDamage { amount, .. } => {
+                    if current_ap >= card.cost_ap {
+                        fixed_damage_bonus = fixed_damage_bonus.max(*amount);
+                    }
+                }
+                CardEffect::GainShield { amount } => {
+                    if current_ap >= card.cost_ap {
+                        defensive_value += (*amount).max(0) as f32;
+                    }
+                }
+                CardEffect::NextShieldBoost { amount } | CardEffect::NextHealBoost { amount } => {
+                    if current_ap >= card.cost_ap {
+                        defensive_value += (*amount).max(0) as f32 * 0.7;
+                    }
+                }
+                CardEffect::CleanseOrGainAp { fallback_ap, .. } => {
+                    if current_ap >= card.cost_ap {
+                        projected_ap += *fallback_ap - card.cost_ap;
+                    }
+                }
+                CardEffect::DrawAndGainApIfAliveTeam { gain_ap, .. }
+                | CardEffect::ShieldAbsorbGainAp { amount: gain_ap } => {
+                    if current_ap >= card.cost_ap {
+                        projected_ap += *gain_ap - card.cost_ap;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    PlayerThreatContext {
+        skill_ids,
+        skill_count,
+        atk,
+        current_ap,
+        projected_ap: projected_ap.max(current_ap),
+        attack_bonus,
+        fixed_damage_bonus,
+        defensive_value,
+    }
 }
 
 pub(crate) fn score_card_for_skill(
@@ -401,6 +514,15 @@ fn projected_switch_followup_score(
         .unwrap_or(0.0)
 }
 
+type EnemySwitchContext<'a> = Option<(
+    &'a EnemySwitchCandidate,
+    &'a [EnemySwitchCandidate],
+    f32,
+    bool,
+    f32,
+    Option<PlayerThreatContext>,
+)>;
+
 pub(crate) fn choose_enemy_discard_for_followup(
     hand: &[CardId],
     current_ap: i32,
@@ -408,14 +530,7 @@ pub(crate) fn choose_enemy_discard_for_followup(
     skill_count: usize,
     dbs: &BattleDbs,
     ctx: &EnemyAiContext,
-    switch_context: Option<(
-        &EnemySwitchCandidate,
-        &[EnemySwitchCandidate],
-        f32,
-        bool,
-        f32,
-        Option<PlayerThreatContext>,
-    )>,
+    switch_context: EnemySwitchContext<'_>,
     weights: &EnemyAiWeights,
 ) -> Option<ScoredEnemyDiscard> {
     hand.iter()
@@ -541,6 +656,215 @@ pub(crate) fn choose_enemy_discard_for_followup(
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| b.index.cmp(&a.index))
         })
+}
+
+pub(crate) fn choose_enemy_plan_candidates(
+    hand: &[CardId],
+    current_ap: i32,
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+    switch_context: EnemySwitchContext<'_>,
+    weights: &EnemyAiWeights,
+    player_threat: Option<&PlayerThreatContext>,
+    search_depth: usize,
+    top_candidates: usize,
+) -> Vec<EnemyAiPlan> {
+    let candidate_cap = top_candidates.max(1);
+    let depth = search_depth.max(1);
+    let mut plans = Vec::new();
+
+    let chosen_skill = choose_enemy_skill_with_threat(
+        skill_ids,
+        skill_count,
+        current_ap,
+        dbs,
+        ctx,
+        weights,
+        player_threat,
+    );
+
+    if let Some(skill_candidate) = chosen_skill {
+        plans.push(EnemyAiPlan {
+            action: EnemyPlannedAction::UseSkill(skill_candidate),
+            score: skill_candidate.score,
+            summary: format!(
+                "UseSkill(slot={}, skill={:?}, score={:.2})",
+                skill_candidate.slot, skill_candidate.skill_id, skill_candidate.score
+            ),
+        });
+
+        if let Some(skill) = dbs.skills.get(&skill_candidate.skill_id) {
+            let available_ap_after_skill = current_ap - skill.cost_ap;
+            if let Some((card_index, card_score)) = hand
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(card_index, card_id)| {
+                    let card = dbs.cards.get(&card_id)?;
+                    score_card_for_skill(
+                        card,
+                        skill_candidate.kind,
+                        skill,
+                        ctx,
+                        dbs,
+                        available_ap_after_skill,
+                        weights,
+                    )
+                    .filter(|score| *score > 0.0)
+                    .map(|score| (card_index, score))
+                })
+                .max_by(|a, b| {
+                    a.1.partial_cmp(&b.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| b.0.cmp(&a.0))
+                })
+            {
+                let chain_bonus = if depth > 1 { 0.9 } else { 0.6 };
+                let total_score = skill_candidate.score + card_score * chain_bonus;
+                plans.push(EnemyAiPlan {
+                    action: EnemyPlannedAction::UseCardForSkill {
+                        card_index,
+                        skill: skill_candidate,
+                    },
+                    score: total_score,
+                    summary: format!(
+                        "UseCardForSkill(card_index={}, skill_slot={}, card_score={:.2}, total={:.2})",
+                        card_index, skill_candidate.slot, card_score, total_score
+                    ),
+                });
+            }
+        }
+    }
+
+    if let Some((current, candidates, current_best_action, already_switched, threshold, threat)) =
+        switch_context
+        && let Some(chosen_switch) = choose_enemy_switch(
+            current,
+            candidates,
+            current_best_action,
+            current_ap,
+            dbs,
+            ctx,
+            already_switched,
+            threshold,
+            weights,
+            threat.as_ref(),
+        )
+    {
+        plans.push(EnemyAiPlan {
+            action: EnemyPlannedAction::Switch(chosen_switch.clone()),
+            score: chosen_switch.score,
+            summary: format!(
+                "Switch(index={}, score={:.2})",
+                chosen_switch.index, chosen_switch.score
+            ),
+        });
+    }
+
+    if let Some(immediate_card) = choose_enemy_immediate_card(hand, current_ap, dbs, ctx, weights) {
+        let mut total_score = immediate_card.score;
+        if depth > 1
+            && let Some(card_id) = hand.get(immediate_card.index)
+            && let Some(card) = dbs.cards.get(card_id)
+            && let Some(ap_after_card) = projected_ap_after_immediate_card(card, current_ap, ctx)
+        {
+            let followup_skill = choose_enemy_skill_with_threat(
+                skill_ids,
+                skill_count,
+                ap_after_card,
+                dbs,
+                ctx,
+                weights,
+                player_threat,
+            )
+            .map(|chosen| chosen.score)
+            .unwrap_or(0.0);
+            let followup_switch =
+                projected_switch_followup_score(switch_context, ap_after_card, dbs, ctx, weights);
+            total_score += followup_skill.max(followup_switch) * 0.65;
+        }
+        plans.push(EnemyAiPlan {
+            action: EnemyPlannedAction::ImmediateCard(immediate_card.clone()),
+            score: total_score,
+            summary: format!(
+                "ImmediateCard(index={}, score={:.2})",
+                immediate_card.index, total_score
+            ),
+        });
+    }
+
+    if !hand.is_empty()
+        && let Some(discard) = choose_enemy_discard_for_followup(
+            hand,
+            current_ap,
+            skill_ids,
+            skill_count,
+            dbs,
+            ctx,
+            switch_context,
+            weights,
+        )
+        && discard.score > 0.0
+    {
+        plans.push(EnemyAiPlan {
+            action: EnemyPlannedAction::Discard(discard.clone()),
+            score: discard.score,
+            summary: format!(
+                "Discard(index={}, followup={:?}, score={:.2})",
+                discard.index, discard.followup, discard.score
+            ),
+        });
+    }
+
+    plans.push(EnemyAiPlan {
+        action: EnemyPlannedAction::EndTurn,
+        score: 0.0,
+        summary: "EndTurn".to_string(),
+    });
+
+    plans.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                planned_action_priority(&b.action).cmp(&planned_action_priority(&a.action))
+            })
+    });
+    plans.truncate(candidate_cap);
+    plans
+}
+
+#[cfg(test)]
+pub(crate) fn choose_enemy_plan(
+    hand: &[CardId],
+    current_ap: i32,
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+    switch_context: EnemySwitchContext<'_>,
+    weights: &EnemyAiWeights,
+    player_threat: Option<&PlayerThreatContext>,
+    search_depth: usize,
+    top_candidates: usize,
+) -> Option<EnemyAiPlan> {
+    choose_enemy_plan_candidates(
+        hand,
+        current_ap,
+        skill_ids,
+        skill_count,
+        dbs,
+        ctx,
+        switch_context,
+        weights,
+        player_threat,
+        search_depth,
+        top_candidates,
+    )
+    .into_iter()
+    .next()
 }
 
 fn enemy_hp_ratio(ctx: &EnemyAiContext) -> f32 {
@@ -1186,6 +1510,10 @@ fn threat_target_context(
         enemy_max_hp: 0,
         enemy_shield: 0,
         enemy_atk: threat.atk,
+        enemy_def: 0,
+        enemy_element: ElementType::Fire,
+        enemy_attached_auras: [None, None],
+        enemy_status_ids: Vec::new(),
         enemy_has_aura: false,
         enemy_has_cleansable_debuff: false,
         player_def: target.def,
@@ -1205,19 +1533,23 @@ fn player_threat_score(
     let Some(threat) = threat else {
         return 0.0;
     };
-    if target.hp <= 0 || threat.current_ap <= 0 {
+    let projected_ap = threat.projected_ap.max(threat.current_ap);
+    if target.hp <= 0 || projected_ap <= 0 {
         return 0.0;
     }
 
     let target_ctx = threat_target_context(target, threat);
-    let attack_value = best_attack_value(
+    let mut attack_value = best_attack_value(
         &threat.skill_ids,
         threat.skill_count,
-        threat.atk,
-        threat.current_ap,
+        threat.atk + threat.attack_bonus,
+        projected_ap,
         dbs,
         &target_ctx,
     );
+    if attack_value > 0.0 {
+        attack_value += threat.fixed_damage_bonus.max(0) as f32;
+    }
     let hp_ratio = if target.max_hp <= 0 {
         0.0
     } else {
@@ -1230,6 +1562,111 @@ fn player_threat_score(
     };
 
     attack_value + lethal_pressure
+}
+
+fn active_player_threat_score(
+    ctx: &EnemyAiContext,
+    threat: &PlayerThreatContext,
+    dbs: &BattleDbs,
+) -> f32 {
+    let target = EnemySwitchCandidate {
+        index: 0,
+        hp: ctx.enemy_hp,
+        max_hp: ctx.enemy_max_hp,
+        shield: ctx.enemy_shield,
+        atk: ctx.enemy_atk,
+        def: ctx.enemy_def,
+        element: ctx.enemy_element,
+        attached_auras: ctx.enemy_attached_auras,
+        skill_ids: [SkillId::FirePunch; 4],
+        skill_count: 0,
+        status_ids: ctx.enemy_status_ids.clone(),
+        has_aura: ctx.enemy_has_aura,
+        has_cleansable_debuff: ctx.enemy_has_cleansable_debuff,
+    };
+    player_threat_score(&target, Some(threat), dbs)
+}
+
+fn player_response_value(threat: &PlayerThreatContext, dbs: &BattleDbs) -> f32 {
+    let skill_response = threat
+        .skill_ids
+        .iter()
+        .copied()
+        .take(threat.skill_count)
+        .filter_map(|skill_id| dbs.skills.get(&skill_id))
+        .filter(|skill| threat.projected_ap >= skill.cost_ap)
+        .map(|skill| match primary_effect(&skill.effect) {
+            Some(SkillEffect::Heal { amount }) => *amount as f32,
+            Some(SkillEffect::Shield { amount }) => *amount as f32 * 0.8,
+            Some(SkillEffect::Cleanse { .. }) => 8.0,
+            Some(SkillEffect::Sequence { effects }) => effects
+                .iter()
+                .map(|effect| match effect {
+                    SkillEffect::Heal { amount } => *amount as f32,
+                    SkillEffect::Shield { amount } => *amount as f32 * 0.8,
+                    SkillEffect::Cleanse { .. } => 8.0,
+                    _ => 0.0,
+                })
+                .sum(),
+            _ => 0.0,
+        })
+        .fold(0.0, f32::max);
+
+    skill_response + threat.defensive_value
+}
+
+fn apply_player_threat_adjustment(
+    mut scored: ScoredEnemySkill,
+    skill: &SkillDef,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+    weights: &EnemyAiWeights,
+    player_threat: Option<&PlayerThreatContext>,
+) -> ScoredEnemySkill {
+    let Some(player_threat) = player_threat else {
+        return scored;
+    };
+
+    let incoming_threat = active_player_threat_score(ctx, player_threat, dbs);
+    let enemy_hp = ctx.enemy_hp.max(1) as f32;
+    let lethal_threat = incoming_threat >= enemy_hp;
+    let danger_pressure = (incoming_threat / enemy_hp).clamp(0.0, 2.0);
+    let player_response = player_response_value(player_threat, dbs);
+    let threat_weight = weights.player_threat;
+
+    match scored.kind {
+        EnemyAiSkillKind::Attack | EnemyAiSkillKind::Debuff => {
+            let attack_value = estimate_attack_value(skill, ctx, dbs).max(0.0);
+            if attack_value >= ctx.player_hp.max(0) as f32 {
+                scored.score += (24.0 + player_response * 0.35 + danger_pressure * 8.0)
+                    * weights.kill_bonus
+                    * threat_weight;
+            } else if player_response > 0.0 && ctx.player_hp <= 12 {
+                scored.score += attack_value.min(18.0) * 0.35 * threat_weight;
+            }
+        }
+        EnemyAiSkillKind::Heal => {
+            if let Some(SkillEffect::Heal { amount }) = primary_effect(&skill.effect) {
+                let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0) as f32;
+                let effective_heal = (*amount as f32).min(missing_hp + incoming_threat * 0.35);
+                scored.score += effective_heal * (0.6 + danger_pressure * 0.5) * threat_weight;
+            }
+            if lethal_threat {
+                scored.score += 22.0 * threat_weight;
+            }
+        }
+        EnemyAiSkillKind::Shield => {
+            if let Some(SkillEffect::Shield { amount }) = primary_effect(&skill.effect) {
+                let prevented = (*amount as f32).min(incoming_threat.max(0.0));
+                scored.score += prevented * (0.9 + danger_pressure * 0.4) * threat_weight;
+            }
+            if lethal_threat {
+                scored.score += 18.0 * threat_weight;
+            }
+        }
+    }
+
+    scored
 }
 
 fn status_pressure(status_ids: &[String], has_aura: bool, has_cleansable_debuff: bool) -> f32 {
@@ -1395,8 +1832,28 @@ pub(crate) fn choose_enemy_skill(
     ctx: &EnemyAiContext,
     weights: &EnemyAiWeights,
 ) -> Option<ScoredEnemySkill> {
+    choose_enemy_skill_with_threat(skill_ids, skill_count, current_ap, dbs, ctx, weights, None)
+}
+
+pub(crate) fn choose_enemy_skill_with_threat(
+    skill_ids: &[SkillId; 4],
+    skill_count: usize,
+    current_ap: i32,
+    dbs: &BattleDbs,
+    ctx: &EnemyAiContext,
+    weights: &EnemyAiWeights,
+    player_threat: Option<&PlayerThreatContext>,
+) -> Option<ScoredEnemySkill> {
     enemy_skill_candidates(skill_ids, skill_count, current_ap, dbs, ctx, weights)
         .into_iter()
+        .map(|scored| {
+            dbs.skills
+                .get(&scored.skill_id)
+                .map(|skill| {
+                    apply_player_threat_adjustment(scored, skill, ctx, dbs, weights, player_threat)
+                })
+                .unwrap_or(scored)
+        })
         .max_by(|a, b| {
             a.score
                 .partial_cmp(&b.score)
@@ -1641,6 +2098,10 @@ mod tests {
             enemy_max_hp: 20,
             enemy_shield: 0,
             enemy_atk: 5,
+            enemy_def: 5,
+            enemy_element: ElementType::Fire,
+            enemy_attached_auras: [None, None],
+            enemy_status_ids: Vec::new(),
             enemy_has_aura: false,
             enemy_has_cleansable_debuff: false,
             player_def: 5,
@@ -1857,6 +2318,10 @@ mod tests {
             skill_count: 1,
             atk: 10,
             current_ap: 3,
+            projected_ap: 3,
+            attack_bonus: 0,
+            fixed_damage_bonus: 0,
+            defensive_value: 0.0,
         };
         let with_threat = choose_enemy_switch(
             &current,
@@ -1873,6 +2338,250 @@ mod tests {
 
         assert_eq!(without_threat.map(|chosen| chosen.index), Some(1));
         assert!(with_threat.is_none());
+    }
+
+    #[test]
+    fn player_hand_projection_adds_visible_ap_and_attack_pressure() {
+        let ap_card = CardDef {
+            id: CardId::GainAp,
+            name: "整备".to_string(),
+            cost_ap: 0,
+            effect: CardEffect::GainAp { amount: 2 },
+        };
+        let attack_card = CardDef {
+            id: CardId::NextAttackBoost,
+            name: "猛攻".to_string(),
+            cost_ap: 0,
+            effect: CardEffect::NextAttackBoost { amount: 6 },
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::new(),
+            cards: HashMap::from([(ap_card.id, ap_card), (attack_card.id, attack_card)]),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+        let hand = [CardId::GainAp, CardId::NextAttackBoost];
+
+        let public =
+            build_player_threat_context([SkillId::FirePunch; 4], 0, 5, 1, &hand, false, &dbs);
+        let full = build_player_threat_context([SkillId::FirePunch; 4], 0, 5, 1, &hand, true, &dbs);
+
+        assert_eq!(public.projected_ap, 1);
+        assert_eq!(public.attack_bonus, 0);
+        assert_eq!(full.projected_ap, 3);
+        assert_eq!(full.attack_bonus, 6);
+    }
+
+    #[test]
+    fn player_threat_can_push_high_difficulty_ai_to_shield() {
+        let attack = SkillDef {
+            id: SkillId::FirePunch,
+            name: "火拳".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 12,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let shield = SkillDef {
+            id: SkillId::WaterScreen,
+            name: "水幕".to_string(),
+            category: SkillCategory::SelfUtility,
+            cost_ap: 1,
+            effect: SkillEffect::Shield { amount: 14 },
+            element: None,
+            base_accuracy: None,
+        };
+        let player_attack = SkillDef {
+            id: SkillId::WaterBlade,
+            name: "水刃".to_string(),
+            category: SkillCategory::ElementAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 22,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Water),
+            base_accuracy: None,
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([
+                (attack.id, attack),
+                (shield.id, shield),
+                (player_attack.id, player_attack),
+            ]),
+            cards: HashMap::new(),
+            elements: ElementDb::from_default_config(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+        let mut ctx = test_ai_context(Vec::new());
+        ctx.enemy_hp = 18;
+        ctx.enemy_max_hp = 40;
+        ctx.enemy_element = ElementType::Fire;
+        ctx.enemy_def = 0;
+        let skills = [
+            SkillId::FirePunch,
+            SkillId::WaterScreen,
+            SkillId::FirePunch,
+            SkillId::FirePunch,
+        ];
+        let player_threat =
+            build_player_threat_context([SkillId::WaterBlade; 4], 1, 12, 1, &[], false, &dbs);
+
+        let default_choice =
+            choose_enemy_skill(&skills, 2, 2, &dbs, &ctx, &EnemyAiWeights::default())
+                .expect("AI should choose a skill without threat modeling");
+        let threatened_choice = choose_enemy_skill_with_threat(
+            &skills,
+            2,
+            2,
+            &dbs,
+            &ctx,
+            &EnemyAiWeights::default(),
+            Some(&player_threat),
+        )
+        .expect("high-difficulty threat model should choose a defensive skill");
+
+        assert_eq!(default_choice.skill_id, SkillId::FirePunch);
+        assert_eq!(threatened_choice.skill_id, SkillId::WaterScreen);
+    }
+
+    #[test]
+    fn planner_prefers_card_into_skill_sequence() {
+        let attack = SkillDef {
+            id: SkillId::FirePunch,
+            name: "火拳".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 12,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let boost = CardDef {
+            id: CardId::NextAttackBoost,
+            name: "猛攻".to_string(),
+            cost_ap: 0,
+            effect: CardEffect::NextAttackBoost { amount: 6 },
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([(attack.id, attack)]),
+            cards: HashMap::from([(boost.id, boost)]),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+        let ctx = test_ai_context(Vec::new());
+        let hand = [CardId::NextAttackBoost];
+        let skills = [SkillId::FirePunch; 4];
+
+        let plan = choose_enemy_plan(
+            &hand,
+            2,
+            &skills,
+            1,
+            &dbs,
+            &ctx,
+            None,
+            &EnemyAiWeights::default(),
+            None,
+            2,
+            4,
+        )
+        .expect("planner should produce an action");
+
+        assert!(matches!(
+            plan.action,
+            EnemyPlannedAction::UseCardForSkill { card_index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn planner_can_choose_discard_to_unlock_skill() {
+        let attack = SkillDef {
+            id: SkillId::FirePunch,
+            name: "火拳".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 2,
+            effect: SkillEffect::Attack {
+                power: 12,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let weak_card = CardDef {
+            id: CardId::Pursuit,
+            name: "追击补牌".to_string(),
+            cost_ap: 0,
+            effect: CardEffect::DrawIfKnockedOutThisTurn { amount: 1 },
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([(attack.id, attack)]),
+            cards: HashMap::from([(weak_card.id, weak_card)]),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+        let ctx = test_ai_context(Vec::new());
+        let hand = [CardId::Pursuit];
+        let skills = [SkillId::FirePunch; 4];
+
+        let plan = choose_enemy_plan(
+            &hand,
+            1,
+            &skills,
+            1,
+            &dbs,
+            &ctx,
+            None,
+            &EnemyAiWeights::default(),
+            None,
+            2,
+            4,
+        )
+        .expect("planner should choose a discard sequence");
+
+        assert!(matches!(plan.action, EnemyPlannedAction::Discard(_)));
+    }
+
+    #[test]
+    fn planner_can_choose_switch_into_better_action() {
+        let dbs = test_switch_dbs();
+        let ctx = test_ai_context(Vec::new());
+        let current = test_switch_candidate(0, 8, 40, 0, ElementType::Dark);
+        let mut striker = test_switch_candidate(1, 34, 40, 0, ElementType::Dark);
+        striker.atk = 32;
+        let candidates = [current.clone(), striker];
+        let skills = [SkillId::FirePunch; 4];
+
+        let plan = choose_enemy_plan(
+            &[],
+            3,
+            &skills,
+            0,
+            &dbs,
+            &ctx,
+            Some((&current, &candidates, 0.0, false, 18.0, None)),
+            &EnemyAiWeights::default(),
+            None,
+            2,
+            4,
+        )
+        .expect("planner should choose switch when it is the only valuable sequence");
+
+        assert!(matches!(plan.action, EnemyPlannedAction::Switch(_)));
     }
 
     #[test]

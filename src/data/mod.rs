@@ -397,6 +397,27 @@ mod tests {
         assert_eq!(config.deck.len(), 140);
         assert_eq!(config.cards.len(), 17);
     }
+
+    #[test]
+    fn ai_difficulty_presets_scale_planning_and_visibility() {
+        let easy = EnemyAiConfig::preset(AiDifficulty::Easy);
+        let normal = EnemyAiConfig::preset(AiDifficulty::Normal);
+        let hard = EnemyAiConfig::preset(AiDifficulty::Hard);
+        let expert = EnemyAiConfig::preset(AiDifficulty::Expert);
+
+        assert_eq!(easy.difficulty, AiDifficulty::Easy);
+        assert_eq!(easy.player_info_visibility, AiPlayerInfoVisibility::None);
+        assert_eq!(easy.search_depth, 1);
+        assert_eq!(
+            normal.player_info_visibility,
+            AiPlayerInfoVisibility::Public
+        );
+        assert_eq!(hard.search_depth, 2);
+        assert_eq!(hard.player_info_visibility, AiPlayerInfoVisibility::Public);
+        assert_eq!(expert.search_depth, 3);
+        assert_eq!(expert.player_info_visibility, AiPlayerInfoVisibility::Full);
+        assert!(expert.weights.player_threat > hard.weights.player_threat);
+    }
 }
 
 /// 技能唯一标识（逻辑层使用）。
@@ -725,6 +746,74 @@ pub struct EnemyAiConfig {
     pub random_score_jitter: f32,
     #[serde(default)]
     pub weights: EnemyAiWeights,
+}
+
+impl EnemyAiConfig {
+    pub fn preset(difficulty: AiDifficulty) -> Self {
+        match difficulty {
+            AiDifficulty::Easy => Self {
+                difficulty,
+                player_info_visibility: AiPlayerInfoVisibility::None,
+                search_depth: 1,
+                top_candidates: 2,
+                switch_score_threshold: 24.0,
+                random_score_jitter: 2.0,
+                weights: EnemyAiWeights {
+                    attack_value: 0.85,
+                    kill_bonus: 0.8,
+                    healing_value: 0.75,
+                    shield_value: 0.75,
+                    status_value: 0.65,
+                    reaction_value: 0.65,
+                    switch_value: 0.7,
+                    card_value: 0.75,
+                    discard_value: 0.85,
+                    player_threat: 0.0,
+                },
+            },
+            AiDifficulty::Normal => Self::default(),
+            AiDifficulty::Hard => Self {
+                difficulty,
+                player_info_visibility: AiPlayerInfoVisibility::Public,
+                search_depth: 2,
+                top_candidates: 6,
+                switch_score_threshold: 14.0,
+                random_score_jitter: 0.0,
+                weights: EnemyAiWeights {
+                    attack_value: 1.1,
+                    kill_bonus: 1.2,
+                    healing_value: 1.1,
+                    shield_value: 1.1,
+                    status_value: 1.15,
+                    reaction_value: 1.2,
+                    switch_value: 1.15,
+                    card_value: 1.1,
+                    discard_value: 1.1,
+                    player_threat: 1.2,
+                },
+            },
+            AiDifficulty::Expert => Self {
+                difficulty,
+                player_info_visibility: AiPlayerInfoVisibility::Full,
+                search_depth: 3,
+                top_candidates: 8,
+                switch_score_threshold: 10.0,
+                random_score_jitter: 0.0,
+                weights: EnemyAiWeights {
+                    attack_value: 1.2,
+                    kill_bonus: 1.45,
+                    healing_value: 1.2,
+                    shield_value: 1.2,
+                    status_value: 1.3,
+                    reaction_value: 1.35,
+                    switch_value: 1.25,
+                    card_value: 1.2,
+                    discard_value: 1.2,
+                    player_threat: 1.55,
+                },
+            },
+        }
+    }
 }
 
 impl Default for EnemyAiConfig {

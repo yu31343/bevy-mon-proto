@@ -8,10 +8,12 @@ use crate::{
     game_state::GameState,
     pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
     team_selection::{
-        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        AiDifficultyButton, AiDifficultyButtonText, AiDifficultySelectorRoot,
+        AiDifficultySummaryText, BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
-        SelectionCountText, SelectionEntryMode, SelectionInstructionsText, SelectionOrderText,
-        SelectionStage, SelectionState, SelectionTitleText,
+        SelectedAiDifficulty, SelectionCountText, SelectionEntryMode, SelectionInstructionsText,
+        SelectionOrderText, SelectionStage, SelectionState, SelectionTitleText,
+        ai_difficulty_description, ai_difficulty_label,
     },
     ui::battle::theme::UiTheme,
 };
@@ -54,6 +56,24 @@ pub fn button_select_monster_system(
     }
 }
 
+pub fn button_select_ai_difficulty_system(
+    mut interaction_query: Query<
+        (&Interaction, &AiDifficultyButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    entry_mode: Res<SelectionEntryMode>,
+    mut selected_ai: ResMut<SelectedAiDifficulty>,
+) {
+    if *entry_mode != SelectionEntryMode::VsAi {
+        return;
+    }
+    for (interaction, button) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            selected_ai.difficulty = button.difficulty;
+        }
+    }
+}
+
 /// System to handle confirm button click.
 pub fn button_confirm_selection_system(
     mut interaction_query: Query<
@@ -68,6 +88,7 @@ pub fn button_confirm_selection_system(
     entry_mode: Res<SelectionEntryMode>,
     monster_pool: Res<MonsterPool>,
     rules: Res<BattleRules>,
+    selected_ai: Res<SelectedAiDifficulty>,
     mut map_battle_context: ResMut<MapBattleContext>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
@@ -123,8 +144,13 @@ pub fn button_confirm_selection_system(
                     ConsoleLogCategory::Selection,
                     format!("AI选择：{}", monster_names(&enemy_indices, &monster_pool)),
                 );
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!("AI难度：{}", ai_difficulty_label(selected_ai.difficulty)),
+                );
                 console_log(ConsoleLogCategory::Selection, "================");
 
+                commands.insert_resource(selected_ai.config());
                 commands.insert_resource(BattleControlMode::PlayerVsAi);
                 commands.insert_resource(TeamSelections {
                     player_indices: selection_state.selected_indices.clone(),
@@ -399,6 +425,76 @@ pub fn update_selection_ui_system(
                 *border = BorderColor::all(Color::srgb(0.4, 0.4, 0.4));
             }
         }
+    }
+}
+
+pub fn update_ai_difficulty_ui_system(
+    entry_mode: Res<SelectionEntryMode>,
+    selected_ai: Res<SelectedAiDifficulty>,
+    theme: Res<UiTheme>,
+    mut root_query: Query<&mut Visibility, With<AiDifficultySelectorRoot>>,
+    mut button_query: Query<
+        (
+            &Interaction,
+            &AiDifficultyButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Button>,
+    >,
+    mut button_text_query: Query<
+        (&AiDifficultyButtonText, &mut Text),
+        Without<AiDifficultySummaryText>,
+    >,
+    mut summary_query: Query<
+        &mut Text,
+        (
+            With<AiDifficultySummaryText>,
+            Without<AiDifficultyButtonText>,
+        ),
+    >,
+) {
+    let visible = *entry_mode == SelectionEntryMode::VsAi;
+    for mut visibility in &mut root_query {
+        *visibility = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !visible {
+        return;
+    }
+
+    for (interaction, button, mut bg, mut border) in &mut button_query {
+        let selected = button.difficulty == selected_ai.difficulty;
+        if selected {
+            *bg = BackgroundColor(Color::srgb(0.18, 0.42, 0.74));
+            *border = BorderColor::all(Color::srgb(0.45, 0.72, 1.0));
+        } else if *interaction == Interaction::None {
+            *bg = BackgroundColor(theme.button_idle);
+            *border = BorderColor::all(theme.button_border_idle);
+        }
+    }
+
+    for (button_text, mut text) in &mut button_text_query {
+        **text = if button_text.difficulty == selected_ai.difficulty {
+            format!("✓ {}", ai_difficulty_label(button_text.difficulty))
+        } else {
+            ai_difficulty_label(button_text.difficulty).to_string()
+        };
+    }
+
+    for mut text in &mut summary_query {
+        let config = selected_ai.config();
+        **text = format!(
+            "当前：{} — {} 深度={}；候选={}；信息={:?}",
+            ai_difficulty_label(selected_ai.difficulty),
+            ai_difficulty_description(selected_ai.difficulty),
+            config.search_depth,
+            config.top_candidates,
+            config.player_info_visibility
+        );
     }
 }
 
