@@ -39,55 +39,326 @@ registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
 
 
 
-# 一、 项目核心开发内容 (MVP 阶段)
+# 一、项目当前状态
 
-核心开发围绕“数据-逻辑-表现”三个维度展开，确保游戏闭环的完整性。
+本项目当前是一个基于 Rust + Bevy 的 2D 回合制精灵对战原型，已从早期 MVP 描述推进到较完整的“大厅 / 地图 / 队伍选择 / 本地战斗 / 局域网或中继 PVP / 日志导出”闭环。
 
-## 1. 核心架构与数据驱动
-* **ECS 实体组件系统：** 将精灵（Entity）拆解为基础属性（Health, Attack, Speed）、技能列表（SkillList）和视觉状态（SpriteBundle）等独立组件。
-* **数据解耦：** 建立基于配置（如 TOML/JSON）的精灵原型库，实现“数据定义属性，代码驱动逻辑”的解耦模式。
+核心开发方向已经从“单场战斗验证”扩展为：
 
-## 2. 回合制战斗逻辑状态机
-* **行动流控：** 基于 Bevy `States` 实现战斗周期的严格管理：
-    * **判定阶段：** 依据 `Speed` 属性计算行动顺序切片。
-    * **指令阶段：** 等待玩家输入或 AI 决策。
-    * **结算阶段：** 计算属性变化、触发技能特效、判定胜负。
-* **伤害演算：** 实现标准的减法或乘法伤害公式，支持防御减伤与属性克制。
-
-## 3. UI 交互与视觉呈现
-* **动态 UI 系统：** 实时同步实体属性至 UI 界面（如血条 `ProgressBar`、技能菜单）。
-* **战斗表现：** 利用 `bevy_tweening` 实现精灵的攻击平移、受击震动及数值漂浮文字。
-
-## 4. 基础 AI 行为
-* **决策模型：** 实现基于权重或简单规则的 AI（如：生命值低于 20% 优先回血，否则执行最高伤害攻击）。
+- **数据驱动战斗内容**：技能、精灵、卡牌、元素克制、状态、反应、战斗规则等统一从 `assets/data/battle_data.ron` 加载。
+- **双状态机战斗流程**：顶层 `GameState` 管理大厅、地图、队伍选择、战斗、结果；嵌套 `BattlePhase` 管理战斗初始化、回合开始、玩家回合、敌方回合、弃牌、结算、死亡处理。
+- **本地与 PVP 共用战斗系统**：Vs AI、调试双方控制、PVP 模式都复用同一套战斗资源和 UI。
+- **卡牌与队伍策略**：每场战斗使用共享抽牌堆 / 弃牌堆，卡牌可影响 AP、护盾、治疗、元素附着、反应、抽牌和战术整理。
+- **结构化调试能力**：控制台日志、`StructuredBattleLog`、`ReplayEventLog`、`ActionTrace` 共同用于战斗复盘和问题定位。
+- **Spine 动画表现**：战斗中可加载 Spine 精灵动画和 VFX，并根据战斗消息驱动表现层反馈。
 
 ---
 
-# 二、 潜在拓展功能 (进阶阶段)
+# 二、使用方法
 
-在核心原型稳定后，可根据开发周期逐步引入以下模块以提升游戏深度：
+## 1. 环境准备
 
-* **养成系统：** 引入经验值（XP）与等级（Level）组件，实现战斗后的属性成长。
-* **探索机制：** 基于 `bevy_ecs_tilemap` 构建 2D 地图，实现野外遇敌与精灵捕捉逻辑。
-* **社交与竞技：** 利用 Rust 优秀的异步网络库（如 `tokio` / `renet`）尝试基础的局域网 PVP 对战。
-* **表现增强：** 增加粒子特效（技能释放）与骨骼动画（精灵待机动作）。
+建议使用较新的 Rust stable 工具链，并从仓库根目录执行命令。
+
+```bash
+rustup update
+cargo --version
+```
+
+本项目启动和测试依赖固定相对路径读取资源，请确保工作目录是项目根目录。
+
+## 2. 资源要求
+
+构建前需要满足：
+
+- `assets/fonts/` 下至少存在一个 `.ttf`、`.otf` 或 `.ttc` 字体文件。
+- `assets/data/battle_data.ron` 存在且可被解析。
+
+`build.rs` 会按文件名排序选择第一个支持的字体并嵌入 UI 字体资源；如果没有字体文件，构建会失败。
+
+## 3. 常用命令
+
+```bash
+# 快速编译检查
+cargo check
+
+# 格式化代码
+cargo fmt --all
+
+# 运行 Clippy，并将警告视为错误
+cargo clippy --all-targets -- -D warnings
+
+# 运行全部测试
+cargo test
+
+# 运行单个测试
+cargo test <test_name>
+
+# 运行单个测试并显示 println!/debug 输出
+cargo test <test_name> -- --nocapture
+
+# 从仓库根目录启动游戏
+cargo run
+
+# 构建 release 版本
+cargo build --release
+```
+
+> 注意：当前 `Cargo.toml` 默认启用了 Bevy 的 `dynamic_linking` 特性以加快开发迭代。该模式下 `cargo run` 正常可用，但生成的可执行文件不是独立发布包。需要发布独立 release 时，请先移除 `dynamic_linking`，再执行 `cargo build --release`。
 
 ---
 
-# 三、 项目特色与创新点
+# 三、游戏流程说明
 
-本项目不仅是简单的复刻，更在技术栈应用与设计理念上具备独特性：
+## 1. 大厅
 
-## 1. 技术栈的前沿性与高性能
-* **内存安全保证：** 利用 Rust 的所有权机制，从底层根除空指针及资源竞态问题，确保战斗系统在高并发（如大规模 AI 运算）下的稳定性。
-* **数据驱动的 ECS 范式：** 相比传统 OOP 游戏开发，本项目采用 Bevy 的 ECS 架构。这种**“组合优于继承”**的设计使得精灵的功能扩展极其灵活——只需为实体挂载一个新的 `Component`，即可为其增加全新的战斗机制（如“反击”或“光环”）。
+游戏启动后进入大厅。大厅可进入：
 
-## 2. 极致的模块化设计
-* **插件化架构：** 将战斗、AI、UI 各自封装为 Bevy `Plugin`。这意味着战斗逻辑可以无缝迁移到不同的场景（如从 2D 切换到 3D），或者方便地进行单元测试。
+- VS AI 队伍选择
+- 地图探索
+- PVP 大厅
+- 精灵图鉴 / 调试入口
 
-## 3. 策略深度的潜力
-* **基于“速度流”的动态回合：** 不同于固定的你一刀我一刀，系统支持基于速度属性的动态排序，为后续引入“拉条”、“控制速度”等高级策略打下基础。
+## 2. 地图探索
 
-## 4. 开发者友好型工具链
-* **热重载支持：** 结合 Rust 的编译特性与 Bevy 的资源管理，项目可实现不重启程序即可修改精灵数值或技能效果，极大提升了策划调优的效率。
+地图模式提供当前原型阶段的简单 overworld：
 
+- 玩家可移动角色。
+- 地图上会生成怪物标记。
+- 点击地图怪物后，会记录该怪物作为敌方目标，并进入队伍选择。
+
+## 3. 队伍选择
+
+队伍选择支持三种入口模式：
+
+- **Vs AI**：玩家只选择我方队伍，敌方由地图目标或 AI 自动选择生成。
+- **Debug**：开发调试模式，玩家可先选我方，再选敌方，方便复现战斗问题。
+- **PVP**：本地提交队伍后等待远端队伍，通过 PVP 协议进入战斗。
+
+## 4. 战斗
+
+战斗按回合进行，核心流程为：
+
+1. 初始化双方队伍、手牌、AP、共享卡堆和随机种子。
+2. 回合开始：双方抽牌、获得 AP、清理回合级卡牌效果。
+3. 根据有效速度决定先手，速度相同时交替先手。
+4. 玩家 / 敌方依次行动：使用技能、使用卡牌、弃牌换 AP、换人或结束回合。
+5. 若手牌超过保留上限，进入强制弃牌阶段。
+6. 检查倒下、自动或手动换人、胜负结果。
+7. 进入结果页，可返回大厅并重置选择状态。
+
+## 5. PVP
+
+PVP 支持：
+
+- 局域网直连 TCP。
+- 中继服务器模式。
+- 协议版本校验。
+- 战斗数据 hash 校验。
+- Host 权威战斗：客户端发送意图，Host 应用并广播反馈 / 快照。
+
+当协议版本或双方战斗数据不一致时，握手会失败并在 UI 与控制台日志中提示原因。
+
+---
+
+# 四、架构概览
+
+## 1. 插件入口
+
+`src/main.rs` 负责注册顶层状态和插件。主要插件包括：
+
+- `DataPlugin`：加载战斗数据。
+- `UiPlugin`：共享 UI 主题、字体、战斗 UI 生命周期。
+- `LobbyPlugin`：大厅入口。
+- `MapPlugin`：地图探索。
+- `PvpPlugin`：PVP 大厅、网络、同步。
+- `TeamSelectionPlugin`：队伍选择。
+- `BattlePlugin`：战斗状态机和战斗系统。
+- `SpineAnimPlugin`：Spine 动画和 VFX。
+
+## 2. 数据驱动
+
+战斗数据集中在：
+
+```text
+assets/data/battle_data.ron
+```
+
+当前数据包括：
+
+- 战斗规则
+- 公式规则
+- 元素克制矩阵
+- 状态定义
+- 元素反应定义
+- 技能定义
+- 精灵原型
+- 卡牌定义
+- 初始牌组顺序
+
+启动时会插入 `BattleDbs`、`MonsterPool`、`CardDeck`、`BattleRules`、`BattleFormulaRules`、`BattleRulesBundle`、`BattleDataStatus` 等资源。
+
+如果读取、解析或校验失败，系统会插入 fallback 资源，并把失败原因写入 `BattleDataStatus.error`。下游系统应以该资源作为权威失败信号。
+
+## 3. 战斗资源与消息
+
+战斗参与者是 Bevy ECS 实体，通过组件组合描述：
+
+- `Combatant`
+- `Stats`
+- `SkillList`
+- `SkillCount`
+- `Shield`
+- `ElementAura`
+- `StatusBoard`
+- `InBattle`
+
+核心资源包括：
+
+- `PlayerTeam` / `EnemyTeam`
+- `TurnContext`
+- `ActionPoints`
+- `Hand`
+- `CardPiles`
+- `PendingBoosts`
+- `BattleResult`
+- `PendingKoResolution`
+- `StructuredBattleLog`
+- `ReplayEventLog`
+- `ActionTrace`
+
+核心战斗反馈通过 Bevy message 传递，例如：
+
+- `BattleEvent`
+- `BattleTraceEvent`
+- `BattleStateEvent`
+- `BattleLifecycleEvent`
+- `BattleFormulaEvent`
+- `BattleStatusEvent`
+
+这使得核心逻辑、UI、动画表现、日志系统之间保持相对解耦。
+
+---
+
+# 五、控制台日志与调试
+
+当前项目已接入统一控制台日志模块 `src/console_log.rs`。默认日志强调人类可读，适合直接观察一场战斗流程。
+
+## 1. 默认会输出的内容
+
+默认运行 `cargo run` 时，控制台会输出：
+
+- 数据加载成功 / 失败摘要。
+- 队伍选择结果。
+- 地图点击怪物。
+- 战斗初始化摘要：模式、随机种子、双方队伍、规则。
+- 初始手牌和每回合抽牌。
+- 回合先手、速度、AP、手牌数量。
+- 技能、卡牌、弃牌、伤害、治疗、护盾、元素附着、反应、换人、倒下、胜负。
+- PVP 建房、连接、握手、失败、断线摘要。
+- AI 实际选择：技能、换人、结束回合、辅助使用增益卡。
+
+日志示例：
+
+```text
+[data] [ok] battle_data.ron 加载完成：skills=... cards=... monsters=... statuses=... reactions=... deck=... element_matrix=config
+[selection] 玩家选择：...
+[battle] [battle-init] 模式=PlayerVsAi；随机种子=...；我方=[...]；敌方=[...]
+[cards] [battle-init] 初始手牌：我方=[...]；敌方=[...]；牌堆 ... 张；弃牌 ... 张
+[battle] [round 1] 先手=Player；玩家Spd=...；敌方Spd=...；玩家AP=...；敌方AP=...
+[ai] [round 1][enemy] 选择技能：...；槽位=...；得分=...；AP ... -> ...
+```
+
+## 2. 环境变量
+
+可通过环境变量打开更详细的 debug 日志：
+
+| 环境变量 | 作用 |
+|---|---|
+| `BEVY_MON_LOG_DEBUG=1` | 打开战斗 debug、公式、状态、状态快照、ActionTrace，并联动卡堆 / PVP / AI 细节。 |
+| `BEVY_MON_LOG_BATTLE_DEBUG=1` | 只打开战斗结构化 debug 输出。 |
+| `BEVY_MON_LOG_CARDS=1` | 打开卡堆细节，例如牌堆耗尽、弃牌堆重洗、基础牌组重建。 |
+| `BEVY_MON_LOG_PVP=1` | 打开 PVP intent、snapshot、data hash 等同步细节。 |
+| `BEVY_MON_LOG_AI=1` | 打开 AI 候选技能、候选换人等决策细节。 |
+
+## 3. 使用示例
+
+Linux / macOS：
+
+```bash
+BEVY_MON_LOG_DEBUG=1 cargo run
+BEVY_MON_LOG_CARDS=1 cargo run
+BEVY_MON_LOG_PVP=1 cargo run
+BEVY_MON_LOG_AI=1 cargo run
+```
+
+Windows PowerShell：
+
+```powershell
+$env:BEVY_MON_LOG_DEBUG="1"; cargo run
+$env:BEVY_MON_LOG_CARDS="1"; cargo run
+$env:BEVY_MON_LOG_PVP="1"; cargo run
+$env:BEVY_MON_LOG_AI="1"; cargo run
+```
+
+Git Bash / Bash on Windows：
+
+```bash
+BEVY_MON_LOG_DEBUG=1 cargo run
+```
+
+## 4. 结构化日志与导出
+
+运行期还维护：
+
+- `BattleLog`：UI 和控制台可读的短文本日志。
+- `StructuredBattleLog`：阶段、状态快照、公式摘要等结构化调试信息。
+- `ReplayEventLog`：可导出的战斗事件序列。
+- `ActionTrace`：行动链路追踪，记录回合、阵营、动作和细节。
+
+结果页可导出 replay 与 action trace，用于复盘战斗顺序、排查状态或卡牌效果问题。
+
+---
+
+# 六、开发状态与后续方向
+
+## 已具备
+
+- 大厅、地图、队伍选择、战斗、结果返回的基本闭环。
+- Vs AI、Debug 双方控制、PVP 三类战斗入口。
+- 数据驱动技能、状态、反应、精灵、卡牌和规则。
+- 共享抽牌堆 / 弃牌堆与 per-battle 洗牌种子。
+- AP、手牌上限、强制弃牌、战术整理等卡牌资源系统。
+- 元素附着、元素克制、元素反应、风扩散、状态 tick、属性等级修正。
+- PVP 协议握手、数据 hash 校验、host 权威 intent / snapshot 同步。
+- Spine 战斗动画与 VFX 原型。
+- 控制台可读日志、结构化日志、ActionTrace 和导出能力。
+
+## 仍可深化
+
+- 更完整的 AI 候选评分解释与战术策略。
+- 更多卡牌效果触发原因和抽牌细节日志。
+- PVP battle feedback、snapshot 发送 / 应用的更完整可视化调试。
+- Spine 表现层日志与统一控制台日志进一步整合。
+- 地图探索、养成、捕捉、图鉴等战斗外玩法。
+- 更完整的战斗 replay 回放与自动化复盘工具。
+
+---
+
+# 七、测试与质量要求
+
+提交修改前建议至少运行：
+
+```bash
+cargo fmt --all
+cargo check
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+如果修改了战斗数据或战斗公式，建议额外：
+
+- 运行数据解析相关测试。
+- 进入 Vs AI 战斗手动验证一局。
+- 打开 `BEVY_MON_LOG_DEBUG=1` 观察公式、状态、ActionTrace 是否符合预期。
+- 如果改动涉及 PVP，至少验证 host/client 握手和数据 hash 一致性。
