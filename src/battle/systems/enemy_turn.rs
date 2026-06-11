@@ -9,6 +9,7 @@ use crate::{
         next_phase_after_side_end, note_action_phase, push_named_action_trace,
         push_turn_action_trace, transfer_status_by_id,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{
         BattleDbs, BattleRules, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect,
         SkillId, StatusCategory,
@@ -1900,6 +1901,10 @@ pub fn enemy_turn_ai_system(
     };
 
     if action_points.enemy <= 0 {
+        console_log(
+            ConsoleLogCategory::Ai,
+            format!("[round {}][enemy] 结束回合：无可用 AP", logs.turn_count.0),
+        );
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -2018,6 +2023,26 @@ pub fn enemy_turn_ai_system(
             &dbs,
             &ai_ctx,
         );
+        if let Some(candidate) = chosen_skill
+            && let Some(skill) = dbs.skills.get(&candidate.skill_id)
+        {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 技能候选最优：{}；槽位={}；类型={:?}；得分={:.2}；当前AP={}；敌方HP={}/{}；玩家HP={}；玩家护盾={}",
+                    logs.turn_count.0,
+                    skill.name,
+                    candidate.slot,
+                    candidate.kind,
+                    candidate.score,
+                    action_points.enemy,
+                    e_hp,
+                    e_max_hp,
+                    p_hp,
+                    p_shield_value
+                ),
+            );
+        }
         let current_switch_candidate = EnemySwitchCandidate {
             index: enemy_team.0.active_index,
             hp: e_hp,
@@ -2071,6 +2096,30 @@ pub fn enemy_turn_ai_system(
                 })
             })
             .collect::<Vec<_>>();
+        if crate::console_log::log_enabled(ConsoleLogCategory::AiDetail) {
+            let candidate_text = enemy_switch_candidates
+                .iter()
+                .map(|candidate| {
+                    format!(
+                        "#{} HP {}/{} 护盾 {} ATK {} 元素 {:?}",
+                        candidate.index + 1,
+                        candidate.hp,
+                        candidate.max_hp,
+                        candidate.shield,
+                        candidate.atk,
+                        candidate.element
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 换人候选：{}",
+                    logs.turn_count.0, candidate_text
+                ),
+            );
+        }
 
         let mut played_card = false;
         if let Some(chosen_skill) = chosen_skill {
@@ -2086,6 +2135,13 @@ pub fn enemy_turn_ai_system(
 
         if played_card {
             if let Some(chosen_skill) = chosen_skill {
+                console_log(
+                    ConsoleLogCategory::Ai,
+                    format!(
+                        "[round {}][enemy] 先使用增益卡辅助技能槽位{}；当前AP={}",
+                        logs.turn_count.0, chosen_skill.slot, action_points.enemy
+                    ),
+                );
                 note_action_phase(
                     &mut logs.structured_log,
                     logs.turn_count.0,
@@ -2145,6 +2201,13 @@ pub fn enemy_turn_ai_system(
                     side: Side::Enemy,
                     name: name.to_string(),
                 });
+                console_log(
+                    ConsoleLogCategory::Ai,
+                    format!(
+                        "[round {}][enemy] 选择换人：{}；得分={:.2}；当前AP={}",
+                        logs.turn_count.0, name, chosen_switch.score, action_points.enemy
+                    ),
+                );
                 note_action_phase(
                     &mut logs.structured_log,
                     logs.turn_count.0,
@@ -2197,6 +2260,18 @@ pub fn enemy_turn_ai_system(
                 skill_name: skill.name.clone(),
                 slot,
             });
+            console_log(
+                ConsoleLogCategory::Ai,
+                format!(
+                    "[round {}][enemy] 选择技能：{}；槽位={}；得分={:.2}；AP {} -> {}",
+                    logs.turn_count.0,
+                    skill.name,
+                    slot,
+                    chosen_skill.score,
+                    action_points.enemy + cost,
+                    action_points.enemy
+                ),
+            );
             note_action_phase(
                 &mut logs.structured_log,
                 logs.turn_count.0,

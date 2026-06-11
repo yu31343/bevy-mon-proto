@@ -8,6 +8,8 @@ use std::{
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::console_log::{ConsoleLogCategory, log as console_log};
+
 pub use cards::{CardDeck, CardDef, CardEffect, CardId};
 
 /// 元素类型（系别）：火、水、草、光、暗、雷、风。
@@ -720,6 +722,10 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            console_log(
+                ConsoleLogCategory::Data,
+                format!("[error] 读取战斗配置失败：{path}（{e}）"),
+            );
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
             });
@@ -741,6 +747,10 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            console_log(
+                ConsoleLogCategory::Data,
+                format!("[error] 解析战斗配置失败：{path}（{e}）"),
+            );
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
             });
@@ -761,6 +771,10 @@ fn load_battle_data(mut commands: Commands) {
         commands.insert_resource(BattleRules::default());
         commands.insert_resource(BattleFormulaRules::default());
         commands.insert_resource(BattleRulesBundle::default());
+        console_log(
+            ConsoleLogCategory::Data,
+            format!("[error] 战斗配置非法：{reason}"),
+        );
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
         });
@@ -812,11 +826,30 @@ fn load_battle_data(mut commands: Commands) {
     }
 
     // 加载元素克制矩阵：若配置为空则使用默认值
-    let elements = if element_matrix.relations.is_empty() {
+    let used_default_matrix = element_matrix.relations.is_empty();
+    let elements = if used_default_matrix {
         ElementDb::from_default_config()
     } else {
         ElementDb::from_config(&element_matrix)
     };
+
+    console_log(
+        ConsoleLogCategory::Data,
+        format!(
+            "[ok] battle_data.ron 加载完成：skills={} cards={} monsters={} statuses={} reactions={} deck={} element_matrix={}",
+            skills.len(),
+            cards.len(),
+            monsters.len(),
+            statuses.statuses.len(),
+            reactions.reactions.len(),
+            deck.len(),
+            if used_default_matrix {
+                "default"
+            } else {
+                "config"
+            }
+        ),
+    );
 
     commands.insert_resource(BattleDbs {
         skills,

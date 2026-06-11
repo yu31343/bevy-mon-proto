@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    console_log::{ConsoleLogCategory, log as console_log, log_with_prefix},
     data::{
         AttributeStageBounds, AttributeType, CardId, ElementType, SkillId, StatusCategory,
         StatusDef, StatusTickTiming,
@@ -567,10 +568,26 @@ impl CardPiles {
     pub fn draw_one(&mut self, fallback_deck: &[CardId]) -> Option<CardId> {
         if self.draw.is_empty() {
             if !self.discard.is_empty() {
+                console_log(
+                    ConsoleLogCategory::CardsDetail,
+                    format!(
+                        "牌堆耗尽：将弃牌堆 {} 张重洗进入牌堆；重洗次数={}",
+                        self.discard.len(),
+                        self.reshuffle_counter.wrapping_add(1)
+                    ),
+                );
                 self.draw = shuffled_cards(&self.discard, self.reshuffle_seed(1));
                 self.discard.clear();
                 self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
             } else if !fallback_deck.is_empty() {
+                console_log(
+                    ConsoleLogCategory::CardsDetail,
+                    format!(
+                        "牌堆与弃牌堆为空：使用基础牌组 {} 张重建牌堆；重洗次数={}",
+                        fallback_deck.len(),
+                        self.reshuffle_counter.wrapping_add(1)
+                    ),
+                );
                 self.draw = shuffled_cards(fallback_deck, self.reshuffle_seed(17));
                 self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
             }
@@ -722,7 +739,7 @@ pub const BATTLE_LOG_LIMIT: usize = 30;
 
 pub fn push_battle_line(log: &mut BattleLog, line: impl Into<String>) {
     let line = line.into();
-    println!("{line}");
+    console_log(ConsoleLogCategory::Battle, &line);
     log.0.push_back(line);
     while log.0.len() > BATTLE_LOG_LIMIT {
         log.0.pop_front();
@@ -735,11 +752,26 @@ pub fn push_structured_battle_line(
     summary: impl Into<String>,
     detail: impl Into<String>,
 ) {
-    log.0.push_back(StructuredLogEntry {
+    let entry = StructuredLogEntry {
         phase: phase.into(),
         summary: summary.into(),
         detail: detail.into(),
-    });
+    };
+    let should_print = !matches!(
+        entry.phase.as_str(),
+        phase if phase.starts_with("trace-")
+            || phase.starts_with("state-")
+            || phase.starts_with("formula-")
+            || phase.starts_with("status-")
+    );
+    if should_print {
+        log_with_prefix(
+            ConsoleLogCategory::BattleDebug,
+            format!("[{}]", entry.phase),
+            format!("{}：{}", entry.summary, entry.detail),
+        );
+    }
+    log.0.push_back(entry);
     while log.0.len() > BATTLE_LOG_LIMIT {
         log.0.pop_front();
     }
@@ -762,6 +794,16 @@ pub fn push_replay_log_entry(
 
 pub fn record_action_trace(trace: &mut ActionTrace, mut entry: ActionTraceEntry) {
     entry.seq = trace.0.len() as u64 + 1;
+    log_with_prefix(
+        ConsoleLogCategory::Trace,
+        format!(
+            "[seq {}][round {}][{}]",
+            entry.seq,
+            entry.round,
+            side_phase_label(entry.side)
+        ),
+        format!("{}：{}", entry.action, entry.detail),
+    );
     trace.0.push(entry);
 }
 

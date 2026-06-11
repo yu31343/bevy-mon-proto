@@ -7,6 +7,7 @@ use crate::{
         Side, Stats, StructuredBattleLog, TurnContext, TurnCount, UiControlSide, note_round_phase,
         opposite_side, push_named_action_trace,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
     game_state::BattlePhase,
     pvp::{PvpConnection, PvpRole},
@@ -94,8 +95,28 @@ pub fn round_start_system(
 
     let player_cards = hand_names(&hand.player, &dbs);
     let enemy_cards = hand_names(&hand.enemy, &dbs);
-    println!("玩家抽到: {}", player_cards);
-    println!("敌方抽到: {}", enemy_cards);
+    console_log(
+        ConsoleLogCategory::Cards,
+        format!(
+            "[round-r{}][player] 抽牌：{}；手牌 {} 张；牌堆 {} 张；弃牌 {} 张",
+            turn_count.0,
+            player_cards,
+            hand.player.len(),
+            card_piles.draw.len(),
+            card_piles.discard.len()
+        ),
+    );
+    console_log(
+        ConsoleLogCategory::Cards,
+        format!(
+            "[round-r{}][enemy] 抽牌：{}；手牌 {} 张；牌堆 {} 张；弃牌 {} 张",
+            turn_count.0,
+            enemy_cards,
+            hand.enemy.len(),
+            card_piles.draw.len(),
+            card_piles.discard.len()
+        ),
+    );
 
     super::cards::gain_ap(Side::Player, rules.ap_per_round, rules, action_points);
     super::cards::gain_ap(Side::Enemy, rules.ap_per_round, rules, action_points);
@@ -144,6 +165,21 @@ pub fn round_start_system(
             .unwrap_or(Side::Player)
     };
     round_order.set_first(first_side);
+
+    console_log(
+        ConsoleLogCategory::Battle,
+        format!(
+            "[round {}] 先手={:?}；玩家Spd={}；敌方Spd={}；玩家AP={}；敌方AP={}；玩家手牌={}；敌方手牌={}",
+            turn_count.0,
+            round_order.first,
+            player_spd,
+            enemy_spd,
+            action_points.player,
+            action_points.enemy,
+            hand.player.len(),
+            hand.enemy.len()
+        ),
+    );
 
     let ap_snapshot = format!(
         "玩家AP={}, 敌方AP={}",

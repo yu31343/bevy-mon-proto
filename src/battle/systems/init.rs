@@ -9,6 +9,7 @@ use crate::{
         clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
         note_structured_phase, push_battle_line,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleDataStatus, BattleDbs, BattleRules, CardDeck, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
@@ -70,7 +71,7 @@ pub fn init_battle_system(
 
     // Wait for team selections to be made
     let Some(team_selections) = team_selections else {
-        println!("等待队伍选择...");
+        console_log(ConsoleLogCategory::Battle, "等待队伍选择...");
         return;
     };
     for entity in &cleanup_query {
@@ -124,6 +125,30 @@ pub fn init_battle_system(
         &mut card_piles,
         card_deck,
     );
+    let initial_player_cards = initial_hand
+        .player
+        .iter()
+        .map(|cid| {
+            dbs.cards
+                .get(cid)
+                .map(|card| card.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let initial_enemy_cards = initial_hand
+        .enemy
+        .iter()
+        .map(|cid| {
+            dbs.cards
+                .get(cid)
+                .map(|card| card.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let initial_draw_remaining = card_piles.draw.len();
+    let initial_discard_count = card_piles.discard.len();
     commands.insert_resource(ActionPoints {
         player: 0,
         enemy: 0,
@@ -313,6 +338,46 @@ pub fn init_battle_system(
         );
         return;
     }
+
+    let player_names = team_selections
+        .player_indices
+        .iter()
+        .filter_map(|&idx| monster_pool.monsters.get(idx))
+        .map(|monster| monster.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let enemy_names = team_selections
+        .enemy_indices
+        .iter()
+        .filter_map(|&idx| monster_pool.monsters.get(idx))
+        .map(|monster| monster.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    console_log(
+        ConsoleLogCategory::Battle,
+        format!(
+            "[battle-init] 模式={:?}；随机种子={}；我方=[{}]；敌方=[{}]；规则：初始手牌={}，每回合抽牌={}，每回合AP={}，最大AP={}，保留手牌上限={}",
+            **battle_mode,
+            battle_seed,
+            player_names,
+            enemy_names,
+            battle_rules.initial_cards,
+            battle_rules.cards_per_round,
+            battle_rules.ap_per_round,
+            battle_rules.max_ap,
+            battle_rules.max_retained_hand
+        ),
+    );
+    console_log(
+        ConsoleLogCategory::Cards,
+        format!(
+            "[battle-init] 初始手牌：我方=[{}]；敌方=[{}]；牌堆 {} 张；弃牌 {} 张",
+            initial_player_cards,
+            initial_enemy_cards,
+            initial_draw_remaining,
+            initial_discard_count
+        ),
+    );
 
     commands.insert_resource(crate::battle::PlayerTeam(player_team));
     commands.insert_resource(crate::battle::EnemyTeam(enemy_team));

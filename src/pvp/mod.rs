@@ -15,12 +15,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, BattleShuffleSeed,
-        ElementAura, EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam,
-        PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance,
-        TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed, push_battle_line,
-        recalculate_stage_modifiers, transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleShuffleSeed, ElementAura,
+        EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
+        RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
+        TurnContext, TurnCount, new_battle_shuffle_seed, recalculate_stage_modifiers,
+        transfer_status_by_id,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{
         BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardId, MonsterPool,
         SkillDef, TeamSelections,
@@ -396,6 +397,10 @@ pub fn start_host(connection: &mut PvpConnection) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        "[host] 开始局域网建房，等待监听端口...",
+    );
     thread::spawn(move || host_thread(command_rx, event_tx));
     connection.role = Some(PvpRole::Host);
     connection.status = PvpStatus::Hosting { port: DEFAULT_PORT };
@@ -410,6 +415,10 @@ pub fn start_client(connection: &mut PvpConnection, address: String) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!("[client] 正在连接局域网对局：{address}"),
+    );
     thread::spawn(move || client_thread(address, command_rx, event_tx));
     connection.role = Some(PvpRole::Client);
     connection.status = PvpStatus::Connecting;
@@ -424,6 +433,10 @@ pub fn start_relay_host(connection: &mut PvpConnection, relay_address: String) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!("[relay-host] 正在连接中继服务器：{relay_address}"),
+    );
     thread::spawn(move || relay_host_thread(relay_address, command_rx, event_tx));
     connection.role = Some(PvpRole::Host);
     connection.status = PvpStatus::ConnectingRelay;
@@ -444,6 +457,13 @@ pub fn start_relay_client(
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let thread_room_code = room_code.clone();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!(
+            "[relay-client] 正在加入中继房间：{} @ {}",
+            room_code, relay_address
+        ),
+    );
     thread::spawn(move || {
         relay_client_thread(relay_address, thread_room_code, command_rx, event_tx)
     });
@@ -472,6 +492,10 @@ pub fn send_intent(connection: &mut PvpConnection, intent: BattleIntent) {
         return;
     }
     connection.seq = connection.seq.wrapping_add(1);
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!("[intent-send] seq={} intent={:?}", connection.seq, intent),
+    );
     connection.send(PvpMessage::Intent {
         seq: connection.seq,
         intent,
@@ -1739,6 +1763,10 @@ fn pvp_poll_network_system(
                     "局域网建房成功：{}:{port}，等待对方加入。",
                     connection.local_ip
                 );
+                console_log(
+                    ConsoleLogCategory::Pvp,
+                    format!("[host] 局域网建房成功：{}:{port}", connection.local_ip),
+                );
             }
             NetEvent::RelayRoomCreated(room_code) | NetEvent::RelayWaitingPeer(room_code) => {
                 input.room_code = room_code.clone();
@@ -1746,10 +1774,15 @@ fn pvp_poll_network_system(
                     room_code: room_code.clone(),
                 };
                 input.info = format!("服务器房间码：{room_code}，等待对方加入。");
+                console_log(
+                    ConsoleLogCategory::Pvp,
+                    format!("[relay-host] 房间就绪：{room_code}，等待对方加入"),
+                );
             }
             NetEvent::Connected => {
                 connection.status = PvpStatus::Connected;
                 input.info = "已连接，正在握手。".to_string();
+                console_log(ConsoleLogCategory::Pvp, "[connect] 已连接，开始协议握手");
                 if let (Some(dbs), Some(monsters), Some(rules), Some(formulas), Some(deck)) = (
                     dbs.as_ref(),
                     monsters.as_ref(),
@@ -1757,9 +1790,17 @@ fn pvp_poll_network_system(
                     formulas.as_ref(),
                     deck.as_ref(),
                 ) {
+                    let hash = data_hash(dbs, monsters, rules, formulas, deck);
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[handshake-send] protocol={} data_hash={hash}",
+                            PROTOCOL_VERSION
+                        ),
+                    );
                     connection.send(PvpMessage::Hello {
                         protocol_version: PROTOCOL_VERSION,
-                        data_hash: data_hash(dbs, monsters, rules, formulas, deck),
+                        data_hash: hash,
                     });
                 }
             }
@@ -1789,6 +1830,13 @@ fn pvp_poll_network_system(
                     } else {
                         None
                     };
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[handshake-recv] protocol={} data_hash={} accepted={}",
+                            protocol_version, remote_hash, accepted
+                        ),
+                    );
                     connection.remote_data_hash = Some(remote_hash);
                     connection.protocol_ready = accepted;
                     connection.send(PvpMessage::HelloAck {
@@ -1796,17 +1844,27 @@ fn pvp_poll_network_system(
                         reason: reason.clone(),
                     });
                     if let Some(reason) = reason {
-                        input.info = reason;
+                        input.info = reason.clone();
+                        console_log(
+                            ConsoleLogCategory::Pvp,
+                            format!("[handshake] 失败：{reason}"),
+                        );
                     } else {
                         input.info = "握手完成，请选择队伍。".to_string();
+                        console_log(ConsoleLogCategory::Pvp, "[handshake] 成功，请选择队伍");
                     }
                 }
                 PvpMessage::HelloAck { accepted, reason } => {
                     connection.protocol_ready = accepted;
                     if accepted {
                         input.info = "握手完成，请选择队伍。".to_string();
+                        console_log(ConsoleLogCategory::Pvp, "[handshake] 成功，请选择队伍");
                     } else {
                         input.info = reason.unwrap_or_else(|| "连接被拒绝".to_string());
+                        console_log(
+                            ConsoleLogCategory::Pvp,
+                            format!("[handshake] 被拒绝：{}", input.info),
+                        );
                         connection.status = PvpStatus::Failed(input.info.clone());
                     }
                 }
@@ -1816,9 +1874,26 @@ fn pvp_poll_network_system(
                 PvpMessage::BattleReady { seed } => {
                     team_state.battle_seed = Some(seed);
                 }
-                PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(*snapshot),
+                PvpMessage::BattleSnapshot(snapshot) => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[snapshot-recv] round={} phase={:?} result={}",
+                            snapshot.turn,
+                            snapshot.phase,
+                            snapshot.result_message.as_deref().unwrap_or("<none>")
+                        ),
+                    );
+                    incoming_snapshots.0.push(*snapshot)
+                }
                 PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
-                PvpMessage::Intent { seq, intent } => incoming_intents.0.push((seq, intent)),
+                PvpMessage::Intent { seq, intent } => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!("[intent-recv] seq={} intent={:?}", seq, intent),
+                    );
+                    incoming_intents.0.push((seq, intent))
+                }
                 PvpMessage::Surrender => {
                     let reason = "对方已撤退/战斗中止".to_string();
                     input.info = reason.clone();
@@ -1831,11 +1906,13 @@ fn pvp_poll_network_system(
                 PvpMessage::Ping { .. } | PvpMessage::Pong { .. } => {}
             },
             NetEvent::Failed(reason) => {
+                console_log(ConsoleLogCategory::Pvp, format!("[error] {reason}"));
                 input.info = reason.clone();
                 connection.status = PvpStatus::Failed(reason);
             }
             NetEvent::Disconnected(reason) => {
                 if !matches!(connection.status, PvpStatus::Disconnected(_)) {
+                    console_log(ConsoleLogCategory::Pvp, format!("[disconnect] {reason}"));
                     input.info = reason.clone();
                     connection.status = PvpStatus::Disconnected(reason);
                 }
@@ -2515,7 +2592,6 @@ fn pvp_handle_battle_disconnect_system(
     mut connection: ResMut<PvpConnection>,
     battle_mode: Res<BattleControlMode>,
     game_state: Res<State<GameState>>,
-    mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
     mut next_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
@@ -2531,12 +2607,11 @@ fn pvp_handle_battle_disconnect_system(
     let Some(reason) = reason else {
         return;
     };
+    let message = format!("联机中断：{reason}");
     event_writer.write(BattleEvent::NetworkInterrupted {
         reason: reason.clone(),
     });
-    let message = format!("联机中断：{reason}");
-    battle_result.message = message.clone();
-    push_battle_line(&mut battle_log, message);
+    battle_result.message = message;
     connection.stop();
     connection.status = PvpStatus::Idle;
     next_state.set(GameState::Result);

@@ -7,6 +7,7 @@ use crate::{
         PendingGuardCounterClear, PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, Shield,
         Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{
         AttributeType, BattleDbs, BattleRules, CardDeck, CardDef, CardEffect, CardId, ElementType,
         StatusCategory,
@@ -781,11 +782,35 @@ pub(crate) fn card_trigger_event_system(
             BattleEvent::CardDiscarded { side, card_name } => {
                 if let Some(card) = dbs.cards.values().find(|card| card.name == *card_name) {
                     piles.push_discard(*side, card.id);
+                    console_log(
+                        ConsoleLogCategory::Cards,
+                        format!(
+                            "[{}] 弃置卡牌：{}；牌堆 {} 张；弃牌 {} 张",
+                            super::side_text(*side),
+                            card_name,
+                            piles.draw.len(),
+                            piles.discard.len()
+                        ),
+                    );
                 }
                 if resolved_tactical_side.is_none()
                     && let Some(pending) = pending_tactical.filter(|pending| pending.side == *side)
                 {
-                    draw_cards(*side, pending.draw, &mut hand, &mut piles, &deck);
+                    let drawn = draw_cards(*side, pending.draw, &mut hand, &mut piles, &deck);
+                    console_log(
+                        ConsoleLogCategory::Cards,
+                        format!(
+                            "[{}] 战术整理触发抽牌：{} 张；手牌 {} 张；牌堆 {} 张；弃牌 {} 张",
+                            super::side_text(*side),
+                            drawn,
+                            match *side {
+                                Side::Player => hand.player.len(),
+                                Side::Enemy => hand.enemy.len(),
+                            },
+                            piles.draw.len(),
+                            piles.discard.len()
+                        ),
+                    );
                     resolved_tactical_side = Some(*side);
                 }
             }
@@ -797,6 +822,16 @@ pub(crate) fn card_trigger_event_system(
                     .cloned()
                 {
                     piles.push_discard(*side, card.id);
+                    console_log(
+                        ConsoleLogCategory::Cards,
+                        format!(
+                            "[{}] 使用卡牌：{}；牌堆 {} 张；弃牌 {} 张",
+                            super::side_text(*side),
+                            card_name,
+                            piles.draw.len(),
+                            piles.discard.len()
+                        ),
+                    );
                     let mut writer = messages.p1();
                     let _ = apply_card_effect(
                         CardPlayContext {

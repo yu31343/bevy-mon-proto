@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleRules, MonsterPool},
     team_selection::{
         BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
@@ -25,9 +26,12 @@ pub fn setup_selection_ui(
         return;
     }
 
-    println!(
-        "正在创建队伍选择界面... 可选精灵数: {}",
-        monster_pool.monsters.len()
+    console_log(
+        ConsoleLogCategory::Selection,
+        format!(
+            "正在创建队伍选择界面；可选精灵数={}",
+            monster_pool.monsters.len()
+        ),
     );
 
     let font_handle = ui_font.as_ref().map(|f| f.0.clone());

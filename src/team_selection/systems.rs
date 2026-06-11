@@ -3,6 +3,7 @@ use rand::seq::SliceRandom;
 
 use crate::{
     battle::BattleControlMode,
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleRules, MapBattleContext, MonsterPool, TeamSelections},
     game_state::GameState,
     pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
@@ -14,6 +15,19 @@ use crate::{
     },
     ui::battle::theme::UiTheme,
 };
+
+fn monster_names(indices: &[usize], monster_pool: &MonsterPool) -> String {
+    let names = indices
+        .iter()
+        .filter_map(|&idx| monster_pool.monsters.get(idx))
+        .map(|monster| monster.name.as_str())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "无".to_string()
+    } else {
+        names.join(" / ")
+    }
+}
 
 /// System to handle monster card button clicks.
 pub fn button_select_monster_system(
@@ -97,24 +111,19 @@ pub fn button_confirm_selection_system(
                     generate_ai_selection(monster_pool.monsters.len(), selected_count)
                 };
 
-                println!("=== 队伍选择 ===");
-                print!("玩家选择: ");
-                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
-                    if i > 0 {
-                        print!(", ");
-                    }
-                    print!("{}", monster_pool.monsters[idx].name);
-                }
-                println!();
-                print!("AI选择: ");
-                for (i, &idx) in enemy_indices.iter().enumerate() {
-                    if i > 0 {
-                        print!(", ");
-                    }
-                    print!("{}", monster_pool.monsters[idx].name);
-                }
-                println!();
-                println!("================");
+                console_log(ConsoleLogCategory::Selection, "=== 队伍选择 ===");
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!(
+                        "玩家选择：{}",
+                        monster_names(&selection_state.selected_indices, &monster_pool)
+                    ),
+                );
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!("AI选择：{}", monster_names(&enemy_indices, &monster_pool)),
+                );
+                console_log(ConsoleLogCategory::Selection, "================");
 
                 commands.insert_resource(BattleControlMode::PlayerVsAi);
                 commands.insert_resource(TeamSelections {
@@ -139,17 +148,16 @@ pub fn button_confirm_selection_system(
                 if team_state.local_indices.is_some() {
                     continue;
                 }
-                println!("=== PVP 队伍选择 ===");
-                print!("我方选择: ");
-                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
-                    if i > 0 {
-                        print!(", ");
-                    }
-                    print!("{}", monster_pool.monsters[idx].name);
-                }
-                println!();
-                println!("等待对方队伍...");
-                println!("================");
+                console_log(ConsoleLogCategory::Selection, "=== PVP 队伍选择 ===");
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!(
+                        "我方选择：{}",
+                        monster_names(&selection_state.selected_indices, &monster_pool)
+                    ),
+                );
+                console_log(ConsoleLogCategory::Selection, "等待对方队伍...");
+                console_log(ConsoleLogCategory::Selection, "================");
                 submit_local_team(
                     connection,
                     team_state,
@@ -157,24 +165,22 @@ pub fn button_confirm_selection_system(
                 );
             }
             SelectionEntryMode::Debug => {
-                println!("=== 调试模式队伍选择 ===");
-                print!("我方选择: ");
-                for (i, &idx) in selection_state.player_indices.iter().enumerate() {
-                    if i > 0 {
-                        print!(", ");
-                    }
-                    print!("{}", monster_pool.monsters[idx].name);
-                }
-                println!();
-                print!("敌方选择: ");
-                for (i, &idx) in selection_state.selected_indices.iter().enumerate() {
-                    if i > 0 {
-                        print!(", ");
-                    }
-                    print!("{}", monster_pool.monsters[idx].name);
-                }
-                println!();
-                println!("====================");
+                console_log(ConsoleLogCategory::Selection, "=== 调试模式队伍选择 ===");
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!(
+                        "我方选择：{}",
+                        monster_names(&selection_state.player_indices, &monster_pool)
+                    ),
+                );
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!(
+                        "敌方选择：{}",
+                        monster_names(&selection_state.selected_indices, &monster_pool)
+                    ),
+                );
+                console_log(ConsoleLogCategory::Selection, "====================");
 
                 commands.insert_resource(BattleControlMode::DebugPlayerControlsBoth);
                 commands.insert_resource(TeamSelections {

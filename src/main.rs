@@ -14,6 +14,7 @@
 
 //! 程序入口：注册插件与状态机，启动 Bevy App。
 mod battle;
+pub(crate) mod console_log;
 mod data;
 mod game_state;
 mod lobby;
