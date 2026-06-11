@@ -1,6 +1,6 @@
 use crate::data::{
-    BattleDbs, CardDef, CardEffect, CardId, ElementType, EnemyAiWeights, SkillCategory, SkillDef,
-    SkillEffect, SkillId,
+    AttributeStageModifier, AttributeType, BattleDbs, CardDef, CardEffect, CardId, EffectTarget,
+    ElementType, EnemyAiWeights, SkillCategory, SkillDef, SkillEffect, SkillId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,11 +18,19 @@ pub(crate) struct EnemyAiContext {
     pub(crate) enemy_shield: i32,
     pub(crate) enemy_atk: i32,
     pub(crate) enemy_def: i32,
+    pub(crate) enemy_atk_stage: i32,
+    pub(crate) enemy_def_stage: i32,
+    pub(crate) enemy_spd_stage: i32,
+    pub(crate) enemy_acc_stage: i32,
     pub(crate) enemy_element: ElementType,
     pub(crate) enemy_attached_auras: [Option<ElementType>; 2],
     pub(crate) enemy_status_ids: Vec<String>,
     pub(crate) enemy_has_aura: bool,
     pub(crate) enemy_has_cleansable_debuff: bool,
+    pub(crate) player_atk_stage: i32,
+    pub(crate) player_def_stage: i32,
+    pub(crate) player_spd_stage: i32,
+    pub(crate) player_acc_stage: i32,
     pub(crate) player_def: i32,
     pub(crate) player_hp: i32,
     pub(crate) player_shield: i32,
@@ -47,6 +55,10 @@ pub(crate) struct EnemySwitchCandidate {
     pub(crate) shield: i32,
     pub(crate) atk: i32,
     pub(crate) def: i32,
+    pub(crate) atk_stage: i32,
+    pub(crate) def_stage: i32,
+    pub(crate) spd_stage: i32,
+    pub(crate) acc_stage: i32,
     pub(crate) element: ElementType,
     pub(crate) attached_auras: [Option<ElementType>; 2],
     pub(crate) skill_ids: [SkillId; 4],
@@ -1009,11 +1021,7 @@ fn status_future_value(status_id: &str, dbs: &BattleDbs) -> f32 {
         .iter()
         .map(|modifier| (-modifier.amount).max(0) as f32 * 7.0)
         .sum::<f32>();
-    let evade_value = if status.evade_charges < 0 {
-        (-status.evade_charges) as f32 * 6.0
-    } else {
-        0.0
-    };
+    let evade_value = status.evade_charges.max(0) as f32 * 22.0;
     let category_value = match status.category {
         crate::data::StatusCategory::Debuff => 10.0,
         crate::data::StatusCategory::Special => 8.0,
@@ -1024,12 +1032,103 @@ fn status_future_value(status_id: &str, dbs: &BattleDbs) -> f32 {
     (tick_damage_value + heal_pressure + stage_value + evade_value + category_value).max(0.0)
 }
 
-fn target_has_status(ctx: &EnemyAiContext, status_id: &str) -> bool {
-    ctx.target_status_ids.iter().any(|id| id == status_id)
+fn target_has_status(status_ids: &[String], status_id: &str) -> bool {
+    status_ids.iter().any(|id| id == status_id)
 }
 
-fn apply_status_tactical_value(status_id: &str, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
-    if target_has_status(ctx, status_id) {
+fn skill_targets_self(skill_category: SkillCategory) -> bool {
+    matches!(
+        skill_category,
+        SkillCategory::SelfUtility | SkillCategory::AllyUtility
+    )
+}
+
+fn effect_targets_self(target: EffectTarget, skill_category: SkillCategory) -> bool {
+    match target {
+        EffectTarget::SelfTarget => true,
+        EffectTarget::Opponent => false,
+        EffectTarget::Infer => skill_targets_self(skill_category),
+    }
+}
+
+fn target_status_ids_for_skill(skill_category: SkillCategory, ctx: &EnemyAiContext) -> &[String] {
+    if skill_targets_self(skill_category) {
+        &ctx.enemy_status_ids
+    } else {
+        &ctx.target_status_ids
+    }
+}
+
+fn stage_modifier_unit_value(attribute: AttributeType, target_self: bool) -> f32 {
+    match (attribute, target_self) {
+        (AttributeType::Atk, true) => 9.5,
+        (AttributeType::Def, true) => 8.0,
+        (AttributeType::Spd, true) => 6.5,
+        (AttributeType::Acc, true) => 7.5,
+        (AttributeType::Atk, false) => 8.5,
+        (AttributeType::Def, false) => 8.0,
+        (AttributeType::Spd, false) => 6.0,
+        (AttributeType::Acc, false) => 6.5,
+    }
+}
+
+fn stage_modifiers_value(
+    modifiers: &[AttributeStageModifier],
+    target_self: bool,
+    ctx: &EnemyAiContext,
+) -> f32 {
+    modifiers
+        .iter()
+        .map(|modifier| {
+            let current_stage = if target_self {
+                match modifier.attribute {
+                    AttributeType::Atk => ctx.enemy_atk_stage,
+                    AttributeType::Def => ctx.enemy_def_stage,
+                    AttributeType::Spd => ctx.enemy_spd_stage,
+                    AttributeType::Acc => ctx.enemy_acc_stage,
+                }
+            } else {
+                match modifier.attribute {
+                    AttributeType::Atk => ctx.player_atk_stage,
+                    AttributeType::Def => ctx.player_def_stage,
+                    AttributeType::Spd => ctx.player_spd_stage,
+                    AttributeType::Acc => ctx.player_acc_stage,
+                }
+            };
+            let helpful =
+                (target_self && modifier.amount > 0) || (!target_self && modifier.amount < 0);
+            if !helpful {
+                return 0.0;
+            }
+            let useful_steps = if target_self {
+                modifier.amount.min(6 - current_stage).max(0)
+            } else {
+                (-modifier.amount).min(current_stage - (-6)).max(0)
+            } as f32;
+            if useful_steps <= 0.0 {
+                return 0.0;
+            }
+            let existing_pressure = if target_self {
+                current_stage.max(0) as f32
+            } else {
+                (-current_stage).max(0) as f32
+            };
+            let repeat_factor = 1.0 / (1.0 + existing_pressure * 1.35);
+            stage_modifier_unit_value(modifier.attribute, target_self)
+                * useful_steps
+                * repeat_factor
+        })
+        .sum()
+}
+
+fn apply_status_tactical_value(
+    skill_category: SkillCategory,
+    status_id: &str,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+) -> f32 {
+    let status_ids = target_status_ids_for_skill(skill_category, ctx);
+    if target_has_status(status_ids, status_id) {
         0.0
     } else {
         status_future_value(status_id, dbs)
@@ -1184,9 +1283,15 @@ fn fixed_damage_value(amount: i32, ctx: &EnemyAiContext) -> f32 {
 
 fn tactical_effect_value(effect: &SkillEffect, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
     match effect {
-        SkillEffect::ApplyStatus { status_id } => apply_status_tactical_value(status_id, ctx, dbs),
-        SkillEffect::ModifyStages { modifiers, .. } => {
-            modifiers.iter().map(modifier_pressure).sum::<f32>()
+        SkillEffect::ApplyStatus { status_id } => {
+            apply_status_tactical_value(SkillCategory::EnemyDebuff, status_id, ctx, dbs)
+        }
+        SkillEffect::ModifyStages {
+            modifiers, target, ..
+        } => {
+            let target_self = effect_targets_self(*target, SkillCategory::EnemyDebuff);
+            stage_modifiers_value(modifiers, target_self, ctx)
+                .max(modifiers.iter().map(modifier_pressure).sum::<f32>())
         }
         SkillEffect::Dispel { status_ids, .. } => dispel_value(status_ids, ctx),
         SkillEffect::DealFixedDamage { amount, .. } => fixed_damage_value(*amount, ctx),
@@ -1324,12 +1429,17 @@ fn score_enemy_skill(
             }
         }
         SkillEffect::ApplyStatus { status_id } => {
-            let mut score = if target_has_status(ctx, status_id) {
+            let self_target = skill_targets_self(skill.category);
+            let status_ids = target_status_ids_for_skill(skill.category, ctx);
+            let already_has = target_has_status(status_ids, status_id);
+            let mut score = if already_has {
                 2.0
+            } else if self_target {
+                10.0 + status_future_value(status_id, dbs)
             } else {
                 24.0 + status_future_value(status_id, dbs) + (1.0 - hp_ratio) * 8.0
             };
-            if skill.category == SkillCategory::EnemyDebuff && !target_has_status(ctx, status_id) {
+            if skill.category == SkillCategory::EnemyDebuff && !already_has {
                 score += 10.0;
             }
             ScoredEnemySkill {
@@ -1339,8 +1449,33 @@ fn score_enemy_skill(
                 kind: EnemyAiSkillKind::Debuff,
             }
         }
-        SkillEffect::ModifyStages { .. }
-        | SkillEffect::Cleanse { .. }
+        SkillEffect::ModifyStages {
+            modifiers, target, ..
+        } => {
+            let self_target = effect_targets_self(*target, skill.category);
+            let stage_value = stage_modifiers_value(modifiers, self_target, ctx).max(0.0);
+            let mut score = if stage_value <= 0.0 {
+                2.0
+            } else if self_target {
+                8.0 + stage_value
+            } else {
+                24.0 + stage_value + (1.0 - hp_ratio) * 8.0
+            };
+            if skill.category == SkillCategory::EnemyDebuff && !self_target {
+                score += 10.0;
+            }
+            ScoredEnemySkill {
+                slot,
+                skill_id,
+                score,
+                kind: if self_target {
+                    EnemyAiSkillKind::Shield
+                } else {
+                    EnemyAiSkillKind::Debuff
+                },
+            }
+        }
+        SkillEffect::Cleanse { .. }
         | SkillEffect::Dispel { .. }
         | SkillEffect::DealFixedDamage { .. }
         | SkillEffect::DealStatDifferenceDamage { .. }
@@ -1434,21 +1569,44 @@ fn score_enemy_skill(
                     EnemyAiSkillKind::Debuff,
                 ),
                 Some(SkillEffect::ApplyStatus { status_id }) => {
-                    let mut score = if target_has_status(ctx, status_id) {
+                    let self_target = skill_targets_self(skill.category);
+                    let status_ids = target_status_ids_for_skill(skill.category, ctx);
+                    let already_has = target_has_status(status_ids, status_id);
+                    let mut score = if already_has {
                         tactical_effect_value(&skill.effect, ctx, dbs).min(4.0)
+                    } else if self_target {
+                        10.0 + tactical_effect_value(&skill.effect, ctx, dbs)
                     } else {
                         24.0 + tactical_effect_value(&skill.effect, ctx, dbs)
                             + (1.0 - hp_ratio) * 8.0
                     };
-                    if skill.category == SkillCategory::EnemyDebuff
-                        && !target_has_status(ctx, status_id)
-                    {
+                    if skill.category == SkillCategory::EnemyDebuff && !already_has {
                         score += 10.0;
                     }
                     (score, EnemyAiSkillKind::Debuff)
                 }
-                Some(SkillEffect::ModifyStages { .. })
-                | Some(SkillEffect::DealFixedDamage { .. })
+                Some(SkillEffect::ModifyStages {
+                    modifiers, target, ..
+                }) => {
+                    let self_target = effect_targets_self(*target, skill.category);
+                    let stage_value = stage_modifiers_value(modifiers, self_target, ctx).max(0.0);
+                    let score = if stage_value <= 0.0 {
+                        2.0
+                    } else if self_target {
+                        8.0 + stage_value
+                    } else {
+                        24.0 + stage_value + (1.0 - hp_ratio) * 8.0
+                    };
+                    (
+                        score,
+                        if self_target {
+                            EnemyAiSkillKind::Shield
+                        } else {
+                            EnemyAiSkillKind::Debuff
+                        },
+                    )
+                }
+                Some(SkillEffect::DealFixedDamage { .. })
                 | Some(SkillEffect::DealStatDifferenceDamage { .. })
                 | Some(SkillEffect::Conditional { .. }) => {
                     let mut score = 24.0
@@ -1520,6 +1678,11 @@ pub(crate) fn best_action_value(
     action_ctx.enemy_max_hp = candidate.max_hp;
     action_ctx.enemy_shield = candidate.shield;
     action_ctx.enemy_atk = candidate.atk;
+    action_ctx.enemy_def = candidate.def;
+    action_ctx.enemy_atk_stage = candidate.atk_stage;
+    action_ctx.enemy_def_stage = candidate.def_stage;
+    action_ctx.enemy_spd_stage = candidate.spd_stage;
+    action_ctx.enemy_acc_stage = candidate.acc_stage;
     action_ctx.enemy_has_aura = candidate.has_aura;
     action_ctx.enemy_has_cleansable_debuff = candidate.has_cleansable_debuff;
 
@@ -1545,11 +1708,19 @@ fn threat_target_context(
         enemy_shield: 0,
         enemy_atk: threat.atk,
         enemy_def: 0,
+        enemy_atk_stage: 0,
+        enemy_def_stage: 0,
+        enemy_spd_stage: 0,
+        enemy_acc_stage: 0,
         enemy_element: ElementType::Fire,
         enemy_attached_auras: [None, None],
         enemy_status_ids: Vec::new(),
         enemy_has_aura: false,
         enemy_has_cleansable_debuff: false,
+        player_atk_stage: target.atk_stage,
+        player_def_stage: target.def_stage,
+        player_spd_stage: target.spd_stage,
+        player_acc_stage: target.acc_stage,
         player_def: target.def,
         player_hp: target.hp,
         player_shield: target.shield,
@@ -1610,6 +1781,10 @@ fn active_player_threat_score(
         shield: ctx.enemy_shield,
         atk: ctx.enemy_atk,
         def: ctx.enemy_def,
+        atk_stage: ctx.enemy_atk_stage,
+        def_stage: ctx.enemy_def_stage,
+        spd_stage: ctx.enemy_spd_stage,
+        acc_stage: ctx.enemy_acc_stage,
         element: ctx.enemy_element,
         attached_auras: ctx.enemy_attached_auras,
         skill_ids: [SkillId::FirePunch; 4],
@@ -2133,11 +2308,19 @@ mod tests {
             enemy_shield: 0,
             enemy_atk: 5,
             enemy_def: 5,
+            enemy_atk_stage: 0,
+            enemy_def_stage: 0,
+            enemy_spd_stage: 0,
+            enemy_acc_stage: 0,
             enemy_element: ElementType::Fire,
             enemy_attached_auras: [None, None],
             enemy_status_ids: Vec::new(),
             enemy_has_aura: false,
             enemy_has_cleansable_debuff: false,
+            player_atk_stage: 0,
+            player_def_stage: 0,
+            player_spd_stage: 0,
+            player_acc_stage: 0,
             player_def: 5,
             player_hp: 20,
             player_shield: 0,
@@ -2194,6 +2377,10 @@ mod tests {
             shield,
             atk: 8,
             def: 5,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
             element,
             attached_auras: [None, None],
             skill_ids: [SkillId::WaterBlade; 4],
@@ -2907,6 +3094,116 @@ mod tests {
         .expect("dark elf should have an attack available");
 
         assert_ne!(chosen.skill_id, SkillId::CurseWhisper);
+    }
+
+    #[test]
+    fn repeated_self_stage_buff_loses_priority_after_existing_stages() {
+        let swift = SkillDef {
+            id: SkillId::SwiftThunder,
+            name: "疾风迅雷".to_string(),
+            category: SkillCategory::SelfUtility,
+            cost_ap: 2,
+            effect: SkillEffect::ModifyStages {
+                modifiers: vec![
+                    AttributeStageModifier {
+                        attribute: AttributeType::Spd,
+                        amount: 1,
+                    },
+                    AttributeStageModifier {
+                        attribute: AttributeType::Acc,
+                        amount: 1,
+                    },
+                ],
+                duration_turns: 2,
+                target: EffectTarget::Infer,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let attack = SkillDef {
+            id: SkillId::ThunderStrike,
+            name: "闪击".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 2,
+            effect: SkillEffect::Attack {
+                power: 15,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([(swift.id, swift.clone()), (attack.id, attack.clone())]),
+            cards: HashMap::new(),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+        let mut fresh_ctx = test_ai_context(Vec::new());
+        fresh_ctx.player_shield = 33;
+        let mut stacked_ctx = fresh_ctx.clone();
+        stacked_ctx.enemy_spd_stage = 1;
+        stacked_ctx.enemy_acc_stage = 1;
+
+        let fresh_swift =
+            score_enemy_skill(0, SkillId::SwiftThunder, &swift, &fresh_ctx, &dbs).score;
+        let repeated_swift =
+            score_enemy_skill(0, SkillId::SwiftThunder, &swift, &stacked_ctx, &dbs).score;
+        let attack_score =
+            score_enemy_skill(1, SkillId::ThunderStrike, &attack, &stacked_ctx, &dbs).score;
+
+        assert!(fresh_swift > repeated_swift);
+        assert!(repeated_swift < attack_score);
+    }
+
+    #[test]
+    fn repeated_self_evade_status_is_not_scored_as_fresh_buff() {
+        let gale_evasion = SkillDef {
+            id: SkillId::GaleEvasion,
+            name: "疾风闪避".to_string(),
+            category: SkillCategory::SelfUtility,
+            cost_ap: 3,
+            effect: SkillEffect::ApplyStatus {
+                status_id: "wind_evade".to_string(),
+            },
+            element: None,
+            base_accuracy: None,
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([(gale_evasion.id, gale_evasion.clone())]),
+            cards: HashMap::new(),
+            elements: ElementDb::default(),
+            statuses: StatusDb {
+                statuses: HashMap::from([(
+                    "wind_evade".to_string(),
+                    StatusDef {
+                        id: "wind_evade".to_string(),
+                        name: "闪避".to_string(),
+                        category: StatusCategory::Buff,
+                        duration_turns: 1,
+                        tick_timing: None,
+                        stage_modifiers: Vec::new(),
+                        fixed_damage_on_tick: 0,
+                        heal_on_tick: 0,
+                        heal_taken_multiplier: None,
+                        evade_charges: 1,
+                    },
+                )]),
+            },
+            reactions: ReactionDb::default(),
+        };
+        let fresh_ctx = test_ai_context(Vec::new());
+        let mut repeated_ctx = fresh_ctx.clone();
+        repeated_ctx.enemy_status_ids = vec!["wind_evade".to_string()];
+
+        let fresh_score =
+            score_enemy_skill(0, SkillId::GaleEvasion, &gale_evasion, &fresh_ctx, &dbs).score;
+        let repeated_score =
+            score_enemy_skill(0, SkillId::GaleEvasion, &gale_evasion, &repeated_ctx, &dbs).score;
+
+        assert!(fresh_score > repeated_score);
+        assert!(repeated_score < 10.0);
     }
 
     #[test]

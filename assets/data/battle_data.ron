@@ -546,7 +546,7 @@
             name: "万钧雷霆",
             category: ElementAttack,
             cost_ap: 4,
-            effect: Attack(power: 20, lifesteal_ratio: None, ignore_shield: false),
+            effect: Attack(power: 23, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Thunder),
         ),
         (
@@ -768,7 +768,7 @@
         (
             name: "火精灵",
             element: Fire,
-            stats: (hp: 95, atk: 22, def: 8, spd: 12, acc: 90),
+            stats: (hp: 95, atk: 22, def: 8, spd: 12, acc: 80),
             skills: [FirePunch, FlameStorm, BurningSoul, ExplosiveIgnition],
         ),
         (
@@ -786,7 +786,7 @@
         (
             name: "雷精灵",
             element: Thunder,
-            stats: (hp: 85, atk: 20, def: 9, spd: 18, acc: 95),
+            stats: (hp: 85, atk: 20, def: 9, spd: 16, acc: 80),
             skills: [ThunderStrike, ThousandThunder, SwiftThunder, ElectroPulse],
         ),
         (
