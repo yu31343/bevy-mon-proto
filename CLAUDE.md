@@ -43,6 +43,8 @@ cargo build --release
 
 Debug logging is controlled by environment variables. `BEVY_MON_LOG_DEBUG=1` enables broad battle/formula/status/card/PVP/AI detail; use narrower flags when needed: `BEVY_MON_LOG_BATTLE_DEBUG=1`, `BEVY_MON_LOG_CARDS=1`, `BEVY_MON_LOG_PVP=1`, `BEVY_MON_LOG_AI=1`, or `BEVY_MON_LOG_SPINE=1`.
 
+Before handing off non-trivial Rust changes, the README recommends at least `cargo fmt --all`, `cargo check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`; for battle data/formula changes, also run focused parsing/formula tests and manually inspect a Vs AI battle with debug logs when practical.
+
 ## Repository workflow
 
 The README says active development happens on `develop`. New work is expected to happen on a personal branch based on `develop`, then merged back through a pull request.
@@ -117,8 +119,8 @@ Important runtime rules:
 - `src/pvp/mod.rs` handles both direct TCP LAN play and relay-server play. Network IO runs on background threads that send `NetEvent`s back into Bevy resources; Bevy systems poll those events in `Update`. Relay mode depends on `relay_server.py`; keep its `RELAY_PROTOCOL_VERSION` in sync with `src/pvp/mod.rs`.
 - PVP sessions start in `GameState::PvpLobby`. A `Hello`/`HelloAck` handshake checks both `PROTOCOL_VERSION` and a stable hash of battle data, rules, formulas, cards, monsters, and deck order before allowing team selection.
 - When both players submit teams, `pvp_apply_remote_team_system` inserts `BattleControlMode::PlayerVsRemote`, `PvpTurnOrder`, and `TeamSelections`, then enters the normal battle state.
-- The host is authoritative during PVP battles: clients send `BattleIntent`s, the host applies remote intents during its enemy turn, broadcasts battle feedback, and sends snapshots that the client mirrors into local ECS state.
-- PVP uses the same battle UI/resources as local play, but `UiControlSide`, hand assignment, turn order, and result messages are mirrored depending on whether the local peer is host or client.
+- The host is authoritative during PVP battles: clients send `BattleIntent`s, the host applies remote intents during its enemy turn or remote forced-discard phase, broadcasts battle feedback, and sends snapshots that the client mirrors into local ECS state.
+- PVP uses the same battle UI/resources as local play, but `UiControlSide`, hand assignment, forced-discard ownership, turn order, and result messages are mirrored depending on whether the local peer is host or client. Host snapshots carry `PendingHandDiscard`; clients mirror that side before deciding whether to show local discard controls or a waiting message.
 
 ### Combat model
 
