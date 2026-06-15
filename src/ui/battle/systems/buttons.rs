@@ -7,7 +7,9 @@ use crate::{
         SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
+    data::MapBattleContext,
     game_state::{BattlePhase, GameState},
+    map::components::CurrentMap,
     pvp,
 };
 
@@ -841,6 +843,8 @@ pub(crate) fn button_retreat_system(
     mut retreat_confirm: ResMut<RetreatConfirmState>,
     mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
     battle_mode: Res<BattleControlMode>,
+    mut map_battle_context: ResMut<MapBattleContext>,
+    mut current_map: ResMut<CurrentMap>,
     pvp_connection: Option<Res<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -859,13 +863,23 @@ pub(crate) fn button_retreat_system(
 
             retreat_confirm.armed = false;
             retreat_text.0 = "撤退".to_string();
-            if *battle_mode == BattleControlMode::PlayerVsRemote {
+            let return_map = if *battle_mode == BattleControlMode::PlayerVsRemote {
                 if let Some(connection) = pvp_connection.as_ref() {
                     pvp::surrender(connection);
                 }
-            }
+                None
+            } else {
+                map_battle_context.return_map.take()
+            };
+            map_battle_context.enemy_monster_index = None;
+
             next_phase.set(BattlePhase::Init);
-            next_game_state.set(GameState::Lobby);
+            if let Some(map) = return_map {
+                *current_map = map;
+                next_game_state.set(GameState::Map);
+            } else {
+                next_game_state.set(GameState::Lobby);
+            }
             break;
         }
     }
