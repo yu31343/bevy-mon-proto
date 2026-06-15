@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
-        UiControlSide, transfer_status_by_id,
+        PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side, SkillCount,
+        SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
     game_state::{BattlePhase, GameState},
@@ -59,6 +59,13 @@ fn waiting_for_pvp_snapshot(
         && pending_intent
             .as_ref()
             .is_some_and(|pending| pending.0.is_some())
+}
+
+fn pending_tactical_discard_for_side(
+    pending: &Option<Res<PendingTacticalDiscard>>,
+    side: Side,
+) -> bool {
+    pending.as_ref().is_some_and(|pending| pending.side == side)
 }
 
 fn send_client_intent(
@@ -213,10 +220,12 @@ pub(crate) fn button_select_skill_system(
     query: Query<(&SkillList, &SkillCount), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
     pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }
@@ -272,6 +281,7 @@ pub(crate) fn button_switch_member_system(
     player_team: Option<ResMut<PlayerTeam>>,
     enemy_team: Option<ResMut<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut event_writer: MessageWriter<BattleEvent>,
@@ -279,6 +289,7 @@ pub(crate) fn button_switch_member_system(
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }
@@ -352,7 +363,54 @@ pub(crate) fn button_switch_member_system(
     }
 }
 
+pub(crate) fn button_cancel_card_selection_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
+    card_query: Query<(&Interaction, &PlayerCardButton), With<Button>>,
+    ui_control_side: Res<UiControlSide>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
+    mut selected: ResMut<SelectedCards>,
+) {
+    if !mouse_buttons.just_pressed(MouseButton::Right)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
+    {
+        return;
+    }
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
+        || (*battle_phase.get() == BattlePhase::Discard
+            && pending_discard.as_ref().is_some_and(|pending| {
+                pending.side != ui_control_side.0
+                    || (*battle_mode == BattleControlMode::PlayerVsAi
+                        && pending.side == Side::Enemy)
+            }))
+    {
+        return;
+    }
+
+    let selected_state = match ui_control_side.0 {
+        Side::Player => &mut selected.player,
+        Side::Enemy => &mut selected.enemy,
+    };
+    let Some(selected_index) = selected_state.index else {
+        return;
+    };
+
+    for (interaction, button) in &card_query {
+        if button.index == selected_index
+            && matches!(*interaction, Interaction::Hovered | Interaction::Pressed)
+        {
+            selected_state.index = None;
+            selected_state.discard_armed = false;
+            break;
+        }
+    }
+}
+
 pub(crate) fn button_play_card_two_step_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
@@ -368,12 +426,26 @@ pub(crate) fn button_play_card_two_step_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if !mouse_buttons.pressed(MouseButton::Left)
+        || (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+            && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -390,6 +462,62 @@ pub(crate) fn button_play_card_two_step_system(
                     selected_state.index = None;
                     selected_state.discard_armed = false;
                     continue;
+                }
+                if pending_tactical_discard_for_side(&pending_tactical_discard, Side::Player) {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_name,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_name,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
                 }
                 if selected_state.discard_armed {
                     if send_client_intent(
@@ -448,18 +576,7 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Player,
                     card_name: card.name.to_string(),
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
+                let _ = boosts;
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -473,6 +590,40 @@ pub(crate) fn button_play_card_two_step_system(
                     selected_state.index = None;
                     selected_state.discard_armed = false;
                     continue;
+                }
+                if pending_tactical_discard_for_side(&pending_tactical_discard, Side::Enemy) {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_name,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_name,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
                 }
                 if selected_state.discard_armed {
                     let card_id = cards[idx];
@@ -509,18 +660,7 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Enemy,
                     card_name: card.name.to_string(),
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
+                let _ = boosts;
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -545,12 +685,26 @@ pub(crate) fn button_discard_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, _) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -645,12 +799,14 @@ pub(crate) fn button_end_turn_system(
         (Changed<Interaction>, With<Button>),
     >,
     ui_control_side: Res<UiControlSide>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }

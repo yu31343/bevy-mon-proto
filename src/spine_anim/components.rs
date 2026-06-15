@@ -14,6 +14,8 @@ pub(super) struct MonsterVisual {
     pub owner: Entity,
     pub side: Side,
     pub dying: bool,
+    pub water_intangible: bool,
+    pub water_shield_breaking: bool,
     pub facing_scale: f32,
     pub flip_y: bool,
 }
@@ -28,6 +30,22 @@ pub(super) struct PendingAnimationAction {
     pub animation: String,
     pub on_complete: AnimationCompleteAction,
 }
+
+#[derive(Component)]
+pub(super) struct BattleVfx;
+
+#[derive(Component)]
+pub(super) struct PendingVfxDespawn {
+    pub animation: String,
+}
+
+#[derive(Component)]
+pub(super) struct PersistentCursedChainVfx {
+    pub target_side: Side,
+}
+
+#[derive(Component)]
+pub(super) struct PendingSpineUiDespawn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AnimationCompleteAction {

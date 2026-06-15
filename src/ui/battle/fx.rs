@@ -12,8 +12,8 @@ use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
-        BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton,
-        SwitchMonsterButton, TeamMemberButton,
+        BattleUiCleanupPending, BattleUiRoot, DiscardButton, EndTurnButton, SkillButton,
+        SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
@@ -51,7 +51,7 @@ pub struct ScreenFlashTimer(pub Timer);
 pub fn process_battle_fx_events(
     mut events: MessageReader<BattleEvent>,
     mut commands: Commands,
-    root: Query<Entity, With<BattleUiRoot>>,
+    root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
     slots: Query<(Entity, &SkillSlotId)>,
     mut discard_button: Query<
         (Entity, &mut BackgroundColor, &mut BorderColor),
@@ -441,13 +441,26 @@ pub fn keyboard_button_flash_system(
 
     // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
 
-    // Z/X/C/V/B → 手牌按钮（index 0-4）
+    // 手牌热键 → 手牌按钮
     for (key, idx) in [
         (KeyCode::KeyZ, 0usize),
         (KeyCode::KeyX, 1),
         (KeyCode::KeyC, 2),
         (KeyCode::KeyV, 3),
         (KeyCode::KeyB, 4),
+        (KeyCode::KeyN, 5),
+        (KeyCode::KeyA, 6),
+        (KeyCode::KeyS, 7),
+        (KeyCode::KeyD, 8),
+        (KeyCode::KeyG, 9),
+        (KeyCode::KeyH, 10),
+        (KeyCode::KeyJ, 11),
+        (KeyCode::KeyK, 12),
+        (KeyCode::KeyL, 13),
+        (KeyCode::KeyU, 14),
+        (KeyCode::KeyI, 15),
+        (KeyCode::KeyO, 16),
+        (KeyCode::KeyP, 17),
     ] {
         if keyboard.just_pressed(key) {
             for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {

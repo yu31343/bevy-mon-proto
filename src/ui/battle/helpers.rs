@@ -295,6 +295,7 @@ pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
         BattlePhase::RoundStart => "回合开始",
         BattlePhase::PlayerTurn => "玩家回合",
         BattlePhase::EnemyTurn => "敌方回合",
+        BattlePhase::Discard => "弃牌阶段",
         BattlePhase::CheckEnd => "胜负判定",
         BattlePhase::DeathResolve => "死亡结算",
     }
@@ -555,16 +556,115 @@ pub(crate) fn card_hotkey_label(index: usize) -> &'static str {
         2 => "C",
         3 => "V",
         4 => "B",
+        5 => "N",
+        6 => "A",
+        7 => "S",
+        8 => "D",
+        9 => "G",
+        10 => "H",
+        11 => "J",
+        12 => "K",
+        13 => "L",
+        14 => "U",
+        15 => "I",
+        16 => "O",
+        17 => "P",
         _ => "",
     }
 }
 
 pub(crate) fn card_description(card: &CardDef) -> String {
-    match card.effect {
+    match &card.effect {
         CardEffect::GainAp { amount } => format!("效果：获得 +{} AP。", amount),
         CardEffect::NextAttackBoost { amount } => format!("效果：下次进攻 +{}。", amount),
         CardEffect::NextShieldBoost { amount } => format!("效果：下次护盾 +{}。", amount),
         CardEffect::NextHealBoost { amount } => format!("效果：下次治疗 +{}。", amount),
+        CardEffect::NextElementAttachmentGainAp { amount } => {
+            format!("效果：下次元素附着/反应成功时获得 +{} AP。", amount)
+        }
+        CardEffect::NextReactionFixedDamage {
+            amount,
+            ignore_shield,
+        } => {
+            let shield_text = if *ignore_shield {
+                "，无视护盾"
+            } else {
+                ""
+            };
+            format!(
+                "效果：下次触发元素反应时追加 {} 点固定伤害{}。",
+                amount, shield_text
+            )
+        }
+        CardEffect::NextWindSpreadDamage {
+            amount,
+            elements,
+            ignore_shield,
+        } => {
+            let shield_text = if *ignore_shield {
+                "，无视护盾"
+            } else {
+                ""
+            };
+            format!(
+                "效果：下次风扩散 {:?} 时追加 {} 点固定伤害{}。",
+                elements, amount, shield_text
+            )
+        }
+        CardEffect::NextAuraAttackDraw { amount } => {
+            format!("效果：下次攻击命中已有附着目标时抽 {} 张牌。", amount)
+        }
+        CardEffect::DiscardOtherDrawGainAp { draw, gain_ap } => {
+            format!(
+                "效果：弃置 1 张其他手牌，抽 {} 张牌，获得 +{} AP。",
+                draw, gain_ap
+            )
+        }
+        CardEffect::NextSkillCostDraw { skill_cost, draw } => {
+            format!("效果：下次使用 {} AP 技能后抽 {} 张牌。", skill_cost, draw)
+        }
+        CardEffect::DrawIfKnockedOutThisTurn { amount } => {
+            format!("效果：若本行动内击倒敌方精灵，抽 {} 张牌。", amount)
+        }
+        CardEffect::GainShield { amount } => format!("效果：己方前场获得 {} 点护盾。", amount),
+        CardEffect::ShieldAbsorbGainAp { amount } => {
+            format!(
+                "效果：敌方下次行动结束前，己方护盾吸收伤害时获得 +{} AP。",
+                amount
+            )
+        }
+        CardEffect::ModifyStages {
+            attribute,
+            amount,
+            duration_turns,
+        } => {
+            format!(
+                "效果：己方前场 {:?} 等级 {:+}，持续 {} 回合。",
+                attribute, amount, duration_turns
+            )
+        }
+        CardEffect::CleanseOrGainAp { fallback_ap, .. } => {
+            format!(
+                "效果：清除 1 个普通附着/Debuff/特殊负面状态；若失败则获得 +{} AP。",
+                fallback_ap
+            )
+        }
+        CardEffect::DrawAndGainApIfAliveTeam {
+            draw,
+            min_alive,
+            gain_ap,
+        } => {
+            format!(
+                "效果：抽 {} 张牌；若己方至少 {} 只未倒下，额外获得 +{} AP。",
+                draw, min_alive, gain_ap
+            )
+        }
+        CardEffect::GainShieldDrawIfSwitchedThisTurn { shield, draw } => {
+            format!(
+                "效果：己方前场获得 {} 点护盾；本行动结束前发生换人时，额外抽 {} 张牌。",
+                shield, draw
+            )
+        }
     }
 }
 

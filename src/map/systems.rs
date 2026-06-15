@@ -1,3 +1,4 @@
+use crate::console_log::{ConsoleLogCategory, log as console_log};
 use crate::data::{MapBattleContext, MonsterPool};
 use crate::game_state::GameState;
 use crate::map::components::{
@@ -208,7 +209,13 @@ pub fn click_sprites(
                             let distance = (transform.translation.truncate() - world_pos).length();
                             if distance < 30.0 {
                                 // 点击范围
-                                println!("Clicked on {}", sprite.monster_type);
+                                console_log(
+                                    ConsoleLogCategory::Map,
+                                    format!(
+                                        "点击地图怪物：{}（index={}）",
+                                        sprite.monster_type, sprite.monster_index
+                                    ),
+                                );
                                 map_battle_context.enemy_monster_index = Some(sprite.monster_index);
                                 *entry_mode = SelectionEntryMode::VsAi;
                                 next_state.set(GameState::TeamSelection);

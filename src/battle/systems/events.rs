@@ -9,6 +9,7 @@ use crate::{
         StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
         push_structured_battle_line,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     game_state::GameState,
 };
 
@@ -233,15 +234,21 @@ pub fn consume_battle_events_system(
             if let (Some(player_team), Some(enemy_team)) =
                 (player_team.as_ref(), enemy_team.as_ref())
             {
+                let snapshot_detail = format!(
+                    "我方 => {}\n敌方 => {}",
+                    snapshot_side(&player_team.0, Side::Player, &combat_query),
+                    snapshot_side(&enemy_team.0, Side::Enemy, &combat_query)
+                );
+                let phase = format!("state-r{}", turn_count.0);
                 push_structured_battle_line(
                     &mut structured_log,
-                    format!("state-r{}", turn_count.0),
+                    phase.clone(),
                     "双方状态快照",
-                    format!(
-                        "我方 => {}\n敌方 => {}",
-                        snapshot_side(&player_team.0, Side::Player, &combat_query),
-                        snapshot_side(&enemy_team.0, Side::Enemy, &combat_query)
-                    ),
+                    snapshot_detail.clone(),
+                );
+                console_log(
+                    ConsoleLogCategory::State,
+                    format!("[{}] 双方状态快照\n{}", phase, snapshot_detail),
                 );
             }
         }
@@ -249,7 +256,10 @@ pub fn consume_battle_events_system(
 
     for event in trace_events.read() {
         let phase = format!("trace-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.action, event.detail);
+        console_log(
+            ConsoleLogCategory::Trace,
+            format!("[{}] {}\n{}", phase, event.action, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -266,7 +276,10 @@ pub fn consume_battle_events_system(
 
     for event in state_events.read() {
         let phase = format!("state-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.summary, event.detail);
+        console_log(
+            ConsoleLogCategory::State,
+            format!("[{}] {}\n{}", phase, event.summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -282,7 +295,10 @@ pub fn consume_battle_events_system(
     }
 
     for event in lifecycle_events.read() {
-        println!("[{}] {}\n{}", event.phase, event.summary, event.detail);
+        console_log(
+            ConsoleLogCategory::BattleDebug,
+            format!("[{}] {}\n{}", event.phase, event.summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             event.phase.clone(),
@@ -299,7 +315,10 @@ pub fn consume_battle_events_system(
 
     for event in formula_events.read() {
         let phase = format!("formula-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.action, event.detail);
+        console_log(
+            ConsoleLogCategory::Formula,
+            format!("[{}] {}\n{}", phase, event.action, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -317,7 +336,10 @@ pub fn consume_battle_events_system(
     for event in status_events.read() {
         let summary = format!("{}:{}", event.status_id, event.action);
         let phase = format!("status-r{}", event.round);
-        println!("[{}] {}\n{}", phase, summary, event.detail);
+        console_log(
+            ConsoleLogCategory::Status,
+            format!("[{}] {}\n{}", phase, summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -332,8 +354,8 @@ pub fn consume_battle_events_system(
             Some(last) => last != &result.message,
             None => true,
         };
-        if should_print {
-            println!("{}", result.message);
+        if should_print && !log.0.iter().any(|line| line == &result.message) {
+            console_log(ConsoleLogCategory::Result, &result.message);
             *last_printed_result = Some(result.message.clone());
         }
     } else {

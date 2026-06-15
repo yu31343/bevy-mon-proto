@@ -2,13 +2,15 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        AccuracyRng, ActionPoints, ActionTrace, BattleLog, BattleResult, Combatant, ElementAura,
-        Hand, InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
-        SkillCount, SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
-        UiControlSide, clear_runtime_battle_logs, clear_turn_context, note_structured_phase,
-        push_battle_line,
+        AccuracyRng, ActionPoints, ActionTrace, BattleControlMode, BattleLog, BattleResult,
+        BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand, InBattle,
+        PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side, SkillCount,
+        SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount, UiControlSide,
+        clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
+        note_structured_phase, push_battle_line,
     },
-    data::{BattleDataStatus, BattleDbs, BattleRules, MonsterPool, TeamSelections},
+    console_log::{ConsoleLogCategory, log as console_log},
+    data::{BattleDataStatus, BattleDbs, BattleRules, CardDeck, MonsterPool, TeamSelections},
     game_state::{BattlePhase, GameState},
 };
 
@@ -26,7 +28,10 @@ fn normalize_skill_slots(skills: &[crate::data::SkillId]) -> ([crate::data::Skil
 pub(crate) struct InitBattleRuntime<'w> {
     dbs: Res<'w, BattleDbs>,
     battle_rules: Res<'w, BattleRules>,
+    card_deck: Res<'w, CardDeck>,
     data_status: Option<Res<'w, BattleDataStatus>>,
+    battle_mode: Res<'w, BattleControlMode>,
+    shuffle_seed: Option<Res<'w, BattleShuffleSeed>>,
     turn_ctx: ResMut<'w, TurnContext>,
     battle_log: ResMut<'w, BattleLog>,
     structured_log: ResMut<'w, StructuredBattleLog>,
@@ -43,13 +48,16 @@ pub fn init_battle_system(
     mut commands: Commands,
     monster_pool: Res<MonsterPool>,
     team_selections: Option<Res<TeamSelections>>,
-    cleanup_query: Query<Entity, With<InBattle>>,
+    cleanup_query: Query<Entity, (With<InBattle>, With<Combatant>)>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: InitBattleRuntime,
 ) {
     let dbs = &runtime.dbs;
     let battle_rules = &runtime.battle_rules;
+    let card_deck = &runtime.card_deck;
     let data_status = &runtime.data_status;
+    let battle_mode = &runtime.battle_mode;
+    let shuffle_seed = &runtime.shuffle_seed;
     let turn_ctx = &mut runtime.turn_ctx;
     let battle_log = &mut runtime.battle_log;
     let structured_log = &mut runtime.structured_log;
@@ -63,7 +71,7 @@ pub fn init_battle_system(
 
     // Wait for team selections to be made
     let Some(team_selections) = team_selections else {
-        println!("等待队伍选择...");
+        console_log(ConsoleLogCategory::Battle, "等待队伍选择...");
         return;
     };
     for entity in &cleanup_query {
@@ -79,6 +87,9 @@ pub fn init_battle_system(
     accuracy_rng.reset(0xA5A5_1F2D_D3C4_B7E9);
     commands.insert_resource(crate::pvp::PvpPendingLocalIntent::default());
     commands.insert_resource(crate::pvp::PvpLastRemoteIntentSeq::default());
+    commands.remove_resource::<crate::battle::PendingHandDiscard>();
+    commands.remove_resource::<crate::battle::PendingGuardCounterClear>();
+    commands.remove_resource::<crate::battle::PendingTacticalDiscard>();
     note_structured_phase(
         structured_log,
         "battle-init",
@@ -87,12 +98,65 @@ pub fn init_battle_system(
     );
 
     // 回合进度状态初始化（在每次“战斗重开”时重置）。
+    let battle_seed = if **battle_mode == BattleControlMode::PlayerVsRemote {
+        shuffle_seed
+            .as_ref()
+            .map(|seed| seed.0)
+            .unwrap_or_else(new_battle_shuffle_seed)
+    } else {
+        new_battle_shuffle_seed()
+    };
+    if **battle_mode != BattleControlMode::PlayerVsRemote {
+        commands.remove_resource::<BattleShuffleSeed>();
+    }
+    let mut initial_hand = Hand::default();
+    let mut card_piles = CardPiles::from_deck(&card_deck.0, battle_seed);
+    super::cards::draw_cards(
+        Side::Player,
+        battle_rules.initial_cards,
+        &mut initial_hand,
+        &mut card_piles,
+        card_deck,
+    );
+    super::cards::draw_cards(
+        Side::Enemy,
+        battle_rules.initial_cards,
+        &mut initial_hand,
+        &mut card_piles,
+        card_deck,
+    );
+    let initial_player_cards = initial_hand
+        .player
+        .iter()
+        .map(|cid| {
+            dbs.cards
+                .get(cid)
+                .map(|card| card.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let initial_enemy_cards = initial_hand
+        .enemy
+        .iter()
+        .map(|cid| {
+            dbs.cards
+                .get(cid)
+                .map(|card| card.name.to_string())
+                .unwrap_or_else(|| format!("{cid:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let initial_draw_remaining = card_piles.draw.len();
+    let initial_discard_count = card_piles.discard.len();
     commands.insert_resource(ActionPoints {
         player: 0,
         enemy: 0,
     });
-    commands.insert_resource(Hand::default());
+    commands.insert_resource(initial_hand);
+    commands.insert_resource(card_piles);
     commands.insert_resource(PendingBoosts::default());
+    commands.insert_resource(CardTurnMemory::default());
     commands.insert_resource(SelectedCards::default());
     commands.insert_resource(UiControlSide(Side::Player));
 
@@ -274,6 +338,46 @@ pub fn init_battle_system(
         );
         return;
     }
+
+    let player_names = team_selections
+        .player_indices
+        .iter()
+        .filter_map(|&idx| monster_pool.monsters.get(idx))
+        .map(|monster| monster.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let enemy_names = team_selections
+        .enemy_indices
+        .iter()
+        .filter_map(|&idx| monster_pool.monsters.get(idx))
+        .map(|monster| monster.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    console_log(
+        ConsoleLogCategory::Battle,
+        format!(
+            "[battle-init] 模式={:?}；随机种子={}；我方=[{}]；敌方=[{}]；规则：初始手牌={}，每回合抽牌={}，每回合AP={}，最大AP={}，保留手牌上限={}",
+            **battle_mode,
+            battle_seed,
+            player_names,
+            enemy_names,
+            battle_rules.initial_cards,
+            battle_rules.cards_per_round,
+            battle_rules.ap_per_round,
+            battle_rules.max_ap,
+            battle_rules.max_retained_hand
+        ),
+    );
+    console_log(
+        ConsoleLogCategory::Cards,
+        format!(
+            "[battle-init] 初始手牌：我方=[{}]；敌方=[{}]；牌堆 {} 张；弃牌 {} 张",
+            initial_player_cards,
+            initial_enemy_cards,
+            initial_draw_remaining,
+            initial_discard_count
+        ),
+    );
 
     commands.insert_resource(crate::battle::PlayerTeam(player_team));
     commands.insert_resource(crate::battle::EnemyTeam(enemy_team));

@@ -16,6 +16,7 @@ impl Plugin for TeamSelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectionState>()
             .init_resource::<SelectionEntryMode>()
+            .init_resource::<SelectedAiDifficulty>()
             .init_resource::<MapBattleContext>()
             .add_systems(
                 Update,
@@ -25,15 +26,20 @@ impl Plugin for TeamSelectionPlugin {
                         .and(resource_exists::<crate::ui::battle::theme::UiTheme>),
                 ),
             )
-            .add_systems(OnEnter(GameState::TeamSelection), clear_selection_state)
+            .add_systems(
+                OnEnter(GameState::TeamSelection),
+                (clear_selection_state, reset_selected_ai_difficulty_system),
+            )
             .add_systems(OnExit(GameState::TeamSelection), cleanup_selection_ui)
             .add_systems(
                 Update,
                 (
                     button_select_monster_system,
+                    button_select_ai_difficulty_system,
                     button_confirm_selection_system,
                     button_back_to_lobby_system,
                     update_selection_ui_system,
+                    update_ai_difficulty_ui_system,
                 )
                     .run_if(in_state(GameState::TeamSelection)),
             );

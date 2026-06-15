@@ -5,6 +5,11 @@ use crate::battle::Side;
 #[derive(Component)]
 pub(crate) struct BattleUiRoot;
 
+#[derive(Component)]
+pub(crate) struct BattleUiCleanupPending {
+    pub frames_remaining: u8,
+}
+
 #[derive(Component, Clone, Copy)]
 pub(crate) struct SkillSlotId {
     pub side: Side,
@@ -39,6 +44,11 @@ pub(crate) struct PlayerCardButton {
 
 #[derive(Component)]
 pub(crate) struct PlayerCardHotkeyText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerCardHotkeyBadge {
     pub index: usize,
 }
 

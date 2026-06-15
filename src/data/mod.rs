@@ -8,6 +8,8 @@ use std::{
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::console_log::{ConsoleLogCategory, log as console_log};
+
 pub use cards::{CardDeck, CardDef, CardEffect, CardId};
 
 /// 元素类型（系别）：火、水、草、光、暗、雷、风。
@@ -208,6 +210,10 @@ pub struct ReactionDef {
     #[serde(default)]
     pub clear_statuses: Vec<String>,
     #[serde(default)]
+    pub clear_elements: Vec<ElementType>,
+    #[serde(default)]
+    pub preserve_current_auras: bool,
+    #[serde(default)]
     pub aura_results: Vec<ElementType>,
 }
 
@@ -379,6 +385,47 @@ mod tests {
         // 理论伤害为 0：不会吸收
         assert!(!shield_blocks_element_attachment(10, 0));
     }
+
+    #[test]
+    fn bundled_battle_data_parses_and_validates() {
+        let raw = fs::read_to_string("assets/data/battle_data.ron")
+            .expect("battle_data.ron should be readable from repository root");
+        let config: BattleConfig = ron::from_str(&raw).expect("battle_data.ron should parse");
+        validate_battle_config(&config).expect("battle_data.ron should validate");
+        assert!(config.rules.initial_cards > 0);
+        assert_eq!(config.rules.cards_per_round, 2);
+        assert_eq!(config.rules.max_ap, 12);
+        assert_eq!(config.rules.max_retained_hand, 4);
+        assert_eq!(config.ai.default_difficulty, AiDifficulty::Normal);
+        assert_eq!(config.ai.default_config().search_depth, 1);
+        assert_eq!(config.ai.presets.len(), 4);
+        assert_eq!(config.deck.len(), 140);
+        assert_eq!(config.cards.len(), 17);
+    }
+
+    #[test]
+    fn ai_difficulty_presets_are_loaded_from_config() {
+        let raw = fs::read_to_string("assets/data/battle_data.ron")
+            .expect("battle_data.ron should be readable from repository root");
+        let config: BattleConfig = ron::from_str(&raw).expect("battle_data.ron should parse");
+
+        let easy = config.ai.config_for(AiDifficulty::Easy).unwrap();
+        let normal = config.ai.config_for(AiDifficulty::Normal).unwrap();
+        let hard = config.ai.config_for(AiDifficulty::Hard).unwrap();
+        let expert = config.ai.config_for(AiDifficulty::Expert).unwrap();
+
+        assert_eq!(easy.player_info_visibility, AiPlayerInfoVisibility::None);
+        assert_eq!(easy.search_depth, 1);
+        assert_eq!(
+            normal.player_info_visibility,
+            AiPlayerInfoVisibility::Public
+        );
+        assert_eq!(hard.search_depth, 2);
+        assert_eq!(hard.player_info_visibility, AiPlayerInfoVisibility::Public);
+        assert_eq!(expert.search_depth, 3);
+        assert_eq!(expert.player_info_visibility, AiPlayerInfoVisibility::Full);
+        assert!(expert.weights.player_threat > hard.weights.player_threat);
+    }
 }
 
 /// 技能唯一标识（逻辑层使用）。
@@ -526,8 +573,28 @@ fn default_cards_per_round() -> usize {
     5
 }
 
+fn default_initial_cards() -> usize {
+    0
+}
+
 fn default_ap_per_round() -> i32 {
     6
+}
+
+fn default_max_ap() -> i32 {
+    12
+}
+
+fn default_max_retained_hand() -> usize {
+    4
+}
+
+fn default_discard_ap_gain() -> i32 {
+    1
+}
+
+fn default_max_shield_hp_ratio() -> f32 {
+    0.5
 }
 
 fn default_accuracy_percent() -> i32 {
@@ -538,18 +605,33 @@ fn default_accuracy_percent() -> i32 {
 pub struct BattleRulesConfig {
     #[serde(default = "default_max_team_size")]
     pub max_team_size: usize,
+    #[serde(default = "default_initial_cards")]
+    pub initial_cards: usize,
     #[serde(default = "default_cards_per_round")]
     pub cards_per_round: usize,
     #[serde(default = "default_ap_per_round")]
     pub ap_per_round: i32,
+    #[serde(default = "default_max_ap")]
+    pub max_ap: i32,
+    #[serde(default = "default_max_retained_hand")]
+    pub max_retained_hand: usize,
+    #[serde(default = "default_discard_ap_gain")]
+    pub discard_ap_gain: i32,
+    #[serde(default = "default_max_shield_hp_ratio")]
+    pub max_shield_hp_ratio: f32,
 }
 
 impl Default for BattleRulesConfig {
     fn default() -> Self {
         Self {
             max_team_size: default_max_team_size(),
+            initial_cards: default_initial_cards(),
             cards_per_round: default_cards_per_round(),
             ap_per_round: default_ap_per_round(),
+            max_ap: default_max_ap(),
+            max_retained_hand: default_max_retained_hand(),
+            discard_ap_gain: default_discard_ap_gain(),
+            max_shield_hp_ratio: default_max_shield_hp_ratio(),
         }
     }
 }
@@ -557,16 +639,26 @@ impl Default for BattleRulesConfig {
 #[derive(Resource, Debug, Clone)]
 pub struct BattleRules {
     pub max_team_size: usize,
+    pub initial_cards: usize,
     pub cards_per_round: usize,
     pub ap_per_round: i32,
+    pub max_ap: i32,
+    pub max_retained_hand: usize,
+    pub discard_ap_gain: i32,
+    pub max_shield_hp_ratio: f32,
 }
 
 impl BattleRules {
     pub fn from_config(config: &BattleRulesConfig) -> Self {
         Self {
             max_team_size: config.max_team_size,
+            initial_cards: config.initial_cards,
             cards_per_round: config.cards_per_round,
             ap_per_round: config.ap_per_round,
+            max_ap: config.max_ap,
+            max_retained_hand: config.max_retained_hand,
+            discard_ap_gain: config.discard_ap_gain,
+            max_shield_hp_ratio: config.max_shield_hp_ratio.max(0.0),
         }
     }
 }
@@ -577,6 +669,150 @@ impl Default for BattleRules {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Default)]
+pub enum AiDifficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+    Expert,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+pub enum AiPlayerInfoVisibility {
+    None,
+    #[default]
+    Public,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct EnemyAiWeights {
+    #[serde(default = "default_ai_weight")]
+    pub attack_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub kill_bonus: f32,
+    #[serde(default = "default_ai_weight")]
+    pub healing_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub shield_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub status_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub reaction_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub switch_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub card_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub discard_value: f32,
+    #[serde(default = "default_ai_weight")]
+    pub player_threat: f32,
+}
+
+fn default_ai_weight() -> f32 {
+    1.0
+}
+
+impl Default for EnemyAiWeights {
+    fn default() -> Self {
+        Self {
+            attack_value: default_ai_weight(),
+            kill_bonus: default_ai_weight(),
+            healing_value: default_ai_weight(),
+            shield_value: default_ai_weight(),
+            status_value: default_ai_weight(),
+            reaction_value: default_ai_weight(),
+            switch_value: default_ai_weight(),
+            card_value: default_ai_weight(),
+            discard_value: default_ai_weight(),
+            player_threat: default_ai_weight(),
+        }
+    }
+}
+
+fn default_ai_search_depth() -> usize {
+    1
+}
+
+fn default_ai_top_candidates() -> usize {
+    4
+}
+
+fn default_ai_switch_score_threshold() -> f32 {
+    18.0
+}
+
+fn default_ai_random_score_jitter() -> f32 {
+    0.0
+}
+
+#[derive(Resource, Debug, Clone, Deserialize)]
+pub struct EnemyAiConfig {
+    #[serde(default)]
+    pub difficulty: AiDifficulty,
+    #[serde(default)]
+    pub player_info_visibility: AiPlayerInfoVisibility,
+    #[serde(default = "default_ai_search_depth")]
+    pub search_depth: usize,
+    #[serde(default = "default_ai_top_candidates")]
+    pub top_candidates: usize,
+    #[serde(default = "default_ai_switch_score_threshold")]
+    pub switch_score_threshold: f32,
+    #[serde(default = "default_ai_random_score_jitter")]
+    pub random_score_jitter: f32,
+    #[serde(default)]
+    pub weights: EnemyAiWeights,
+}
+
+impl Default for EnemyAiConfig {
+    fn default() -> Self {
+        Self {
+            difficulty: AiDifficulty::Normal,
+            player_info_visibility: AiPlayerInfoVisibility::Public,
+            search_depth: default_ai_search_depth(),
+            top_candidates: default_ai_top_candidates(),
+            switch_score_threshold: default_ai_switch_score_threshold(),
+            random_score_jitter: default_ai_random_score_jitter(),
+            weights: EnemyAiWeights::default(),
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone, Deserialize)]
+pub struct EnemyAiPresets {
+    #[serde(default)]
+    pub default_difficulty: AiDifficulty,
+    #[serde(default = "default_ai_presets")]
+    pub presets: Vec<EnemyAiConfig>,
+}
+
+impl EnemyAiPresets {
+    pub fn config_for(&self, difficulty: AiDifficulty) -> Option<EnemyAiConfig> {
+        self.presets
+            .iter()
+            .find(|config| config.difficulty == difficulty)
+            .cloned()
+    }
+
+    pub fn default_config(&self) -> EnemyAiConfig {
+        self.config_for(self.default_difficulty).unwrap_or_default()
+    }
+}
+
+impl Default for EnemyAiPresets {
+    fn default() -> Self {
+        Self {
+            default_difficulty: AiDifficulty::Normal,
+            presets: default_ai_presets(),
+        }
+    }
+}
+
+fn default_ai_presets() -> Vec<EnemyAiConfig> {
+    vec![EnemyAiConfig::default()]
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct BattleConfig {
     #[serde(default)]
@@ -585,6 +821,8 @@ struct BattleConfig {
     rules: BattleRulesConfig,
     #[serde(default)]
     formulas: BattleFormulaConfig,
+    #[serde(default)]
+    ai: EnemyAiPresets,
     #[serde(default)]
     statuses: Vec<StatusDef>,
     #[serde(default)]
@@ -670,6 +908,12 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            commands.insert_resource(EnemyAiPresets::default());
+            commands.insert_resource(EnemyAiConfig::default());
+            console_log(
+                ConsoleLogCategory::Data,
+                format!("[error] 读取战斗配置失败：{path}（{e}）"),
+            );
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("读取战斗配置失败: {path} ({e})")),
             });
@@ -691,6 +935,12 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(BattleRules::default());
             commands.insert_resource(BattleFormulaRules::default());
             commands.insert_resource(BattleRulesBundle::default());
+            commands.insert_resource(EnemyAiPresets::default());
+            commands.insert_resource(EnemyAiConfig::default());
+            console_log(
+                ConsoleLogCategory::Data,
+                format!("[error] 解析战斗配置失败：{path}（{e}）"),
+            );
             commands.insert_resource(BattleDataStatus {
                 error: Some(format!("解析战斗配置失败: {path} ({e})")),
             });
@@ -711,6 +961,12 @@ fn load_battle_data(mut commands: Commands) {
         commands.insert_resource(BattleRules::default());
         commands.insert_resource(BattleFormulaRules::default());
         commands.insert_resource(BattleRulesBundle::default());
+        commands.insert_resource(EnemyAiPresets::default());
+        commands.insert_resource(EnemyAiConfig::default());
+        console_log(
+            ConsoleLogCategory::Data,
+            format!("[error] 战斗配置非法：{reason}"),
+        );
         commands.insert_resource(BattleDataStatus {
             error: Some(format!("战斗配置非法: {reason}")),
         });
@@ -719,6 +975,8 @@ fn load_battle_data(mut commands: Commands) {
 
     let rules = BattleRules::from_config(&config.rules);
     let formulas = BattleFormulaRules::from_config(&config.formulas);
+    let ai_presets = config.ai.clone();
+    let ai_config = ai_presets.default_config();
     let rules_bundle = BattleRulesBundle {
         battle: rules.clone(),
         formulas,
@@ -740,6 +998,7 @@ fn load_battle_data(mut commands: Commands) {
         element_matrix,
         rules: _,
         formulas: _,
+        ai: _,
         statuses: _,
         reactions: _,
         skills: config_skills,
@@ -762,11 +1021,30 @@ fn load_battle_data(mut commands: Commands) {
     }
 
     // 加载元素克制矩阵：若配置为空则使用默认值
-    let elements = if element_matrix.relations.is_empty() {
+    let used_default_matrix = element_matrix.relations.is_empty();
+    let elements = if used_default_matrix {
         ElementDb::from_default_config()
     } else {
         ElementDb::from_config(&element_matrix)
     };
+
+    console_log(
+        ConsoleLogCategory::Data,
+        format!(
+            "[ok] battle_data.ron 加载完成：skills={} cards={} monsters={} statuses={} reactions={} deck={} element_matrix={}",
+            skills.len(),
+            cards.len(),
+            monsters.len(),
+            statuses.statuses.len(),
+            reactions.reactions.len(),
+            deck.len(),
+            if used_default_matrix {
+                "default"
+            } else {
+                "config"
+            }
+        ),
+    );
 
     commands.insert_resource(BattleDbs {
         skills,
@@ -780,7 +1058,99 @@ fn load_battle_data(mut commands: Commands) {
     commands.insert_resource(rules);
     commands.insert_resource(formulas);
     commands.insert_resource(rules_bundle);
+    commands.insert_resource(ai_presets);
+    commands.insert_resource(ai_config);
     commands.insert_resource(BattleDataStatus::default());
+}
+
+fn validate_ai_presets(ai: &EnemyAiPresets) -> Result<(), String> {
+    if ai.presets.is_empty() {
+        return Err("ai.presets 不能为空".to_string());
+    }
+
+    let mut difficulties = HashSet::new();
+    for config in &ai.presets {
+        if !difficulties.insert(config.difficulty) {
+            return Err(format!("ai.presets 中重复定义了 {:?}", config.difficulty));
+        }
+        validate_ai_config(config, "ai.presets")?;
+    }
+
+    if !difficulties.contains(&ai.default_difficulty) {
+        return Err(format!(
+            "ai.default_difficulty {:?} 未在 ai.presets 中定义",
+            ai.default_difficulty
+        ));
+    }
+
+    for difficulty in [
+        AiDifficulty::Easy,
+        AiDifficulty::Normal,
+        AiDifficulty::Hard,
+        AiDifficulty::Expert,
+    ] {
+        if !difficulties.contains(&difficulty) {
+            return Err(format!("ai.presets 缺少 {:?} 预设", difficulty));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_ai_config(config: &EnemyAiConfig, field_prefix: &str) -> Result<(), String> {
+    match config.difficulty {
+        AiDifficulty::Easy | AiDifficulty::Normal | AiDifficulty::Hard | AiDifficulty::Expert => {}
+    }
+    match config.player_info_visibility {
+        AiPlayerInfoVisibility::None
+        | AiPlayerInfoVisibility::Public
+        | AiPlayerInfoVisibility::Full => {}
+    }
+    if config.search_depth == 0 || config.search_depth > 3 {
+        return Err(format!(
+            "{field_prefix}.{:?}.search_depth 必须在 1..=3 之间，当前为 {}",
+            config.difficulty, config.search_depth
+        ));
+    }
+    if config.top_candidates == 0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.top_candidates 必须 >= 1",
+            config.difficulty
+        ));
+    }
+    if !config.switch_score_threshold.is_finite() || config.switch_score_threshold < 0.0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.switch_score_threshold 必须是 >= 0.0 的有限数",
+            config.difficulty
+        ));
+    }
+    if !config.random_score_jitter.is_finite() || config.random_score_jitter < 0.0 {
+        return Err(format!(
+            "{field_prefix}.{:?}.random_score_jitter 必须是 >= 0.0 的有限数",
+            config.difficulty
+        ));
+    }
+    for (name, value) in [
+        ("attack_value", config.weights.attack_value),
+        ("kill_bonus", config.weights.kill_bonus),
+        ("healing_value", config.weights.healing_value),
+        ("shield_value", config.weights.shield_value),
+        ("status_value", config.weights.status_value),
+        ("reaction_value", config.weights.reaction_value),
+        ("switch_value", config.weights.switch_value),
+        ("card_value", config.weights.card_value),
+        ("discard_value", config.weights.discard_value),
+        ("player_threat", config.weights.player_threat),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!(
+                "{field_prefix}.{:?}.weights.{name} 必须是 >= 0.0 的有限数",
+                config.difficulty
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
@@ -805,6 +1175,15 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     if rules.ap_per_round < 0 {
         return Err("rules.ap_per_round 必须 >= 0".to_string());
     }
+    if rules.max_ap < 0 {
+        return Err("rules.max_ap 必须 >= 0".to_string());
+    }
+    if rules.max_ap < rules.ap_per_round {
+        return Err("rules.max_ap 必须 >= rules.ap_per_round".to_string());
+    }
+    if rules.discard_ap_gain < 0 {
+        return Err("rules.discard_ap_gain 必须 >= 0".to_string());
+    }
 
     if config.formulas.attribute_stage_bounds.min > config.formulas.attribute_stage_bounds.max {
         return Err("formulas.attribute_stage_bounds.min 不能大于 max".to_string());
@@ -823,6 +1202,8 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     if config.formulas.damage.min_damage < 0 {
         return Err("formulas.damage.min_damage 必须 >= 0".to_string());
     }
+
+    validate_ai_presets(&config.ai)?;
 
     if config.monsters.len() < rules.max_team_size {
         return Err(format!(
@@ -1001,9 +1382,9 @@ fn validate_battle_config(config: &BattleConfig) -> Result<(), String> {
     }
 
     for reaction in &config.reactions {
-        if reaction.required_elements.len() > 2 {
+        if reaction.required_elements.len() > 3 {
             return Err(format!(
-                "反应 {} 的 required_elements 不能超过 2 个",
+                "反应 {} 的 required_elements 不能超过 3 个",
                 reaction.id
             ));
         }

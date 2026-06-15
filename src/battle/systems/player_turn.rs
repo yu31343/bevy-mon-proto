@@ -4,11 +4,12 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        PendingKoResolution, RoundOrder, SelectedCards, Shield, Side, SkillCount, SkillList, Stats,
-        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
-        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, PendingTacticalDiscard, RoundOrder, SelectedCards, Shield, Side,
+        SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
+        next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        push_turn_action_trace, transfer_status_by_id,
     },
-    data::{BattleDbs, CardEffect},
+    data::{BattleDbs, BattleRules},
     game_state::{BattlePhase, GameState},
     pvp,
 };
@@ -41,6 +42,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     pending_boosts: ResMut<'w, PendingBoosts>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: ResMut<'w, crate::battle::PlayerTeam>,
@@ -80,6 +82,11 @@ fn finalize_player_turn(
     player_team: &crate::battle::PlayerTeam,
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
+    pending_boosts: &mut PendingBoosts,
+    action_points: &mut ActionPoints,
+    hand: &Hand,
+    battle_rules: &BattleRules,
+    commands: &mut Commands,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut PlayerTurnLogs,
     writers: &mut PlayerTurnEventWriters,
@@ -113,6 +120,7 @@ fn finalize_player_turn(
                     side: Side::Player,
                     round: logs.turn_count.0,
                     formula_rules,
+                    pending_boosts: Some(&mut *pending_boosts),
                     event_writer: &mut writers.event_writer,
                     formula_writer: &mut writers.formula_writer,
                     status_writer: &mut writers.status_writer,
@@ -121,18 +129,33 @@ fn finalize_player_turn(
             );
         }
     }
+    super::clear_action_scoped_card_effects(Side::Player, pending_boosts);
+    commands.insert_resource(crate::battle::PendingGuardCounterClear {
+        acting_side: Side::Player,
+    });
     turn_ctx.player_ended = true;
     if let Ok((_, _, stats, _, _, _, _, _, _)) = query.get(p_entity) {
         if stats.hp <= 0 {
+            super::clamp_ap_to_max(Side::Player, battle_rules, action_points);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
     }
-    next_phase.set(next_phase_after_side_end(round_order, Side::Player));
+    super::enter_discard_phase_or_continue(
+        Side::Player,
+        next_phase_after_side_end(round_order, Side::Player),
+        hand,
+        battle_rules,
+        action_points,
+        commands,
+        next_phase,
+    );
 }
 
 pub fn player_turn_input_system(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: PlayerTurnRuntime,
@@ -159,6 +182,7 @@ pub fn player_turn_input_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &mut runtime.player_team;
@@ -458,6 +482,7 @@ pub fn player_turn_input_system(
                         }),
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -536,6 +561,7 @@ pub fn player_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -567,6 +593,7 @@ pub fn player_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -591,6 +618,7 @@ pub fn player_turn_input_system(
                     &mut p_statuses,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -615,6 +643,7 @@ pub fn player_turn_input_system(
                     &mut e_statuses,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -642,6 +671,81 @@ pub fn player_turn_input_system(
             return;
         }
 
+        return;
+    }
+
+    if pending_tactical_discard
+        .as_ref()
+        .is_some_and(|pending| pending.side == Side::Player)
+    {
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0_usize),
+            (KeyCode::KeyX, 1_usize),
+            (KeyCode::KeyC, 2_usize),
+            (KeyCode::KeyV, 3_usize),
+            (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
+        ] {
+            if !keyboard.just_pressed(key) {
+                continue;
+            }
+            if idx >= hand.player.len() {
+                return;
+            }
+            if send_pvp_intent(
+                battle_mode,
+                pvp_connection,
+                pvp_pending_intent,
+                pvp::BattleIntent::DiscardCard { card_index: idx },
+            ) {
+                selected.player.index = None;
+                selected.player.discard_armed = false;
+                return;
+            }
+            let card_id = hand.player.remove(idx);
+            action_points.player += 1;
+            let card_name = dbs
+                .cards
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+            writers.event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Player,
+                card_name: card_name.clone(),
+            });
+            note_action_phase(
+                &mut logs.structured_log,
+                logs.turn_count.0,
+                Side::Player,
+                "玩家战术整理",
+                format!(
+                    "弃置卡牌={}；获得AP=1；当前AP={}",
+                    card_name, action_points.player
+                ),
+            );
+            push_named_action_trace(
+                &mut logs.action_trace,
+                logs.turn_count.0,
+                Side::Player,
+                "tactical_discard",
+                format!("弃置卡牌={}；当前AP={}", card_name, action_points.player),
+            );
+            selected.player.index = None;
+            selected.player.discard_armed = false;
+            return;
+        }
         return;
     }
 
@@ -680,6 +784,11 @@ pub fn player_turn_input_system(
             player_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
+            action_points,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -745,13 +854,26 @@ pub fn player_turn_input_system(
         return;
     }
 
-    // 3) 出牌/选牌（手牌热键：Z X C V B；两步式：首按选中，再按出牌；弃牌武装时直接弃置）
+    // 3) 出牌/选牌（手牌热键按 UI 标注；两步式：首按选中/弹出，再按出牌；弃牌武装时直接弃置）
     for (key, idx) in [
         (KeyCode::KeyZ, 0_usize),
         (KeyCode::KeyX, 1_usize),
         (KeyCode::KeyC, 2_usize),
         (KeyCode::KeyV, 3_usize),
         (KeyCode::KeyB, 4_usize),
+        (KeyCode::KeyN, 5_usize),
+        (KeyCode::KeyA, 6_usize),
+        (KeyCode::KeyS, 7_usize),
+        (KeyCode::KeyD, 8_usize),
+        (KeyCode::KeyG, 9_usize),
+        (KeyCode::KeyH, 10_usize),
+        (KeyCode::KeyJ, 11_usize),
+        (KeyCode::KeyK, 12_usize),
+        (KeyCode::KeyL, 13_usize),
+        (KeyCode::KeyU, 14_usize),
+        (KeyCode::KeyI, 15_usize),
+        (KeyCode::KeyO, 16_usize),
+        (KeyCode::KeyP, 17_usize),
     ] {
         if keyboard.just_pressed(key) {
             if idx >= hand.player.len() {
@@ -829,24 +951,7 @@ pub fn player_turn_input_system(
                         card_name: card_name.clone(),
                     });
 
-                    let effect_detail = match card.effect {
-                        CardEffect::GainAp { amount } => {
-                            action_points.player += amount;
-                            format!("获得AP={amount}")
-                        }
-                        CardEffect::NextAttackBoost { amount } => {
-                            pending_boosts.player.next_attack_bonus = amount;
-                            format!("下次攻击加成={amount}")
-                        }
-                        CardEffect::NextShieldBoost { amount } => {
-                            pending_boosts.player.next_shield_bonus = amount;
-                            format!("下次护盾加成={amount}")
-                        }
-                        CardEffect::NextHealBoost { amount } => {
-                            pending_boosts.player.next_heal_bonus = amount;
-                            format!("下次治疗加成={amount}")
-                        }
-                    };
+                    let effect_detail = "效果已排入卡牌结算".to_string();
                     note_action_phase(
                         &mut logs.structured_log,
                         logs.turn_count.0,
@@ -1054,6 +1159,7 @@ pub fn player_turn_input_system(
                     }),
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1132,6 +1238,7 @@ pub fn player_turn_input_system(
                     None,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1193,6 +1300,7 @@ pub fn player_turn_input_system(
                     None,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1237,6 +1345,7 @@ pub fn player_turn_input_system(
                 &mut p_statuses,
                 pending_boosts,
                 &formula_rules,
+                battle_rules,
                 accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,
@@ -1261,6 +1370,7 @@ pub fn player_turn_input_system(
                 &mut e_statuses,
                 pending_boosts,
                 &formula_rules,
+                battle_rules,
                 accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,
