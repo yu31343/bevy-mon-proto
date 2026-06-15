@@ -416,6 +416,8 @@ pub(crate) fn update_skill_text_system(
     mut text_q: Query<
         (
             &mut Text,
+            Option<&mut TextColor>,
+            Option<&mut TextShadow>,
             Option<&TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
@@ -462,6 +464,8 @@ pub(crate) fn update_skill_text_system(
 
     for (
         mut text,
+        text_color,
+        text_shadow,
         is_turn_banner,
         skill_button_text,
         skill_button_meta_text,
@@ -472,15 +476,20 @@ pub(crate) fn update_skill_text_system(
     ) in &mut text_q
     {
         if is_turn_banner.is_some() {
-            text.0 = match *battle_phase.get() {
-                BattlePhase::PlayerTurn => "你的回合".to_string(),
-                BattlePhase::EnemyTurn if ui_control_side.0 == crate::battle::Side::Enemy => {
-                    "敌方操作回合".to_string()
-                }
-                BattlePhase::EnemyTurn => "对手的回合".to_string(),
-                BattlePhase::Discard => "弃牌阶段".to_string(),
-                _ => String::new(),
+            let (banner_text, outline_color) = match *battle_phase.get() {
+                BattlePhase::PlayerTurn => ("你的回合", Color::srgba(0.05, 0.24, 1.0, 0.95)),
+                BattlePhase::EnemyTurn => ("敌方回合", Color::srgba(1.0, 0.05, 0.04, 0.95)),
+                BattlePhase::Discard => ("弃牌阶段", Color::srgba(0.05, 0.24, 1.0, 0.95)),
+                _ => ("", Color::srgba(0.0, 0.0, 0.0, 0.0)),
             };
+            text.0 = banner_text.to_string();
+            if let Some(mut text_color) = text_color {
+                text_color.0 = Color::WHITE;
+            }
+            if let Some(mut text_shadow) = text_shadow {
+                text_shadow.offset = Vec2::new(3.0, 3.0);
+                text_shadow.color = outline_color;
+            }
             continue;
         }
         let control_skills = match ui_control_side.0 {

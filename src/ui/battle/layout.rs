@@ -1179,7 +1179,7 @@ pub(crate) fn setup_ui_system(
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Percent(0.0),
-                    top: Val::Percent(36.0),
+                    top: Val::Percent(28.0),
                     width: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
