@@ -3,15 +3,38 @@ use bevy::prelude::*;
 use super::{element_text, side_text};
 use crate::{
     battle::{
-        BattleEvent, BattleFormulaEvent, BattleLifecycleEvent, BattleLog, BattleResult,
-        BattleStateEvent, BattleStatusEvent, BattleTraceEvent, Combatant, ElementAura, EnemyTeam,
-        InBattle, PlayerTeam, ReplayEventLog, Shield, Side, Stats, StatusBoard,
-        StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
+        BattleActionCooldown, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent, BattleLog,
+        BattleResult, BattleStateEvent, BattleStatusEvent, BattleTraceEvent, Combatant,
+        ElementAura, EnemyTeam, InBattle, PlayerTeam, ReplayEventLog, Shield, Side, Stats,
+        StatusBoard, StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
         push_structured_battle_line,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     game_state::GameState,
 };
+
+pub fn tick_battle_action_cooldown_system(
+    time: Res<Time>,
+    mut cooldown: ResMut<BattleActionCooldown>,
+) {
+    cooldown.tick(time.delta_secs());
+}
+
+pub fn start_battle_action_cooldown_system(
+    mut events: MessageReader<BattleEvent>,
+    mut cooldown: ResMut<BattleActionCooldown>,
+) {
+    if events
+        .read()
+        .any(|event| matches!(event, BattleEvent::SkillUsed { .. }))
+    {
+        cooldown.start();
+    }
+}
+
+pub fn battle_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
+    cooldown.ready()
+}
 
 pub fn consume_battle_events_system(
     mut events: MessageReader<BattleEvent>,

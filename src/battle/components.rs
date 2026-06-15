@@ -465,6 +465,31 @@ pub struct TurnContext {
     pub enemy_action: Option<TurnAction>,
 }
 
+pub const BATTLE_ACTION_COOLDOWN_SECONDS: f32 = 2.0;
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct BattleActionCooldown {
+    pub remaining: f32,
+}
+
+impl BattleActionCooldown {
+    pub fn ready(self) -> bool {
+        self.remaining <= 0.0
+    }
+
+    pub fn start(&mut self) {
+        self.remaining = BATTLE_ACTION_COOLDOWN_SECONDS;
+    }
+
+    pub fn reset(&mut self) {
+        self.remaining = 0.0;
+    }
+
+    pub fn tick(&mut self, delta_secs: f32) {
+        self.remaining = (self.remaining - delta_secs).max(0.0);
+    }
+}
+
 #[derive(Resource, Debug, Default)]
 pub struct BattleLog(pub VecDeque<String>);
 
