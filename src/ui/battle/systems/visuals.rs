@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
 use super::super::components::{
-    DiscardButton, EndTurnButton, PlayerCardButton, RetreatButton, SkillButton, SwitchCancelButton,
-    SwitchMonsterButton, TeamMemberButton,
+    DiscardButton, EndTurnButton, PlayerCardButton, ReserveInfoButton, ReserveInfoCloseButton,
+    RetreatButton, SkillButton, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
@@ -36,6 +36,8 @@ pub(crate) fn button_visual_state_system(
                 With<EndTurnButton>,
                 With<DiscardButton>,
                 With<RetreatButton>,
+                With<ReserveInfoButton>,
+                With<ReserveInfoCloseButton>,
             )>,
             Without<ButtonClickFlash>,
             Without<SkillButton>,

@@ -533,6 +533,7 @@ pub(crate) fn setup_ui_system(
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
     retreat_confirm: Option<ResMut<super::systems::RetreatConfirmState>>,
+    reserve_overlay_state: Option<ResMut<super::systems::ReserveInfoOverlayState>>,
     existing_ui: Query<(), (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
 ) {
     if !existing_ui.is_empty() {
@@ -540,6 +541,9 @@ pub(crate) fn setup_ui_system(
     }
     if let Some(mut retreat_confirm) = retreat_confirm {
         retreat_confirm.armed = false;
+    }
+    if let Some(mut reserve_overlay_state) = reserve_overlay_state {
+        reserve_overlay_state.open_side = None;
     }
     let radius_panel = theme.radius_panel;
     let radius_button = theme.radius_button;
@@ -549,7 +553,7 @@ pub(crate) fn setup_ui_system(
 
     let title_font = super::helpers::make_text_font(20.0, ui_font.as_deref());
     let body_font = super::helpers::make_text_font(16.0, ui_font.as_deref());
-    let meta_font = super::helpers::make_text_font(13.0, ui_font.as_deref());
+    let meta_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
     let result_font = super::helpers::make_text_font(40.0, ui_font.as_deref());
     let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let small_font = super::helpers::make_text_font(11.0, ui_font.as_deref());
@@ -794,30 +798,30 @@ pub(crate) fn setup_ui_system(
             });
 
             root.spawn((
+                Button,
                 Node {
                     position_type: PositionType::Absolute,
                     top: Val::Px(276.0),
                     left: Val::Px(20.0),
                     width: Val::Px(320.0),
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(8.0),
+                    height: Val::Px(28.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_button),
                     ..default()
                 },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
+                ReserveInfoButton { side: Side::Player },
             ))
-            .with_children(|row| {
-                for idx in 0..3 {
-                    spawn_small_bench_card(
-                        row,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        meta_font.clone(),
-                        small_font.clone(),
-                        small_font.clone(),
-                        idx,
-                        Side::Player,
-                    );
-                }
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("待机位信息"),
+                    small_font.clone(),
+                    TextColor(theme.text_primary),
+                ));
             });
 
 
@@ -999,32 +1003,150 @@ pub(crate) fn setup_ui_system(
             });
 
             root.spawn((
+                Button,
                 Node {
                     position_type: PositionType::Absolute,
                     top: Val::Px(276.0),
                     right: Val::Px(20.0),
                     width: Val::Px(320.0),
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(8.0),
+                    height: Val::Px(28.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_button),
                     ..default()
                 },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
+                ReserveInfoButton { side: Side::Enemy },
             ))
-            .with_children(|row| {
-                for idx in 0..3 {
-                    spawn_small_bench_card(
-                        row,
-                        &theme,
-                        border_1,
-                        radius_button,
-                        meta_font.clone(),
-                        small_font.clone(),
-                        small_font.clone(),
-                        idx,
-                        Side::Enemy,
-                    );
-                }
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("待机位信息"),
+                    small_font.clone(),
+                    TextColor(theme.text_primary),
+                ));
             });
 
+            // === Center Reserve Info Overlay ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(22.0),
+                    right: Val::Percent(22.0),
+                    top: Val::Percent(28.0),
+                    padding: UiRect::all(Val::Px(14.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(12.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.08, 0.12, 0.94)),
+                BorderColor::all(theme.border_panel),
+                theme.panel_shadow(),
+                Visibility::Hidden,
+                ZIndex(30),
+                ReserveInfoOverlayRoot,
+            ))
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|header| {
+                        header.spawn((
+                            Text::new("待机位信息"),
+                            title_font.clone(),
+                            TextColor(theme.text_primary),
+                            theme.title_text_shadow(),
+                            ReserveInfoOverlayTitle,
+                        ));
+                        header
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Px(72.0),
+                                    height: Val::Px(30.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: border_1,
+                                    border_radius: BorderRadius::all(radius_button),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.button_idle),
+                                BorderColor::all(theme.button_border_idle),
+                                ReserveInfoCloseButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("关闭"),
+                                    small_font.clone(),
+                                    TextColor(theme.text_primary),
+                                ));
+                            });
+                    });
+
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        Visibility::Hidden,
+                        PlayerReserveInfoDetails,
+                    ))
+                    .with_children(|row| {
+                        for idx in 0..3 {
+                            spawn_small_bench_card(
+                                row,
+                                &theme,
+                                border_1,
+                                radius_button,
+                                meta_font.clone(),
+                                small_font.clone(),
+                                small_font.clone(),
+                                idx,
+                                Side::Player,
+                            );
+                        }
+                    });
+
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        Visibility::Hidden,
+                        EnemyReserveInfoDetails,
+                    ))
+                    .with_children(|row| {
+                        for idx in 0..3 {
+                            spawn_small_bench_card(
+                                row,
+                                &theme,
+                                border_1,
+                                radius_button,
+                                meta_font.clone(),
+                                small_font.clone(),
+                                small_font.clone(),
+                                idx,
+                                Side::Enemy,
+                            );
+                        }
+                    });
+            });
 
             // === Hint Text: Center ===
             root.spawn((
@@ -1042,7 +1164,7 @@ pub(crate) fn setup_ui_system(
             .with_children(|hint_area| {
                 hint_area.spawn((
                     Text::new("操作提示：按 1-4 使用精灵技能，按 Q 打开/关闭换人面板，按 5/6/7 切换我方队伍1/2/3，按 Z/X/C/V/B 使用手牌，按 F 弃牌换 AP，按 E 结束回合，按 R 重新开始"),
-                    small_font.clone(),
+                    meta_font.clone(),
                     TextColor(theme.text_muted),
                     TextShadow {
                         offset: Vec2::new(1.0, 1.0),

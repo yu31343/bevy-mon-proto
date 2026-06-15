@@ -116,6 +116,26 @@ pub(crate) struct TeamMemberShieldBarFill {
 }
 
 #[derive(Component)]
+pub(crate) struct ReserveInfoButton {
+    pub side: crate::battle::Side,
+}
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoCloseButton;
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoOverlayTitle;
+
+#[derive(Component)]
+pub(crate) struct PlayerReserveInfoDetails;
+
+#[derive(Component)]
+pub(crate) struct EnemyReserveInfoDetails;
+
+#[derive(Component)]
 pub(crate) struct PlayerBenchCard {
     pub index: usize,
 }

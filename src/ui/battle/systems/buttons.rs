@@ -23,6 +23,11 @@ pub(crate) struct RetreatConfirmState {
     pub armed: bool,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct ReserveInfoOverlayState {
+    pub open_side: Option<Side>,
+}
+
 #[derive(Resource)]
 pub(crate) struct PendingSwitchOverlayToggle {
     pub target: Option<bool>,
@@ -832,6 +837,97 @@ pub(crate) fn button_end_turn_system(
             }
         }
         break;
+    }
+}
+
+pub(crate) fn button_reserve_info_system(
+    mut state: ResMut<ReserveInfoOverlayState>,
+    mut reserve_buttons: Query<
+        (&Interaction, &ReserveInfoButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut close_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ReserveInfoCloseButton>,
+        ),
+    >,
+) {
+    for (interaction, button) in &mut reserve_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open_side = if state.open_side == Some(button.side) {
+                None
+            } else {
+                Some(button.side)
+            };
+            return;
+        }
+    }
+
+    for interaction in &mut close_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open_side = None;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_reserve_info_overlay_system(
+    state: Res<ReserveInfoOverlayState>,
+    mut visibility_q: ParamSet<(
+        Query<&mut Visibility, With<ReserveInfoOverlayRoot>>,
+        Query<
+            &mut Visibility,
+            (
+                With<PlayerReserveInfoDetails>,
+                Without<EnemyReserveInfoDetails>,
+            ),
+        >,
+        Query<
+            &mut Visibility,
+            (
+                With<EnemyReserveInfoDetails>,
+                Without<PlayerReserveInfoDetails>,
+            ),
+        >,
+    )>,
+    mut title_q: Query<&mut Text, With<ReserveInfoOverlayTitle>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    if let Ok(mut root_visibility) = visibility_q.p0().single_mut() {
+        *root_visibility = if state.open_side.is_some() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    if let Ok(mut title) = title_q.single_mut() {
+        title.0 = match state.open_side {
+            Some(Side::Player) => "我方待机位信息".to_string(),
+            Some(Side::Enemy) => "敌方待机位信息".to_string(),
+            None => "待机位信息".to_string(),
+        };
+    }
+
+    for mut visibility in &mut visibility_q.p1() {
+        *visibility = if state.open_side == Some(Side::Player) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    for mut visibility in &mut visibility_q.p2() {
+        *visibility = if state.open_side == Some(Side::Enemy) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 

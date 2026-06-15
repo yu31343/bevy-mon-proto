@@ -478,6 +478,7 @@ pub(crate) fn update_skill_text_system(
                     "敌方操作回合".to_string()
                 }
                 BattlePhase::EnemyTurn => "对手的回合".to_string(),
+                BattlePhase::Discard => "弃牌阶段".to_string(),
                 _ => String::new(),
             };
             continue;
