@@ -128,12 +128,6 @@ fn spawn_small_bench_card(
     index: usize,
     side: Side,
 ) {
-    let header_text = if matches!(side, Side::Player) {
-        format!("键位 {}", index + 5)
-    } else {
-        "键位 -".to_string()
-    };
-
     let card_node = Node {
         flex_grow: 1.0,
         min_width: Val::Px(104.0),
@@ -150,7 +144,17 @@ fn spawn_small_bench_card(
         Side::Player => {
             parent
                 .spawn((
-                    card_node,
+                    Button,
+                    Node {
+                        width: Val::Px(198.0),
+                        min_height: Val::Px(42.0),
+                        padding: UiRect::all(Val::Px(6.0)),
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_button),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        ..default()
+                    },
                     BackgroundColor(theme.button_idle),
                     BorderColor::all(theme.button_border_idle),
                     theme.button_shadow(),
@@ -159,87 +163,83 @@ fn spawn_small_bench_card(
                 .with_children(|card| {
                     card.spawn((Node {
                         width: Val::Percent(100.0),
-                        justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
                         ..default()
                     },))
-                        .with_children(|header| {
-                            header.spawn((
-                                Text::new("待机位"),
-                                title_font.clone(),
-                                TextColor(theme.text_primary),
-                            ));
-                            header.spawn((
-                                Text::new(header_text),
-                                hotkey_font.clone(),
-                                TextColor(theme.accent_player),
-                            ));
-                        });
-                    card.spawn((
-                        Text::new("队伍"),
-                        title_font.clone(),
-                        TextColor(theme.text_secondary),
-                        PlayerBenchNameText { index },
-                    ));
-                    card.spawn((
-                        Text::new("Atk: 0 Def: 0 Acc: 0 Spd: 0"),
-                        meta_font.clone(),
-                        TextColor(theme.text_secondary),
-                        PlayerBenchStatsText { index },
-                    ));
-                    card.spawn((
-                        Text::new("状态：无"),
-                        meta_font.clone(),
-                        TextColor(theme.text_muted),
-                        PlayerBenchAuraText { index },
-                    ));
-                    card.spawn((Node {
-                        width: Val::Percent(100.0),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(6.0),
-                        ..default()
-                    },))
-                        .with_children(|row| {
-                            row.spawn((
-                                Node {
-                                    flex_grow: 1.0,
-                                    height: Val::Px(8.0),
-                                    overflow: Overflow::clip(),
-                                    border_radius: BorderRadius::all(Val::Px(4.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(theme.hp_track),
-                            ))
-                            .with_children(|bar| {
-                                bar.spawn((
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("队伍"),
+                            title_font.clone(),
+                            TextColor(theme.text_secondary),
+                            PlayerBenchNameText { index },
+                        ));
+                        row.spawn((Node { width: Val::Px(82.0), ..default() },))
+                            .with_children(|bar_wrap| {
+                                bar_wrap.spawn((
                                     Node {
                                         width: Val::Percent(100.0),
-                                        height: Val::Percent(100.0),
+                                        height: Val::Px(7.0),
+                                        overflow: Overflow::clip(),
                                         border_radius: BorderRadius::all(Val::Px(4.0)),
                                         ..default()
                                     },
-                                    BackgroundColor(theme.hp_fill_player),
-                                    PlayerBenchHpBarFill { index },
-                                ));
+                                    BackgroundColor(theme.hp_track),
+                                ))
+                                .with_children(|bar| {
+                                    bar.spawn((
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            height: Val::Percent(100.0),
+                                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.hp_fill_player),
+                                        PlayerBenchHpBarFill { index },
+                                    ));
+                                });
                             });
-                            row.spawn((
-                                Text::new("0/0"),
-                                meta_font.clone(),
-                                TextColor(theme.text_secondary),
-                                PlayerBenchHpValueText { index },
-                            ));
-                        });
-                    card.spawn((Node {
-                        width: Val::Percent(100.0),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(6.0),
-                        ..default()
-                    },))
+                        row.spawn((
+                            Text::new("0/0"),
+                            meta_font.clone(),
+                            TextColor(theme.text_secondary),
+                            PlayerBenchHpValueText { index },
+                        ));
+                    });
+                    card.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(4.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        PlayerBenchDetailRoot { index },
+                    ))
+                    .with_children(|detail| {
+                        detail.spawn((
+                            Text::new("Atk: 0 Def: 0 Acc: 0 Spd: 0"),
+                            meta_font.clone(),
+                            TextColor(theme.text_secondary),
+                            PlayerBenchStatsText { index },
+                        ));
+                        detail.spawn((
+                            Text::new("状态：无"),
+                            meta_font.clone(),
+                            TextColor(theme.text_muted),
+                            PlayerBenchAuraText { index },
+                        ));
+                        detail.spawn((Node {
+                            width: Val::Percent(100.0),
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        },))
                         .with_children(|row| {
                             row.spawn((
                                 Node {
-                                    flex_grow: 1.0,
-                                    height: Val::Px(6.0),
+                                    width: Val::Px(82.0),
+                                    height: Val::Px(5.0),
                                     overflow: Overflow::clip(),
                                     border_radius: BorderRadius::all(Val::Px(3.0)),
                                     ..default()
@@ -267,9 +267,11 @@ fn spawn_small_bench_card(
                                 PlayerBenchShieldValueText { index },
                             ));
                         });
+                    });
                 });
         }
         Side::Enemy => {
+            let header_text = "键位 -".to_string();
             parent
                 .spawn((
                     card_node,
@@ -622,31 +624,30 @@ pub(crate) fn setup_ui_system(
                     position_type: PositionType::Absolute,
                     top: Val::Px(52.0),
                     left: Val::Px(20.0),
-                    width: Val::Px(320.0),
-                    padding: UiRect::all(Val::Px(14.0)),
+                    width: Val::Px(330.0),
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(8.0),
-                    border: border_1,
-                    border_radius: BorderRadius::all(radius_panel),
+                    row_gap: Val::Px(6.0),
                     ..default()
                 },
-                BackgroundColor(theme.panel),
-                BorderColor::all(theme.border_panel),
-                theme.panel_shadow(),
                 PlayerInfoPanel,
             ))
             .with_children(|panel| {
                 panel.spawn((
                     Node {
-                        width: Val::Percent(100.0),
-                        padding: UiRect::px(0.0, 0.0, 4.0, 6.0),
-                        border: UiRect::bottom(Val::Px(1.0)),
+                        width: Val::Px(188.0),
+                        min_height: Val::Px(42.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
+                        align_items: AlignItems::Center,
+                        border: border_1,
+                        border_radius: BorderRadius::all(radius_panel),
                         ..default()
                     },
-                    BorderColor::all(theme.divider),
+                    BackgroundColor(theme.panel),
+                    BorderColor::all(theme.border_panel),
+                    theme.panel_shadow(),
                 ))
-                .with_children(|header| {
-                    header.spawn((
+                .with_children(|name_box| {
+                    name_box.spawn((
                         Node {
                             width: Val::Percent(100.0),
                             flex_direction: FlexDirection::Row,
@@ -681,48 +682,66 @@ pub(crate) fn setup_ui_system(
                     });
                 });
                 panel.spawn((
-                    Text::new("玩家：..."),
-                    body_font.clone(),
-                    TextColor(theme.text_primary),
-                    theme.title_text_shadow(),
-                    PlayerStatsText,
-                ));
-                panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::FlexStart,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(10.0),
+                        align_items: AlignItems::FlexStart,
+                        column_gap: Val::Px(8.0),
                         ..default()
                     },
                 ))
                 .with_children(|row| {
                     row.spawn((
-                        Text::new("Atk: 0"),
+                        Node {
+                            width: Val::Px(58.0),
+                            min_height: Val::Px(28.0),
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+                            align_items: AlignItems::Center,
+                            border: border_1,
+                            border_radius: BorderRadius::all(Val::Px(10.0)),
+                            ..default()
+                        },
+                        BackgroundColor(theme.panel),
+                        BorderColor::all(theme.border_panel),
+                        theme.button_shadow(),
+                    ))
+                    .with_children(|attr_box| {
+                        attr_box.spawn((
+                            Text::new("水"),
+                            body_font.clone(),
+                            TextColor(theme.text_primary),
+                            PlayerStatsText,
+                        ));
+                    });
+                    spawn_colored_debug_tokens(
+                        row,
+                        &theme,
                         meta_font.clone(),
-                        TextColor(theme.text_primary),
-                        PlayerAtkText,
-                    ));
-                    row.spawn((
-                        Text::new("Def: 0"),
                         meta_font.clone(),
-                        TextColor(theme.text_primary),
-                        PlayerDefText,
-                    ));
-                    row.spawn((
-                        Text::new("Acc: 0"),
-                        meta_font.clone(),
-                        TextColor(theme.text_primary),
-                        PlayerAccText,
-                    ));
-                    row.spawn((
-                        Text::new("Spd: 0"),
-                        meta_font.clone(),
-                        TextColor(theme.text_primary),
-                        PlayerSpdText,
-                    ));
+                        "状态：",
+                        Val::Px(210.0),
+                        FlexWrap::Wrap,
+                        Val::Px(4.0),
+                        PlayerStatusLine,
+                        DebugStatusToken,
+                        &[("无", theme.text_muted)],
+                    );
                 });
+            });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(58.0),
+                    left: Val::Px(222.0),
+                    width: Val::Px(300.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    padding: UiRect::axes(Val::Px(0.0), Val::Px(6.0)),
+                    ..default()
+                },
+            ))
+            .with_children(|panel| {
                 panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
@@ -732,7 +751,7 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                    row.spawn((Node { width: Val::Px(220.0), ..default() },))
                         .with_children(|bar_wrap| {
                             spawn_hp_bar(
                                 bar_wrap,
@@ -759,7 +778,7 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    row.spawn((Node { flex_grow: 1.0, max_width: Val::Px(228.0), ..default() },))
+                    row.spawn((Node { width: Val::Px(180.0), ..default() },))
                         .with_children(|bar_wrap| {
                             spawn_shield_bar(
                                 bar_wrap,
@@ -778,29 +797,60 @@ pub(crate) fn setup_ui_system(
                         PlayerShieldValueText,
                     ));
                 });
-                spawn_colored_debug_tokens(
-                    panel,
-                    &theme,
-                    meta_font.clone(),
-                    meta_font.clone(),
-                    "状态：",
-                    Val::Percent(100.0),
-                    FlexWrap::Wrap,
-                    Val::Px(4.0),
-                    PlayerStatusLine,
-                    DebugStatusToken,
-                    &[("无", theme.text_muted)],
-                );
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexStart,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        row_gap: Val::Px(4.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("HP: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerHpStatText,
+                    ));
+                    row.spawn((
+                        Text::new("Atk: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerAtkText,
+                    ));
+                    row.spawn((
+                        Text::new("Def: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerDefText,
+                    ));
+                    row.spawn((
+                        Text::new("Acc: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerAccText,
+                    ));
+                    row.spawn((
+                        Text::new("Spd: 0"),
+                        meta_font.clone(),
+                        TextColor(theme.text_primary),
+                        PlayerSpdText,
+                    ));
+                });
             });
 
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(276.0),
+                    top: Val::Px(210.0),
                     left: Val::Px(20.0),
-                    width: Val::Px(320.0),
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(8.0),
+                    width: Val::Px(210.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
                     ..default()
                 },
             ))
@@ -1077,83 +1127,113 @@ pub(crate) fn setup_ui_system(
                 ));
             });
 
-            // === Bottom-Left: Control Buttons ===
+            // === Right Action Dial: circular visual + transparent click quadrants ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(20.0),
-                    bottom: Val::Px(16.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
+                    right: Val::Px(20.0),
+                    bottom: Val::Px(24.0),
+                    width: Val::Px(164.0),
+                    height: Val::Px(164.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(82.0)),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.panel_shadow(),
+                ZIndex(60),
             ))
-            .with_children(|controls| {
-                controls.spawn((
+            .with_children(|dial| {
+                dial.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(81.0),
+                        top: Val::Px(0.0),
+                        width: Val::Px(2.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_border_idle),
+                ));
+                dial.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(81.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Px(2.0),
+                        ..default()
+                    },
+                    BackgroundColor(theme.button_border_idle),
+                ));
+
+                dial.spawn((
                     Button,
                     Node {
-                        width: Val::Px(150.0),
-                        min_height: Val::Px(46.0),
-                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_button),
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Px(82.0),
+                        height: Val::Px(82.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(theme.button_idle),
-                    BorderColor::all(theme.button_border_idle),
-                    theme.button_shadow(),
+                    BackgroundColor(Color::NONE),
+                    BorderColor::all(Color::NONE),
+                    ActionDialButton,
                     DiscardButton,
                 ))
                 .with_children(|btn| {
                     btn.spawn((
-                        Text::new("弃牌（F）"),
+                        Text::new("弃牌\nF"),
                         body_font.clone(),
                         TextColor(theme.text_primary),
                     ));
                 });
 
-                controls.spawn((
+                dial.spawn((
                     Button,
                     Node {
-                        width: Val::Px(150.0),
-                        min_height: Val::Px(46.0),
-                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_button),
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Px(82.0),
+                        height: Val::Px(82.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(theme.button_idle),
-                    BorderColor::all(theme.button_border_idle),
-                    theme.button_shadow(),
+                    BackgroundColor(Color::NONE),
+                    BorderColor::all(Color::NONE),
+                    ActionDialButton,
                     EndTurnButton,
                 ))
                 .with_children(|btn| {
                     btn.spawn((
-                        Text::new("结束回合（E）"),
+                        Text::new("结束\nE"),
                         body_font.clone(),
                         TextColor(theme.text_primary),
                     ));
                 });
 
-                controls.spawn((
+                dial.spawn((
                     Button,
                     Node {
-                        width: Val::Px(150.0),
-                        min_height: Val::Px(46.0),
-                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_button),
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        bottom: Val::Px(0.0),
+                        width: Val::Px(82.0),
+                        height: Val::Px(82.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(theme.button_idle),
-                    BorderColor::all(theme.button_border_idle),
-                    theme.button_shadow(),
+                    BackgroundColor(Color::NONE),
+                    BorderColor::all(Color::NONE),
+                    ActionDialButton,
                     RetreatButton,
                 ))
                 .with_children(|btn| {
@@ -1162,6 +1242,31 @@ pub(crate) fn setup_ui_system(
                         body_font.clone(),
                         TextColor(theme.text_primary),
                         RetreatButtonText,
+                    ));
+                });
+
+                dial.spawn((
+                    Button,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(0.0),
+                        bottom: Val::Px(0.0),
+                        width: Val::Px(82.0),
+                        height: Val::Px(82.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    BorderColor::all(Color::NONE),
+                    ActionDialButton,
+                    SwitchMonsterButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("换精灵\nQ"),
+                        body_font.clone(),
+                        TextColor(theme.accent_player),
                     ));
                 });
             });
@@ -1258,7 +1363,7 @@ pub(crate) fn setup_ui_system(
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(184.0),
-                    right: Val::Px(16.0),
+                    right: Val::Px(200.0),
                     bottom: Val::Px(16.0),
                     min_height: Val::Px(196.0),
                     flex_direction: FlexDirection::Row,
@@ -1315,31 +1420,6 @@ pub(crate) fn setup_ui_system(
                         );
                     });
 
-                skill_region
-                    .spawn((
-                        Button,
-                        Node {
-                            width: Val::Px(132.0),
-                            min_height: Val::Px(196.0),
-                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                            border: border_1,
-                            border_radius: BorderRadius::all(radius_button),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(theme.button_idle),
-                        BorderColor::all(theme.button_border_idle),
-                        theme.button_shadow(),
-                        SwitchMonsterButton,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("换精灵（Q）"),
-                            skill_body_font.clone(),
-                            TextColor(theme.accent_player),
-                        ));
-                    });
             });
 
             // === Switch Monster Overlay (hidden by default) ===

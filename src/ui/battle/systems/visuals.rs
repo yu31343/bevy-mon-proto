@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
 use super::super::components::{
-    DiscardButton, EndTurnButton, PlayerCardButton, RetreatButton, SkillButton, SwitchCancelButton,
-    SwitchMonsterButton, TeamMemberButton,
+    ActionDialButton, DiscardButton, EndTurnButton, PlayerCardButton, RetreatButton, SkillButton,
+    SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
@@ -26,6 +26,7 @@ pub(crate) fn button_visual_state_system(
             Without<SwitchMonsterButton>,
             Without<SwitchCancelButton>,
             Without<TeamMemberButton>,
+            Without<ActionDialButton>,
         ),
     >,
     mut action_buttons: Query<
@@ -43,6 +44,7 @@ pub(crate) fn button_visual_state_system(
             Without<SwitchMonsterButton>,
             Without<SwitchCancelButton>,
             Without<TeamMemberButton>,
+            Without<ActionDialButton>,
         ),
     >,
     mut card_buttons: Query<
@@ -57,6 +59,7 @@ pub(crate) fn button_visual_state_system(
             Without<SwitchMonsterButton>,
             Without<SwitchCancelButton>,
             Without<TeamMemberButton>,
+            Without<ActionDialButton>,
         ),
     >,
     mut switch_buttons: Query<
@@ -73,6 +76,15 @@ pub(crate) fn button_visual_state_system(
             Without<EndTurnButton>,
             Without<DiscardButton>,
             Without<PlayerCardButton>,
+            Without<ActionDialButton>,
+        ),
+    >,
+    mut action_dial_buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Changed<Interaction>,
+            With<ActionDialButton>,
+            Without<ButtonClickFlash>,
         ),
     >,
     theme: Res<UiTheme>,
@@ -104,6 +116,14 @@ pub(crate) fn button_visual_state_system(
     for (interaction, mut bg, mut border) in &mut switch_buttons {
         apply(interaction, &mut bg, &mut border, &theme);
     }
+    for (interaction, mut bg, mut border) in &mut action_dial_buttons {
+        *bg = match *interaction {
+            Interaction::Pressed => BackgroundColor(Color::srgba(0.72, 0.88, 1.0, 0.34)),
+            Interaction::Hovered => BackgroundColor(Color::srgba(0.72, 0.88, 1.0, 0.18)),
+            Interaction::None => BackgroundColor(Color::NONE),
+        };
+        *border = BorderColor::all(Color::NONE);
+    }
 }
 
 /// 维护弃牌按钮的持久高亮状态。
@@ -120,7 +140,11 @@ pub(crate) fn update_discard_armed_visual_system(
     ui_control_side: Res<UiControlSide>,
     mut q: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (With<DiscardButton>, Without<ButtonClickFlash>),
+        (
+            With<DiscardButton>,
+            Without<ButtonClickFlash>,
+            Without<ActionDialButton>,
+        ),
     >,
     theme: Res<UiTheme>,
 ) {

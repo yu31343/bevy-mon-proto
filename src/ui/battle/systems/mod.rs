@@ -14,7 +14,10 @@ pub(crate) use buttons::{
     button_toggle_switch_overlay_system, close_switch_overlay_on_switch_system,
 };
 pub(crate) use hand::update_player_hand_ui_system;
-pub(crate) use roster::{update_enemy_roster_ui_system, update_player_roster_ui_system};
+pub(crate) use roster::{
+    toggle_player_bench_detail_system, update_enemy_roster_ui_system,
+    update_player_bench_detail_visibility_system, update_player_roster_ui_system,
+};
 pub(crate) use text::{
     update_action_points_text_system, update_active_panel_text_system,
     update_active_panel_tokens_system, update_battle_action_text_system, update_phase_text_system,

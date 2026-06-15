@@ -4,7 +4,7 @@ pub(crate) mod battle;
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use battle::{
-    components::{BattleUiCleanupPending, BattleUiRoot},
+    components::{BattleUiCleanupPending, BattleUiRoot, PlayerBenchDetailState},
     layout::{load_cjk_font_system, setup_ui_system, spawn_camera},
     resources::UiFontHandle,
     systems::*,
@@ -57,6 +57,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.init_resource::<SwitchOverlayOpen>()
         .init_resource::<PendingSwitchOverlayToggle>()
         .init_resource::<RetreatConfirmState>()
+        .init_resource::<PlayerBenchDetailState>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
@@ -73,6 +74,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 button_cancel_card_selection_system.run_if(in_state(GameState::Battle)),
                 button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
                 close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
+                toggle_player_bench_detail_system.run_if(in_state(GameState::Battle)),
+                update_player_bench_detail_visibility_system
+                    .run_if(in_state(GameState::Battle))
+                    .after(toggle_player_bench_detail_system),
                 apply_pending_switch_overlay_toggle_system
                     .run_if(in_state(GameState::Battle))
                     .after(button_toggle_switch_overlay_system)

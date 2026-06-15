@@ -83,6 +83,9 @@ pub(crate) struct RetreatButtonText;
 pub(crate) struct SwitchMonsterButton;
 
 #[derive(Component)]
+pub(crate) struct ActionDialButton;
+
+#[derive(Component)]
 pub(crate) struct SwitchCancelButton;
 
 #[derive(Component)]
@@ -158,6 +161,16 @@ pub(crate) struct PlayerBenchShieldBarFill {
 #[derive(Component)]
 pub(crate) struct PlayerBenchShieldValueText {
     pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerBenchDetailRoot {
+    pub index: usize,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct PlayerBenchDetailState {
+    pub expanded_index: Option<usize>,
 }
 
 #[derive(Component)]
@@ -303,6 +316,9 @@ pub(crate) struct EnemyNameText;
 
 #[derive(Component)]
 pub(crate) struct PlayerHpValueText;
+
+#[derive(Component)]
+pub(crate) struct PlayerHpStatText;
 
 #[derive(Component)]
 pub(crate) struct EnemyHpValueText;

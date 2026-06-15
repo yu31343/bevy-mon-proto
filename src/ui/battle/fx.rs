@@ -12,8 +12,8 @@ use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
-        BattleUiCleanupPending, BattleUiRoot, DiscardButton, EndTurnButton, SkillButton,
-        SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+        ActionDialButton, BattleUiCleanupPending, BattleUiRoot, DiscardButton, EndTurnButton,
+        SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
@@ -305,6 +305,7 @@ pub fn spawn_button_click_flash(
                 With<SwitchCancelButton>,
                 With<TeamMemberButton>,
             )>,
+            Without<ActionDialButton>,
         ),
     >,
 ) {

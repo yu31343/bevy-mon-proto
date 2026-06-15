@@ -11,6 +11,38 @@ use crate::{
 use super::super::components::*;
 use super::super::theme::UiTheme;
 
+pub(crate) fn toggle_player_bench_detail_system(
+    mut interactions: Query<(&Interaction, &PlayerBenchCard), (Changed<Interaction>, With<Button>)>,
+    mut detail_state: ResMut<PlayerBenchDetailState>,
+) {
+    for (interaction, card) in &mut interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        detail_state.expanded_index = if detail_state.expanded_index == Some(card.index) {
+            None
+        } else {
+            Some(card.index)
+        };
+    }
+}
+
+pub(crate) fn update_player_bench_detail_visibility_system(
+    detail_state: Res<PlayerBenchDetailState>,
+    mut details: Query<(&PlayerBenchDetailRoot, &mut Node)>,
+) {
+    if !detail_state.is_changed() {
+        return;
+    }
+    for (detail, mut node) in &mut details {
+        node.display = if detail_state.expanded_index == Some(detail.index) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -41,7 +73,13 @@ pub(crate) fn update_player_roster_ui_system(
         )>,
         Query<(&PlayerBenchHpBarFill, &mut Node)>,
         Query<(&PlayerBenchShieldBarFill, &mut Node)>,
-        Query<(&PlayerBenchCard, &mut Node)>,
+        Query<(
+            &PlayerBenchCard,
+            &Interaction,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        )>,
     )>,
     mut visibilities: ParamSet<(
         Query<(&TeamMemberShieldBarTrack, &mut Visibility)>,
@@ -263,13 +301,23 @@ pub(crate) fn update_player_roster_ui_system(
         };
     }
 
-    for (meta, mut node) in &mut nodes.p5() {
+    for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p5() {
         let exists = get_player_entity(meta.index).is_some();
         let active = meta.index == player_team.active_index;
         node.display = if !exists || active {
             Display::None
         } else {
             Display::Flex
+        };
+        *bg = match *interaction {
+            Interaction::Hovered => BackgroundColor(theme.button_hover),
+            Interaction::Pressed => BackgroundColor(theme.button_pressed),
+            Interaction::None => BackgroundColor(theme.button_idle),
+        };
+        *border = match *interaction {
+            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+            Interaction::None => BorderColor::all(theme.button_border_idle),
         };
     }
 

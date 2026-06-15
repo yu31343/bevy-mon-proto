@@ -82,6 +82,7 @@ pub(crate) fn update_active_panel_text_system(
             (
                 &mut Text,
                 Option<&PlayerHpValueText>,
+                Option<&PlayerHpStatText>,
                 Option<&EnemyHpValueText>,
                 Option<&PlayerShieldValueText>,
                 Option<&EnemyShieldValueText>,
@@ -152,6 +153,7 @@ pub(crate) fn update_active_panel_text_system(
     for (
         mut text,
         is_player_hp,
+        is_player_hp_stat,
         is_enemy_hp,
         is_player_shield,
         is_enemy_shield,
@@ -170,6 +172,14 @@ pub(crate) fn update_active_panel_text_system(
                 format!("{}/{}", stats.hp.max(0), stats.max_hp)
             } else {
                 "0/0".to_string()
+            };
+            continue;
+        }
+        if is_player_hp_stat.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                format!("HP: {}", stats.max_hp)
+            } else {
+                "HP: 0".to_string()
             };
             continue;
         }
