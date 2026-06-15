@@ -1152,6 +1152,7 @@ mod tests {
                 source: Side::Player,
                 target: Side::Enemy,
                 amount: 7,
+                damage_type: crate::battle::DamageType::Direct,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleTraceEvent>>()
@@ -1205,7 +1206,7 @@ mod tests {
         assert_eq!(replay_log.0[0].summary, "BattleEvent");
         assert_eq!(replay_log.0[0].detail, "玩家 使用了 火拳。");
         assert_eq!(replay_log.0[1].seq, 2);
-        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点实际伤害。");
+        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点直接伤害。");
         assert_eq!(replay_log.0[2].phase, "trace-r3");
         assert_eq!(replay_log.0[2].summary, "skill:FirePunch");
         assert_eq!(replay_log.0[3].phase, "battle-result");
@@ -1229,7 +1230,7 @@ mod tests {
 
         assert!(replay_text.contains("phase: \"battle-event\""));
         assert!(replay_text.contains("detail: \"玩家 使用了 火拳。\""));
-        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点实际伤害。\""));
+        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点直接伤害。\""));
         assert!(replay_text.contains("phase: \"trace-r3\""));
         assert!(replay_text.contains("summary: \"skill:FirePunch\""));
         assert!(replay_text.contains("phase: \"battle-result\""));

@@ -939,6 +939,7 @@ fn apply_fixed_damage_to_active(
         source,
         target,
         amount: hp_damage,
+        damage_type: crate::battle::DamageType::Fixed,
     });
 }
 
@@ -1182,6 +1183,7 @@ pub(crate) fn card_trigger_event_system(
                 source,
                 target,
                 amount,
+                ..
             } if *amount > 0 => {
                 let has_aura =
                     active_entity(*target, player_team.as_deref(), enemy_team.as_deref())

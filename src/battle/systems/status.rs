@@ -79,6 +79,7 @@ pub(crate) fn process_side_end_statuses(
                 source: params.side,
                 target: params.side,
                 amount: hp_damage,
+                damage_type: crate::battle::DamageType::Fixed,
             });
             params.formula_writer.write(crate::battle::formula_event(
                 params.round,

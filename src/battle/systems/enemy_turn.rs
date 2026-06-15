@@ -31,7 +31,7 @@ use crate::battle::ai::{
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 1.25;
+const ENEMY_AI_ACTION_DELAY: f32 = 1.0;
 
 #[derive(SystemParam)]
 pub(crate) struct EnemyTurnLogs<'w> {

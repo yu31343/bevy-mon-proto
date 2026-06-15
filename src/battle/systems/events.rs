@@ -196,11 +196,16 @@ pub fn consume_battle_events_system(
                 source,
                 target,
                 amount,
+                damage_type,
             } => format!(
-                "{} 对 {} 造成了 {} 点实际伤害。",
+                "{} 对 {} 造成了 {} 点{}伤害。",
                 side_text(*source),
                 side_text(*target),
-                amount
+                amount,
+                match damage_type {
+                    crate::battle::DamageType::Direct => "直接",
+                    crate::battle::DamageType::Fixed => "固定",
+                }
             ),
             BattleEvent::AttackMissed { source, target } => format!(
                 "{} 对 {} 的攻击未命中。",
