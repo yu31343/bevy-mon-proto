@@ -83,9 +83,11 @@ pub fn process_battle_fx_events(
     let mut player_direct_damage_rows = 0;
     let mut player_fixed_damage_rows = 0;
     let mut player_heal_rows = 0;
+    let mut player_miss_rows = 0;
     let mut enemy_direct_damage_rows = 0;
     let mut enemy_fixed_damage_rows = 0;
     let mut enemy_heal_rows = 0;
+    let mut enemy_miss_rows = 0;
 
     // 遍历所有战斗事件
     for event in events.read() {
@@ -211,6 +213,63 @@ pub fn process_battle_fx_events(
                         BackgroundColor(Color::srgba(0.85, 0.15, 0.1, 0.22)), // 淡红色闪屏
                         ScreenFlashTimer(Timer::from_seconds(0.12, TimerMode::Once)), // 闪屏持续0.12秒
                     ));
+                });
+            }
+            // 处理攻击未命中事件：显示 miss 提示
+            BattleEvent::AttackMissed { target, .. } => {
+                let left = if *target == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
+                } else {
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = if *target == Side::Enemy {
+                    let row = enemy_direct_damage_rows
+                        + enemy_fixed_damage_rows
+                        + enemy_heal_rows
+                        + enemy_miss_rows;
+                    enemy_miss_rows += 1;
+                    row
+                } else {
+                    let row = player_direct_damage_rows
+                        + player_fixed_damage_rows
+                        + player_heal_rows
+                        + player_miss_rows;
+                    player_miss_rows += 1;
+                    row
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
+
+                commands.entity(root).with_children(|p| {
+                    p.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left,
+                            top,
+                            min_width: Val::Px(68.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.08, 0.28, 0.88, 0.88)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                        FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)),
+                    ))
+                    .with_children(|miss_label| {
+                        miss_label.spawn((
+                            Text::new("miss"),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
                 });
             }
             // 处理治疗事件：显示治疗飘字
