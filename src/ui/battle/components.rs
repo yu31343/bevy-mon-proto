@@ -55,6 +55,11 @@ pub(crate) struct BattleActionText {
     pub remaining: f32,
 }
 
+#[derive(Message)]
+pub(crate) struct BattleUiNotice {
+    pub text: &'static str,
+}
+
 #[derive(Component)]
 pub(crate) struct PlayerCardButton {
     pub index: usize,

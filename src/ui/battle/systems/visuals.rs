@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 use super::super::components::{
-    ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, DiscardButton,
-    EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton, RetreatButton,
-    SkillButton, StatIconButton, StatIconTooltip, SwitchCancelButton, SwitchMonsterButton,
-    TeamMemberButton,
+    ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, BattleUiNotice,
+    DiscardButton, EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton,
+    RetreatButton, SkillButton, StatIconButton, StatIconTooltip, SwitchCancelButton,
+    SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
@@ -202,9 +202,15 @@ pub(crate) fn action_dial_visual_state_system(
 pub(crate) fn hand_full_warning_visual_system(
     time: Res<Time>,
     mut warning: ResMut<HandFullEndTurnWarning>,
+    mut notices: MessageReader<BattleUiNotice>,
     mut hint_roots: Query<&mut Node, With<HandFullHintRoot>>,
-    mut hint_texts: Query<(&mut TextColor, &mut TextShadow), With<HandFullHintText>>,
+    mut hint_texts: Query<(&mut Text, &mut TextColor, &mut TextShadow), With<HandFullHintText>>,
 ) {
+    for notice in notices.read() {
+        warning.hint_text = notice.text;
+        warning.hint_timer = Timer::from_seconds(HAND_FULL_HINT_DURATION, TimerMode::Once);
+    }
+
     warning.border_timer.tick(time.delta());
     warning.hint_timer.tick(time.delta());
 
@@ -231,7 +237,8 @@ pub(crate) fn hand_full_warning_visual_system(
     }
 
     let blur = 1.0 - alpha;
-    for (mut text_color, mut shadow) in &mut hint_texts {
+    for (mut text, mut text_color, mut shadow) in &mut hint_texts {
+        text.0 = warning.hint_text.to_string();
         text_color.0 = Color::srgba(1.0, 0.94, 0.86, alpha);
         shadow.offset = Vec2::splat(blur * 4.0);
         shadow.color = Color::srgba(1.0, 0.18, 0.18, blur * 0.85);

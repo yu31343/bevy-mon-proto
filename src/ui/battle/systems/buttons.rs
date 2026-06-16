@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
+        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle,
         PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side, SkillCount,
         SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
@@ -31,6 +31,7 @@ pub(crate) struct BattleHintOverlayState {
 pub(crate) struct HandFullEndTurnWarning {
     pub border_timer: Timer,
     pub hint_timer: Timer,
+    pub hint_text: &'static str,
 }
 
 impl Default for HandFullEndTurnWarning {
@@ -38,6 +39,7 @@ impl Default for HandFullEndTurnWarning {
         Self {
             border_timer: Timer::from_seconds(0.0, TimerMode::Once),
             hint_timer: Timer::from_seconds(0.0, TimerMode::Once),
+            hint_text: "手牌大于4张，请弃牌至4张",
         }
     }
 }
@@ -243,6 +245,7 @@ pub(crate) fn button_select_skill_system(
     pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
@@ -276,6 +279,7 @@ pub(crate) fn button_select_skill_system(
             Side::Enemy => action_points.enemy,
         };
         if ap < cost {
+            ui_notices.write(BattleUiNotice { text: "AP不足" });
             continue;
         }
 
@@ -443,7 +447,6 @@ pub(crate) fn button_play_card_two_step_system(
     mut turn_ctx: ResMut<TurnContext>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
-    mut pending_boosts: ResMut<PendingBoosts>,
     ui_control_side: Res<UiControlSide>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
@@ -451,6 +454,7 @@ pub(crate) fn button_play_card_two_step_system(
     pending_discard: Option<Res<PendingHandDiscard>>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
 ) {
     if !mouse_buttons.pressed(MouseButton::Left)
         || (!is_controllable_phase(*battle_phase.get(), *battle_mode)
@@ -478,7 +482,6 @@ pub(crate) fn button_play_card_two_step_system(
             Side::Player => {
                 let cards = &mut hand.player;
                 let ap = &mut action_points.player;
-                let boosts = &mut pending_boosts.player;
                 let selected_state = &mut selected.player;
                 if idx >= cards.len() {
                     selected_state.index = None;
@@ -579,6 +582,7 @@ pub(crate) fn button_play_card_two_step_system(
                     continue;
                 };
                 if *ap < card.cost_ap {
+                    ui_notices.write(BattleUiNotice { text: "AP不足" });
                     continue;
                 }
                 if send_client_intent(
@@ -598,7 +602,6 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Player,
                     card_name: card.name.to_string(),
                 });
-                let _ = boosts;
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -606,7 +609,6 @@ pub(crate) fn button_play_card_two_step_system(
             Side::Enemy => {
                 let cards = &mut hand.enemy;
                 let ap = &mut action_points.enemy;
-                let boosts = &mut pending_boosts.enemy;
                 let selected_state = &mut selected.enemy;
                 if idx >= cards.len() {
                     selected_state.index = None;
@@ -674,6 +676,7 @@ pub(crate) fn button_play_card_two_step_system(
                     continue;
                 };
                 if *ap < card.cost_ap {
+                    ui_notices.write(BattleUiNotice { text: "AP不足" });
                     continue;
                 }
                 cards.remove(idx);
@@ -682,7 +685,6 @@ pub(crate) fn button_play_card_two_step_system(
                     side: Side::Enemy,
                     card_name: card.name.to_string(),
                 });
-                let _ = boosts;
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -848,6 +850,7 @@ pub(crate) fn button_end_turn_system(
         if current_hand_len > battle_rules.max_retained_hand {
             hand_full_warning.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
             hand_full_warning.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
+            hand_full_warning.hint_text = "手牌大于4张，请弃牌至4张";
             break;
         }
 
