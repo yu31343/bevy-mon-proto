@@ -31,8 +31,13 @@ type ActiveCombatantRef<'a> = (
     &'a StatusBoard,
 );
 
-fn is_status_line_entry_visible(status_id: &str, category: StatusCategory) -> bool {
+fn is_status_line_entry_visible(
+    status_id: &str,
+    category: StatusCategory,
+    has_stage_modifiers: bool,
+) -> bool {
     category != StatusCategory::Aura
+        && !has_stage_modifiers
         && !status_id.starts_with("stage_shift_")
         && !status_id.starts_with("card_stage_")
 }
@@ -523,7 +528,13 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| is_status_line_entry_visible(&entry.id, entry.category))
+                .filter(|entry| {
+                    is_status_line_entry_visible(
+                        &entry.id,
+                        entry.category,
+                        !entry.stage_modifiers.is_empty(),
+                    )
+                })
                 .map(|entry| {
                     if let Some(path) = status_icon_path(&entry.id, &entry.name) {
                         super::super::helpers::DebugTokenContent::Image(path)
