@@ -7,6 +7,10 @@ use crate::battle::Side;
 const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
 const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
 const ACTIVE_STAT_ROW_TOP_OFFSET: f32 = -16.0;
+const ACTIVE_INFO_MASK_TOP: f32 = 40.0;     //距离屏幕顶部的距离
+const ACTIVE_INFO_MASK_SIDE: f32 = 14.0;    //距离屏幕边缘的距离
+const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //蒙版宽度
+const ACTIVE_INFO_MASK_HEIGHT: f32 = 250.0; //蒙版高度
 
 pub(crate) fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
@@ -727,6 +731,19 @@ pub(crate) fn setup_ui_system(
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
+                    top: Val::Px(ACTIVE_INFO_MASK_TOP),
+                    left: Val::Px(ACTIVE_INFO_MASK_SIDE),
+                    width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
+                    height: Val::Px(ACTIVE_INFO_MASK_HEIGHT),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.12, 0.05, 0.08, 0.76)), //玩家信息蒙版颜色
+            ));
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
                     top: Val::Px(52.0),
                     left: Val::Px(20.0),
                     width: Val::Px(400.0),
@@ -1006,6 +1023,19 @@ pub(crate) fn setup_ui_system(
 
 
             // === Enemy Info: Top-Right (mirrors player info) ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(ACTIVE_INFO_MASK_TOP),
+                    right: Val::Px(ACTIVE_INFO_MASK_SIDE),
+                    width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
+                    height: Val::Px(ACTIVE_INFO_MASK_HEIGHT),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.05, 0.08, 0.76)), //敌方信息蒙版颜色
+            ));
+
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
