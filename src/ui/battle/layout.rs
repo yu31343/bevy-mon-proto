@@ -6,6 +6,7 @@ use crate::battle::Side;
 
 const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
 const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
+const ACTIVE_STAT_ROW_TOP_OFFSET: f32 = -16.0;
 
 pub(crate) fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
@@ -905,6 +906,7 @@ pub(crate) fn setup_ui_system(
                     Node {
                         width: Val::Percent(100.0),
                         min_height: Val::Px(30.0),
+                        top: Val::Px(ACTIVE_STAT_ROW_TOP_OFFSET),
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::FlexStart,
                         align_items: AlignItems::Center,
@@ -1190,6 +1192,7 @@ pub(crate) fn setup_ui_system(
                     Node {
                         width: Val::Percent(100.0),
                         min_height: Val::Px(30.0),
+                        top: Val::Px(ACTIVE_STAT_ROW_TOP_OFFSET),
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::FlexEnd,
                         align_items: AlignItems::Center,
