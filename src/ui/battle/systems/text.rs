@@ -498,7 +498,9 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| entry.category != StatusCategory::Aura)
+                .filter(|entry| {
+                    entry.category != StatusCategory::Aura && entry.stage_modifiers.is_empty()
+                })
                 .map(|entry| {
                     (
                         entry.name.clone(),

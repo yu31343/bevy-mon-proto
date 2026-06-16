@@ -379,7 +379,7 @@ pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     let labels = statuses
         .entries
         .iter()
-        .filter(|entry| entry.category != StatusCategory::Aura)
+        .filter(|entry| entry.category != StatusCategory::Aura && entry.stage_modifiers.is_empty())
         .map(|entry| entry.name.as_str())
         .collect::<Vec<_>>();
 
