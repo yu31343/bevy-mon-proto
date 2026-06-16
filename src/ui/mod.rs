@@ -4,7 +4,9 @@ pub(crate) mod battle;
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use battle::{
-    components::{BattleUiCleanupPending, BattleUiRoot, PlayerBenchDetailState},
+    components::{
+        BattleBackgroundSprite, BattleUiCleanupPending, BattleUiRoot, PlayerBenchDetailState,
+    },
     layout::{load_cjk_font_system, setup_ui_system, spawn_camera},
     resources::UiFontHandle,
     systems::*,
@@ -177,8 +179,13 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
 fn cleanup_battle_ui_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut Node), (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
+    background_query: Query<Entity, With<BattleBackgroundSprite>>,
     children_query: Query<&Children>,
 ) {
+    for entity in &background_query {
+        commands.entity(entity).despawn();
+    }
+
     for (entity, mut node) in &mut query {
         node.display = Display::None;
         mark_battle_ui_cleanup_pending(&mut commands, entity, &children_query, 1);

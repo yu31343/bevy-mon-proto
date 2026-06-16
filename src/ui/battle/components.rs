@@ -6,6 +6,9 @@ use crate::battle::Side;
 pub(crate) struct BattleUiRoot;
 
 #[derive(Component)]
+pub(crate) struct BattleBackgroundSprite;
+
+#[derive(Component)]
 pub(crate) struct BattleUiCleanupPending {
     pub frames_remaining: u8,
 }

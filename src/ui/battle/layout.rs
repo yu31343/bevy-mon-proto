@@ -4,6 +4,9 @@ use super::{components::*, resources::UiFontHandle, theme::UiTheme};
 
 use crate::battle::Side;
 
+const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
+const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
+
 pub(crate) fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
@@ -606,6 +609,16 @@ pub(crate) fn setup_ui_system(
     let skill_meta_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
     let skill_icon_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
 
+    commands.spawn((
+        Sprite {
+            image: asset_server.load(BATTLE_BACKGROUND_IMAGE),
+            custom_size: Some(BATTLE_BACKGROUND_SIZE),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, -100.0),
+        BattleBackgroundSprite,
+    ));
+
     commands
         .spawn((
             Node {
@@ -614,7 +627,7 @@ pub(crate) fn setup_ui_system(
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            theme.root_background(),
+            BackgroundColor(Color::NONE),
             BattleUiRoot,
         ))
         .with_children(|root| {
