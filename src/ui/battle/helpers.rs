@@ -795,6 +795,53 @@ pub(crate) fn replace_debug_tokens(
     });
 }
 
+pub(crate) enum DebugTokenContent {
+    Text(String, Color),
+    Image(&'static str),
+}
+
+pub(crate) fn replace_debug_tokens_with_images(
+    commands: &mut Commands,
+    line_entity: Entity,
+    children: Option<&Children>,
+    asset_server: &AssetServer,
+    font: &TextFont,
+    items: &[DebugTokenContent],
+    token_kind: impl Component + Clone,
+) {
+    if let Some(children) = children {
+        for child in children.iter().skip(1) {
+            commands.entity(child).despawn();
+        }
+    }
+    commands.entity(line_entity).with_children(|line| {
+        for item in items {
+            match item {
+                DebugTokenContent::Text(text, color) => {
+                    line.spawn((
+                        Text::new(text.clone()),
+                        font.clone(),
+                        TextColor(*color),
+                        token_kind.clone(),
+                    ));
+                }
+                DebugTokenContent::Image(path) => {
+                    line.spawn((
+                        Node {
+                            width: Val::Px(22.0),
+                            height: Val::Px(22.0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        ImageNode::new(asset_server.load(*path)),
+                        token_kind.clone(),
+                    ));
+                }
+            }
+        }
+    });
+}
+
 pub(crate) fn make_text_font(size: f32, ui_font: Option<&UiFontHandle>) -> TextFont {
     let mut text_font = TextFont::from_font_size(size);
     if let Some(font) = ui_font {

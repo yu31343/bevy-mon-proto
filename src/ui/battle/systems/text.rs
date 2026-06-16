@@ -31,6 +31,30 @@ type ActiveCombatantRef<'a> = (
     &'a StatusBoard,
 );
 
+fn is_status_line_entry_visible(status_id: &str, category: StatusCategory) -> bool {
+    category != StatusCategory::Aura
+        && !status_id.starts_with("stage_shift_")
+        && !status_id.starts_with("card_stage_")
+}
+
+fn status_icon_path(status_id: &str, status_name: &str) -> Option<&'static str> {
+    match status_id {
+        "seeded" => Some("images/icons/status/绽放.png"),
+        "electrocuted" => Some("images/icons/status/导电.png"),
+        "armor_break" => Some("images/icons/status/超载.png"),
+        _ => match status_name {
+            "燃烧" => Some("images/icons/status/燃烧.png"),
+            "速度降低" => Some("images/icons/status/速度降低.png"),
+            "缠绕" => Some("images/icons/status/缠绕.png"),
+            "诅咒" => Some("images/icons/status/诅咒.png"),
+            "攻击降低" => Some("images/icons/status/攻击降低.png"),
+            "自然治愈" => Some("images/icons/status/自然治愈.png"),
+            "闪避" => Some("images/icons/status/闪避.png"),
+            _ => None,
+        },
+    }
+}
+
 fn active_combatant_data<'a>(
     team: &Team,
     query: &'a Query<
@@ -424,6 +448,7 @@ pub(crate) fn update_active_panel_tokens_system(
         ),
         With<InBattle>,
     >,
+    asset_server: Res<AssetServer>,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
 ) {
@@ -498,26 +523,37 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| entry.category != StatusCategory::Aura)
+                .filter(|entry| is_status_line_entry_visible(&entry.id, entry.category))
                 .map(|entry| {
-                    (
-                        entry.name.clone(),
-                        super::super::helpers::status_color(entry, &theme),
-                    )
+                    if let Some(path) = status_icon_path(&entry.id, &entry.name) {
+                        super::super::helpers::DebugTokenContent::Image(path)
+                    } else {
+                        super::super::helpers::DebugTokenContent::Text(
+                            entry.name.clone(),
+                            super::super::helpers::status_color(entry, &theme),
+                        )
+                    }
                 })
                 .collect();
             if labels.is_empty() {
-                vec![("无".to_string(), theme.text_muted)]
+                vec![super::super::helpers::DebugTokenContent::Text(
+                    "无".to_string(),
+                    theme.text_muted,
+                )]
             } else {
                 labels
             }
         } else {
-            vec![("无".to_string(), theme.text_muted)]
+            vec![super::super::helpers::DebugTokenContent::Text(
+                "无".to_string(),
+                theme.text_muted,
+            )]
         };
-        super::super::helpers::replace_debug_tokens(
+        super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
             children,
+            &asset_server,
             &info_font,
             &items,
             DebugStatusToken,
