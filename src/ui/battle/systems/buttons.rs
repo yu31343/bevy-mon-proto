@@ -394,12 +394,15 @@ pub(crate) fn button_cancel_card_selection_system(
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     card_query: Query<(&Interaction, &PlayerCardButton), With<Button>>,
+    other_button_query: Query<&Interaction, (With<Button>, Without<PlayerCardButton>)>,
     ui_control_side: Res<UiControlSide>,
     pending_discard: Option<Res<PendingHandDiscard>>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut selected: ResMut<SelectedCards>,
 ) {
-    if !mouse_buttons.just_pressed(MouseButton::Right)
+    let right_click = mouse_buttons.just_pressed(MouseButton::Right);
+    let left_click = mouse_buttons.just_pressed(MouseButton::Left);
+    if (!right_click && !left_click)
         || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
@@ -424,14 +427,26 @@ pub(crate) fn button_cancel_card_selection_system(
         return;
     };
 
+    let mut selected_card_under_pointer = false;
+    let mut any_card_under_pointer = false;
     for (interaction, button) in &card_query {
-        if button.index == selected_index
-            && matches!(*interaction, Interaction::Hovered | Interaction::Pressed)
-        {
-            selected_state.index = None;
-            selected_state.discard_armed = false;
-            break;
+        if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+            any_card_under_pointer = true;
+            if button.index == selected_index {
+                selected_card_under_pointer = true;
+            }
         }
+    }
+
+    let any_other_button_under_pointer = other_button_query
+        .iter()
+        .any(|interaction| matches!(*interaction, Interaction::Hovered | Interaction::Pressed));
+
+    if (right_click && selected_card_under_pointer)
+        || (left_click && !any_card_under_pointer && !any_other_button_under_pointer)
+    {
+        selected_state.index = None;
+        selected_state.discard_armed = false;
     }
 }
 
