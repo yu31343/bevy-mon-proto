@@ -828,8 +828,8 @@ pub(crate) fn replace_debug_tokens_with_images(
                 DebugTokenContent::Image(path) => {
                     line.spawn((
                         Node {
-                            width: Val::Px(22.0),
-                            height: Val::Px(22.0),
+                            width: Val::Px(28.0),
+                            height: Val::Px(28.0),
                             flex_shrink: 0.0,
                             ..default()
                         },
