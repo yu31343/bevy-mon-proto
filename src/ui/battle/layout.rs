@@ -140,7 +140,7 @@ fn spawn_stat_icon(
     parent
         .spawn((Node {
             width: Val::Px(44.0),
-            min_height: Val::Px(64.0),
+            height: Val::Px(84.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
@@ -192,24 +192,22 @@ fn spawn_stat_icon(
                 ));
             });
 
+            let stage_slot = Node {
+                min_width: Val::Px(34.0),
+                min_height: Val::Px(18.0),
+                padding: UiRect::axes(Val::Px(5.0), Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::all(Val::Px(5.0)),
+                ..default()
+            };
             if let Some((badge_marker, text_marker)) = stage_markers {
-                root.spawn((
-                    Node {
-                        display: Display::None,
-                        min_width: Val::Px(34.0),
-                        min_height: Val::Px(18.0),
-                        padding: UiRect::axes(Val::Px(5.0), Val::Px(1.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::all(Val::Px(5.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::NONE),
-                    badge_marker,
-                ))
-                .with_children(|badge| {
-                    badge.spawn((Text::new(""), font, TextColor(Color::WHITE), text_marker));
-                });
+                root.spawn((stage_slot, BackgroundColor(Color::NONE), badge_marker))
+                    .with_children(|badge| {
+                        badge.spawn((Text::new(""), font, TextColor(Color::WHITE), text_marker));
+                    });
+            } else {
+                root.spawn((stage_slot, BackgroundColor(Color::NONE)));
             }
         });
 }
@@ -503,6 +501,7 @@ fn spawn_colored_debug_tokens(
     label: &str,
     line_width: Val,
     line_wrap: FlexWrap,
+    line_direction: FlexDirection,
     column_gap: Val,
     line_marker: impl Component,
     token_marker: impl Component + Clone,
@@ -512,7 +511,7 @@ fn spawn_colored_debug_tokens(
         .spawn((
             Node {
                 width: line_width,
-                flex_direction: FlexDirection::Row,
+                flex_direction: line_direction,
                 flex_wrap: line_wrap,
                 column_gap,
                 row_gap: Val::Px(4.0),
@@ -779,6 +778,7 @@ pub(crate) fn setup_ui_system(
                             "",
                             Val::Auto,
                             FlexWrap::NoWrap,
+                            FlexDirection::Row,
                             Val::Px(2.0),
                             PlayerAuraLine,
                             DebugAuraToken,
@@ -821,9 +821,10 @@ pub(crate) fn setup_ui_system(
                         &theme,
                         meta_font.clone(),
                         meta_font.clone(),
-                        "状态：",
+                        "",
                         Val::Px(210.0),
                         FlexWrap::Wrap,
+                        FlexDirection::Row,
                         Val::Px(4.0),
                         PlayerStatusLine,
                         DebugStatusToken,
@@ -1054,6 +1055,7 @@ pub(crate) fn setup_ui_system(
                             "",
                             Val::Auto,
                             FlexWrap::NoWrap,
+                            FlexDirection::Row,
                             Val::Px(2.0),
                             EnemyAuraLine,
                             DebugAuraToken,
@@ -1103,9 +1105,10 @@ pub(crate) fn setup_ui_system(
                         &theme,
                         meta_font.clone(),
                         meta_font.clone(),
-                        "状态：",
+                        "",
                         Val::Px(170.0),
                         FlexWrap::Wrap,
+                        FlexDirection::RowReverse,
                         Val::Px(4.0),
                         EnemyStatusLine,
                         DebugStatusToken,

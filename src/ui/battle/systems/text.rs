@@ -209,17 +209,17 @@ pub(crate) fn update_active_panel_text_system(
     {
         if is_player_name.is_some() {
             text.0 = if let Some((_, _, name, _, _, _)) = player_active {
-                format!("我方：{}", name)
+                name.to_string()
             } else {
-                "我方：无在场精灵".to_string()
+                "无在场精灵".to_string()
             };
             continue;
         }
         if is_enemy_name.is_some() {
             text.0 = if let Some((_, _, name, _, _, _)) = enemy_active {
-                format!("敌方：{}", name)
+                name.to_string()
             } else {
-                "敌方：无在场精灵".to_string()
+                "无在场精灵".to_string()
             };
             continue;
         }
@@ -466,17 +466,14 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
-    for (mut node, mut bg, marker) in &mut stage_modifier_badges {
+    for (_, mut bg, marker) in &mut stage_modifier_badges {
         let stage =
             stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
-        node.display = if stage == 0 {
-            Display::None
+        *bg = if stage == 0 {
+            BackgroundColor(Color::NONE)
         } else {
-            Display::Flex
+            BackgroundColor(stage_modifier_color(stage))
         };
-        if stage != 0 {
-            *bg = BackgroundColor(stage_modifier_color(stage));
-        }
     }
 
     for (mut text, marker) in &mut stage_modifier_texts {
@@ -501,9 +498,7 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| {
-                    entry.category != StatusCategory::Aura && entry.stage_modifiers.is_empty()
-                })
+                .filter(|entry| entry.category != StatusCategory::Aura)
                 .map(|entry| {
                     (
                         entry.name.clone(),
