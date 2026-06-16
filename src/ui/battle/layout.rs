@@ -728,7 +728,7 @@ pub(crate) fn setup_ui_system(
                     position_type: PositionType::Absolute,
                     top: Val::Px(52.0),
                     left: Val::Px(20.0),
-                    width: Val::Px(330.0),
+                    width: Val::Px(400.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(6.0),
                     ..default()
@@ -738,17 +738,12 @@ pub(crate) fn setup_ui_system(
             .with_children(|panel| {
                 panel.spawn((
                     Node {
-                        width: Val::Px(188.0),
-                        min_height: Val::Px(42.0),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(34.0),
+                        padding: UiRect::axes(Val::Px(2.0), Val::Px(2.0)),
                         align_items: AlignItems::Center,
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_panel),
                         ..default()
                     },
-                    BackgroundColor(theme.panel),
-                    BorderColor::all(theme.border_panel),
-                    theme.panel_shadow(),
                 ))
                 .with_children(|name_box| {
                     name_box.spawn((
@@ -763,104 +758,43 @@ pub(crate) fn setup_ui_system(
                         PlayerNameAuraRow,
                     ))
                     .with_children(|row| {
+                        row.spawn((Node {
+                            width: Val::Px(30.0),
+                            height: Val::Px(30.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },))
+                        .with_children(|attr_box| {
+                            attr_box.spawn((
+                                Node {
+                                    width: Val::Px(28.0),
+                                    height: Val::Px(28.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(14.0)),
+                                    ..default()
+                                },
+                                ImageNode::new(asset_server.load("images/icons/elements/water.png")),
+                                PlayerElementIcon,
+                            ));
+                        });
                         row.spawn((
-                            Text::new("⚔ ..."),
+                            Text::new("..."),
                             title_font.clone(),
                             TextColor(theme.accent_player),
                             theme.title_text_shadow(),
                             PlayerNameText,
                         ));
-                        spawn_colored_debug_tokens(
-                            row,
-                            &theme,
-                            meta_font.clone(),
-                            meta_font.clone(),
-                            "",
-                            Val::Auto,
-                            FlexWrap::NoWrap,
-                            FlexDirection::Row,
-                            Val::Px(2.0),
-                            PlayerAuraLine,
-                            DebugAuraToken,
-                            &[],
-                        );
                     });
                 });
-                panel.spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::FlexStart,
-                        column_gap: Val::Px(8.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|row| {
-                    row.spawn((Node {
-                        width: Val::Px(30.0),
-                        height: Val::Px(30.0),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },))
-                    .with_children(|attr_box| {
-                        attr_box.spawn((
-                            Node {
-                                width: Val::Px(28.0),
-                                height: Val::Px(28.0),
-                                overflow: Overflow::clip(),
-                                border_radius: BorderRadius::all(Val::Px(14.0)),
-                                ..default()
-                            },
-                            ImageNode::new(asset_server.load("images/icons/elements/water.png")),
-                            PlayerElementIcon,
-                        ));
-                    });
-                    spawn_colored_debug_tokens(
-                        row,
-                        &theme,
-                        meta_font.clone(),
-                        meta_font.clone(),
-                        "",
-                        Val::Px(210.0),
-                        FlexWrap::Wrap,
-                        FlexDirection::Row,
-                        Val::Px(4.0),
-                        PlayerStatusLine,
-                        DebugStatusToken,
-                        &[("无", theme.text_muted)],
-                    );
-                });
-                panel
-                    .spawn((Node {
-                        width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
-                        ..default()
-                    },))
-                    .with_children(|column| {
-                        for idx in 0..3 {
-                            spawn_small_bench_card(
-                                column,
-                                &theme,
-                                border_1,
-                                radius_button,
-                                meta_font.clone(),
-                                small_font.clone(),
-                                small_font.clone(),
-                                idx,
-                                Side::Player,
-                            );
-                        }
-                    });
             });
 
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(58.0),
-                    left: Val::Px(222.0),
-                    width: Val::Px(300.0),
+                    top: Val::Px(92.0),
+                    left: Val::Px(20.0),
+                    width: Val::Px(400.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(6.0),
                     padding: UiRect::axes(Val::Px(0.0), Val::Px(6.0)),
@@ -895,6 +829,20 @@ pub(crate) fn setup_ui_system(
                         outlined_stat_text_shadow(),
                         PlayerHpValueText,
                     ));
+                    spawn_colored_debug_tokens(
+                        row,
+                        &theme,
+                        meta_font.clone(),
+                        meta_font.clone(),
+                        "",
+                        Val::Px(96.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        PlayerAuraLine,
+                        DebugAuraToken,
+                        &[],
+                    );
                 });
                 panel.spawn((
                     Node {
@@ -905,7 +853,7 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    row.spawn((Node { width: Val::Px(180.0), ..default() },))
+                    row.spawn((Node { width: Val::Px(220.0), ..default() },))
                         .with_children(|bar_wrap| {
                             spawn_shield_bar(
                                 bar_wrap,
@@ -924,6 +872,34 @@ pub(crate) fn setup_ui_system(
                         outlined_stat_text_shadow(),
                         PlayerShieldValueText,
                     ));
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(24.0),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(4.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    spawn_colored_debug_tokens(
+                        row,
+                        &theme,
+                        meta_font.clone(),
+                        meta_font.clone(),
+                        "",
+                        Val::Px(300.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        PlayerStatusLine,
+                        DebugStatusToken,
+                        &[("无", theme.text_muted)],
+                    );
                 });
                 panel.spawn((
                     Node {
@@ -1002,119 +978,6 @@ pub(crate) fn setup_ui_system(
                         )),
                     );
                 });
-            });
-
-
-            // === Enemy Info: Top-Right (mirrors player info) ===
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(52.0),
-                    right: Val::Px(20.0),
-                    width: Val::Px(330.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(6.0),
-                    ..default()
-                },
-                EnemyInfoPanel,
-            ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Node {
-                        width: Val::Px(188.0),
-                        min_height: Val::Px(42.0),
-                        margin: UiRect::left(Val::Auto),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
-                        align_items: AlignItems::Center,
-                        border: border_1,
-                        border_radius: BorderRadius::all(radius_panel),
-                        ..default()
-                    },
-                    BackgroundColor(theme.enemy_card_bg),
-                    BorderColor::all(theme.enemy_card_border),
-                    theme.panel_shadow(),
-                ))
-                .with_children(|name_box| {
-                    name_box.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Row,
-                            justify_content: JustifyContent::FlexEnd,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(6.0),
-                            ..default()
-                        },
-                        EnemyNameAuraRow,
-                    ))
-                    .with_children(|row| {
-                        spawn_colored_debug_tokens(
-                            row,
-                            &theme,
-                            meta_font.clone(),
-                            meta_font.clone(),
-                            "",
-                            Val::Auto,
-                            FlexWrap::NoWrap,
-                            FlexDirection::Row,
-                            Val::Px(2.0),
-                            EnemyAuraLine,
-                            DebugAuraToken,
-                            &[],
-                        );
-                        row.spawn((
-                            Text::new("💀 ..."),
-                            title_font.clone(),
-                            TextColor(theme.accent_enemy),
-                            theme.title_text_shadow(),
-                            EnemyNameText,
-                        ));
-                    });
-                });
-                panel.spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::RowReverse,
-                        align_items: AlignItems::FlexStart,
-                        column_gap: Val::Px(8.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|row| {
-                    row.spawn((Node {
-                        width: Val::Px(30.0),
-                        height: Val::Px(30.0),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },))
-                    .with_children(|attr_box| {
-                        attr_box.spawn((
-                            Node {
-                                width: Val::Px(28.0),
-                                height: Val::Px(28.0),
-                                overflow: Overflow::clip(),
-                                border_radius: BorderRadius::all(Val::Px(14.0)),
-                                ..default()
-                            },
-                            ImageNode::new(asset_server.load("images/icons/elements/fire.png")),
-                            EnemyElementIcon,
-                        ));
-                    });
-                    spawn_colored_debug_tokens(
-                        row,
-                        &theme,
-                        meta_font.clone(),
-                        meta_font.clone(),
-                        "",
-                        Val::Px(170.0),
-                        FlexWrap::Wrap,
-                        FlexDirection::RowReverse,
-                        Val::Px(4.0),
-                        EnemyStatusLine,
-                        DebugStatusToken,
-                        &[("无", theme.text_muted)],
-                    );
-                });
                 panel
                     .spawn((Node {
                         width: Val::Percent(100.0),
@@ -1133,18 +996,86 @@ pub(crate) fn setup_ui_system(
                                 small_font.clone(),
                                 small_font.clone(),
                                 idx,
-                                Side::Enemy,
+                                Side::Player,
                             );
                         }
                     });
             });
 
+
+            // === Enemy Info: Top-Right (mirrors player info) ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(58.0),
-                    right: Val::Px(222.0),
-                    width: Val::Px(300.0),
+                    top: Val::Px(52.0),
+                    right: Val::Px(20.0),
+                    width: Val::Px(400.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                },
+                EnemyInfoPanel,
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(34.0),
+                        padding: UiRect::axes(Val::Px(2.0), Val::Px(2.0)),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|name_box| {
+                    name_box.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::FlexEnd,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        EnemyNameAuraRow,
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("..."),
+                            title_font.clone(),
+                            TextColor(theme.accent_enemy),
+                            theme.title_text_shadow(),
+                            EnemyNameText,
+                        ));
+                        row.spawn((Node {
+                            width: Val::Px(30.0),
+                            height: Val::Px(30.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },))
+                        .with_children(|attr_box| {
+                            attr_box.spawn((
+                                Node {
+                                    width: Val::Px(28.0),
+                                    height: Val::Px(28.0),
+                                    overflow: Overflow::clip(),
+                                    border_radius: BorderRadius::all(Val::Px(14.0)),
+                                    ..default()
+                                },
+                                ImageNode::new(asset_server.load("images/icons/elements/fire.png")),
+                                EnemyElementIcon,
+                            ));
+                        });
+                    });
+                });
+            });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(92.0),
+                    right: Val::Px(20.0),
+                    width: Val::Px(400.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(6.0),
                     padding: UiRect::axes(Val::Px(0.0), Val::Px(6.0)),
@@ -1155,13 +1086,35 @@ pub(crate) fn setup_ui_system(
                 panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::RowReverse,
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexEnd,
                         align_items: AlignItems::Center,
                         column_gap: Val::Px(8.0),
                         ..default()
                     },
                 ))
                 .with_children(|row| {
+                    spawn_colored_debug_tokens(
+                        row,
+                        &theme,
+                        meta_font.clone(),
+                        meta_font.clone(),
+                        "",
+                        Val::Px(96.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        EnemyAuraLine,
+                        DebugAuraToken,
+                        &[],
+                    );
+                    row.spawn((
+                        Text::new("0/0"),
+                        meta_font.clone(),
+                        TextColor(Color::BLACK),
+                        outlined_stat_text_shadow(),
+                        EnemyHpValueText,
+                    ));
                     row.spawn((Node { width: Val::Px(220.0), ..default() },))
                         .with_children(|bar_wrap| {
                             spawn_hp_bar(
@@ -1173,25 +1126,26 @@ pub(crate) fn setup_ui_system(
                                 EnemyHpBarFill,
                             );
                         });
-                    row.spawn((
-                        Text::new("0/0"),
-                        meta_font.clone(),
-                        TextColor(Color::BLACK),
-                        outlined_stat_text_shadow(),
-                        EnemyHpValueText,
-                    ));
                 });
                 panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
-                        flex_direction: FlexDirection::RowReverse,
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexEnd,
                         align_items: AlignItems::Center,
                         column_gap: Val::Px(8.0),
                         ..default()
                     },
                 ))
                 .with_children(|row| {
-                    row.spawn((Node { width: Val::Px(180.0), ..default() },))
+                    row.spawn((
+                        Text::new("0"),
+                        meta_font.clone(),
+                        TextColor(Color::BLACK),
+                        outlined_stat_text_shadow(),
+                        EnemyShieldValueText,
+                    ));
+                    row.spawn((Node { width: Val::Px(220.0), ..default() },))
                         .with_children(|bar_wrap| {
                             spawn_shield_bar(
                                 bar_wrap,
@@ -1203,20 +1157,41 @@ pub(crate) fn setup_ui_system(
                                 EnemyShieldBarTrack,
                             );
                         });
-                    row.spawn((
-                        Text::new("0"),
+                });
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(24.0),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(4.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    spawn_colored_debug_tokens(
+                        row,
+                        &theme,
                         meta_font.clone(),
-                        TextColor(Color::BLACK),
-                        outlined_stat_text_shadow(),
-                        EnemyShieldValueText,
-                    ));
+                        meta_font.clone(),
+                        "",
+                        Val::Px(300.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        EnemyStatusLine,
+                        DebugStatusToken,
+                        &[("无", theme.text_muted)],
+                    );
                 });
                 panel.spawn((
                     Node {
                         width: Val::Percent(100.0),
                         min_height: Val::Px(30.0),
-                        flex_direction: FlexDirection::RowReverse,
-                        justify_content: JustifyContent::FlexStart,
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::FlexEnd,
                         align_items: AlignItems::Center,
                         column_gap: Val::Px(10.0),
                         row_gap: Val::Px(4.0),
@@ -1288,6 +1263,28 @@ pub(crate) fn setup_ui_system(
                         )),
                     );
                 });
+                panel
+                    .spawn((Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        ..default()
+                    },))
+                    .with_children(|column| {
+                        for idx in 0..3 {
+                            spawn_small_bench_card(
+                                column,
+                                &theme,
+                                border_1,
+                                radius_button,
+                                meta_font.clone(),
+                                small_font.clone(),
+                                small_font.clone(),
+                                idx,
+                                Side::Enemy,
+                            );
+                        }
+                    });
             });
 
 
