@@ -1104,7 +1104,7 @@ pub(crate) fn setup_ui_system(
                         "",
                         Val::Px(96.0),
                         FlexWrap::Wrap,
-                        FlexDirection::Row,
+                        FlexDirection::RowReverse,
                         Val::Px(4.0),
                         EnemyAuraLine,
                         DebugAuraToken,
