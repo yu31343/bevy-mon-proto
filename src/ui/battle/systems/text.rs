@@ -695,11 +695,14 @@ pub(crate) fn update_action_points_text_system(
     }
 }
 
+const BATTLE_ACTION_TEXT_VISIBLE_SECONDS: f32 = 2.0;
+
 pub(crate) fn update_battle_action_text_system(
+    time: Res<Time>,
     mut events: MessageReader<BattleEvent>,
-    mut text_q: Query<&mut Text, With<BattleActionText>>,
+    mut text_q: Query<(&mut Text, &mut Visibility, &mut BattleActionText)>,
 ) {
-    let Ok(mut text) = text_q.single_mut() else {
+    let Ok((mut text, mut visibility, mut action_text)) = text_q.single_mut() else {
         return;
     };
 
@@ -713,7 +716,7 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}发动{}", owner, skill_name)
+                format!("{}发动{}", owner, skill_name)
             }
             BattleEvent::CardUsed { side, card_name } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -721,7 +724,7 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}使用技能牌{}", owner, card_name)
+                format!("{}使用技能牌{}", owner, card_name)
             }
             BattleEvent::CardDiscarded { side, card_name } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -729,7 +732,7 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}弃置{}", owner, card_name)
+                format!("{}弃置{}", owner, card_name)
             }
             BattleEvent::Switched { side, name } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -737,7 +740,7 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}换上{}", owner, name)
+                format!("{}换上{}", owner, name)
             }
             BattleEvent::CombatantFainted { side, name, .. } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -745,11 +748,21 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}{}倒下", owner, name)
+                format!("{}{}倒下", owner, name)
             }
             _ => continue,
         };
         text.0 = line;
+        action_text.remaining = BATTLE_ACTION_TEXT_VISIBLE_SECONDS;
+        *visibility = Visibility::Visible;
+    }
+
+    if action_text.remaining > 0.0 {
+        action_text.remaining = (action_text.remaining - time.delta_secs()).max(0.0);
+        if action_text.remaining == 0.0 {
+            text.0.clear();
+            *visibility = Visibility::Hidden;
+        }
     }
 }
 

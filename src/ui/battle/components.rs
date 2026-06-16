@@ -51,7 +51,9 @@ pub(crate) struct BattleHintOverlayRoot;
 pub(crate) struct BattleHintText;
 
 #[derive(Component)]
-pub(crate) struct BattleActionText;
+pub(crate) struct BattleActionText {
+    pub remaining: f32,
+}
 
 #[derive(Component)]
 pub(crate) struct PlayerCardButton {

@@ -721,16 +721,6 @@ pub(crate) fn setup_ui_system(
                     theme.title_text_shadow(),
                     ActionPointsText,
                 ));
-                bar.spawn((
-                    Text::new("行为：等待操作"),
-                    meta_font.clone(),
-                    TextColor(theme.text_secondary),
-                    TextShadow {
-                        offset: Vec2::new(1.0, 1.0),
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.40),
-                    },
-                    BattleActionText,
-                ));
             });
 
             // === Player Info: Top-Left ===
@@ -1410,6 +1400,8 @@ pub(crate) fn setup_ui_system(
                     left: Val::Percent(0.0),
                     top: Val::Percent(28.0),
                     width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(14.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -1425,6 +1417,17 @@ pub(crate) fn setup_ui_system(
                         color: Color::srgba(0.0, 0.0, 0.0, 0.60),
                     },
                     TurnBannerText,
+                ));
+                banner.spawn((
+                    Text::new(""),
+                    super::helpers::make_text_font(24.0, ui_font.as_deref()),
+                    TextColor(theme.text_primary),
+                    TextShadow {
+                        offset: Vec2::new(2.0, 2.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.65),
+                    },
+                    Visibility::Hidden,
+                    BattleActionText { remaining: 0.0 },
                 ));
             });
 
