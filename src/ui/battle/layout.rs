@@ -1692,7 +1692,7 @@ pub(crate) fn setup_ui_system(
                 ))
                 .with_children(|box_root| {
                     box_root.spawn((
-                        Text::new("手牌已满"),
+                        Text::new("手牌大于4张，请弃牌至4张"),
                         body_font.clone(),
                         TextColor(Color::NONE),
                         TextShadow {

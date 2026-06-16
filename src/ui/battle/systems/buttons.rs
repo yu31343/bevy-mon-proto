@@ -6,8 +6,7 @@ use crate::{
         PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side, SkillCount,
         SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
-    data::BattleDbs,
-    data::MapBattleContext,
+    data::{BattleDbs, BattleRules, MapBattleContext},
     game_state::{BattlePhase, GameState},
     map::components::CurrentMap,
     pvp,
@@ -829,6 +828,7 @@ pub(crate) fn button_end_turn_system(
     >,
     ui_control_side: Res<UiControlSide>,
     hand: Res<Hand>,
+    battle_rules: Res<BattleRules>,
     mut hand_full_warning: ResMut<HandFullEndTurnWarning>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
@@ -850,7 +850,7 @@ pub(crate) fn button_end_turn_system(
             Side::Player => hand.player.len(),
             Side::Enemy => hand.enemy.len(),
         };
-        if current_hand_len >= 6 {
+        if current_hand_len > battle_rules.max_retained_hand {
             hand_full_warning.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
             hand_full_warning.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
             break;
