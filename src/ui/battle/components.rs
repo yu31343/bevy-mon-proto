@@ -36,6 +36,15 @@ pub(crate) struct TurnBannerText;
 pub(crate) struct ActionPointsText;
 
 #[derive(Component)]
+pub(crate) struct BattleHintButton;
+
+#[derive(Component)]
+pub(crate) struct BattleHintCloseButton;
+
+#[derive(Component)]
+pub(crate) struct BattleHintOverlayRoot;
+
+#[derive(Component)]
 pub(crate) struct BattleHintText;
 
 #[derive(Component)]

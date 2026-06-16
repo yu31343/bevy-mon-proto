@@ -28,6 +28,11 @@ pub(crate) struct ReserveInfoOverlayState {
     pub open_side: Option<Side>,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct BattleHintOverlayState {
+    pub open: bool,
+}
+
 #[derive(Resource, Debug, Clone)]
 pub(crate) struct HandFullEndTurnWarning {
     pub border_timer: Timer,
@@ -901,6 +906,53 @@ pub(crate) fn button_reserve_info_system(
             state.open_side = None;
             return;
         }
+    }
+}
+
+pub(crate) fn button_battle_hint_system(
+    mut state: ResMut<BattleHintOverlayState>,
+    mut hint_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<BattleHintButton>),
+    >,
+    mut close_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<BattleHintCloseButton>,
+        ),
+    >,
+) {
+    for interaction in &mut hint_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = !state.open;
+            return;
+        }
+    }
+
+    for interaction in &mut close_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = false;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_battle_hint_overlay_system(
+    state: Res<BattleHintOverlayState>,
+    mut root_q: Query<&mut Visibility, With<BattleHintOverlayRoot>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    for mut visibility in &mut root_q {
+        *visibility = if state.open {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 

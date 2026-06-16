@@ -77,7 +77,11 @@ pub(crate) fn update_element_icon_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant,), With<InBattle>>,
-    mut icons: Query<(&mut ImageNode, Option<&PlayerElementIcon>, Option<&EnemyElementIcon>)>,
+    mut icons: Query<(
+        &mut ImageNode,
+        Option<&PlayerElementIcon>,
+        Option<&EnemyElementIcon>,
+    )>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;
