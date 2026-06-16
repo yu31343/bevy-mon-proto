@@ -11,38 +11,6 @@ use crate::{
 use super::super::components::*;
 use super::super::theme::UiTheme;
 
-pub(crate) fn toggle_player_bench_detail_system(
-    mut interactions: Query<(&Interaction, &PlayerBenchCard), (Changed<Interaction>, With<Button>)>,
-    mut detail_state: ResMut<PlayerBenchDetailState>,
-) {
-    for (interaction, card) in &mut interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        detail_state.expanded_index = if detail_state.expanded_index == Some(card.index) {
-            None
-        } else {
-            Some(card.index)
-        };
-    }
-}
-
-pub(crate) fn update_player_bench_detail_visibility_system(
-    detail_state: Res<PlayerBenchDetailState>,
-    mut details: Query<(&PlayerBenchDetailRoot, &mut Node)>,
-) {
-    if !detail_state.is_changed() {
-        return;
-    }
-    for (detail, mut node) in &mut details {
-        node.display = if detail_state.expanded_index == Some(detail.index) {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-}
-
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -322,31 +290,20 @@ pub(crate) fn update_player_roster_ui_system(
     }
 
     for (meta, mut vis) in &mut visibilities.p0() {
-        if let Some(entity) = get_controlled_entity(meta.index) {
-            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                *vis = if shield.0 > 0 {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
-            }
+        *vis = if get_controlled_entity(meta.index).is_some() {
+            Visibility::Visible
         } else {
-            *vis = Visibility::Hidden;
-        }
+            Visibility::Hidden
+        };
     }
 
     for (meta, mut vis) in &mut visibilities.p1() {
-        if let Some(entity) = get_player_entity(meta.index) {
-            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                *vis = if shield.0 > 0 && meta.index != player_team.active_index {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
-            }
+        *vis = if get_player_entity(meta.index).is_some() && meta.index != player_team.active_index
+        {
+            Visibility::Visible
         } else {
-            *vis = Visibility::Hidden;
-        }
+            Visibility::Hidden
+        };
     }
 }
 
@@ -596,30 +553,18 @@ pub(crate) fn update_enemy_roster_ui_system(
     }
 
     for (meta, mut vis) in &mut visibilities.p0() {
-        if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                *vis = if shield.0 > 0 {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
-            }
+        *vis = if get_entity(meta.index).is_some() {
+            Visibility::Visible
         } else {
-            *vis = Visibility::Hidden;
-        }
+            Visibility::Hidden
+        };
     }
 
     for (meta, mut vis) in &mut visibilities.p1() {
-        if let Some(entity) = get_entity(meta.index) {
-            if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                *vis = if shield.0 > 0 && meta.index != enemy_team.0.active_index {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
-            }
+        *vis = if get_entity(meta.index).is_some() && meta.index != enemy_team.0.active_index {
+            Visibility::Visible
         } else {
-            *vis = Visibility::Hidden;
-        }
+            Visibility::Hidden
+        };
     }
 }

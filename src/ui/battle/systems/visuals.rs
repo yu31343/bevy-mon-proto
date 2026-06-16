@@ -2,9 +2,9 @@ use bevy::prelude::*;
 
 use super::super::components::{
     ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, DiscardButton,
-    EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton, ReserveInfoButton,
-    ReserveInfoCloseButton, RetreatButton, SkillButton, StatIconButton, StatIconTooltip,
-    SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+    EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton, RetreatButton,
+    SkillButton, StatIconButton, StatIconTooltip, SwitchCancelButton, SwitchMonsterButton,
+    TeamMemberButton,
 };
 use super::super::fx::ButtonClickFlash;
 use super::super::theme::UiTheme;
@@ -43,8 +43,6 @@ pub(crate) fn button_visual_state_system(
                 With<EndTurnButton>,
                 With<DiscardButton>,
                 With<RetreatButton>,
-                With<ReserveInfoButton>,
-                With<ReserveInfoCloseButton>,
                 With<BattleHintButton>,
                 With<BattleHintCloseButton>,
             )>,

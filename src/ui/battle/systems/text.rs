@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use crate::{
     battle::{
-        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, SkillCount,
-        SkillList, Stats, StatusBoard, Team,
+        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side,
+        SkillCount, SkillList, Stats, StatusBoard, Team,
     },
     data::{BattleDbs, BattleFormulaRules, ElementType, StatusCategory},
     game_state::BattlePhase,
@@ -56,8 +56,38 @@ fn active_summary(active: Option<ActiveCombatantRef<'_>>) -> String {
     super::super::helpers::element_name(combatant.element).to_string()
 }
 
-fn stat_value(stage: i32, current: i32) -> String {
-    format!("{}{}", super::super::helpers::stage_prefix(stage), current)
+fn stat_value(_stage: i32, current: i32) -> String {
+    current.to_string()
+}
+
+fn stage_modifier_color(stage: i32) -> Color {
+    if stage > 0 {
+        Color::srgb(0.16, 0.46, 0.95)
+    } else {
+        Color::srgb(0.86, 0.16, 0.22)
+    }
+}
+
+fn stat_stage(stats: &Stats, stat: StatStageModifierKind) -> i32 {
+    match stat {
+        StatStageModifierKind::Atk => stats.atk_stage,
+        StatStageModifierKind::Def => stats.def_stage,
+        StatStageModifierKind::Acc => stats.acc_stage,
+        StatStageModifierKind::Spd => stats.spd_stage,
+    }
+}
+
+fn stage_for_side(
+    player_active: Option<ActiveCombatantRef<'_>>,
+    enemy_active: Option<ActiveCombatantRef<'_>>,
+    side: Side,
+    stat: StatStageModifierKind,
+) -> Option<i32> {
+    let active = match side {
+        Side::Player => player_active,
+        Side::Enemy => enemy_active,
+    };
+    active.map(|(_, stats, _, _, _, _)| stat_stage(stats, stat))
 }
 
 pub(crate) fn update_phase_text_system(
@@ -379,6 +409,8 @@ pub(crate) fn update_active_panel_tokens_system(
         ),
         Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
     >,
+    mut stage_modifier_badges: Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
+    mut stage_modifier_texts: Query<(&mut Text, &StatStageModifierText)>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<
@@ -434,6 +466,29 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
+    for (mut node, mut bg, marker) in &mut stage_modifier_badges {
+        let stage =
+            stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
+        node.display = if stage == 0 {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if stage != 0 {
+            *bg = BackgroundColor(stage_modifier_color(stage));
+        }
+    }
+
+    for (mut text, marker) in &mut stage_modifier_texts {
+        let stage =
+            stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
+        text.0 = if stage == 0 {
+            String::new()
+        } else {
+            format!("{stage:+}")
+        };
+    }
+
     for (entity, children, is_player_status, is_enemy_status) in &status_lines {
         let active = if is_player_status.is_some() {
             player_active
@@ -446,7 +501,9 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| entry.category != StatusCategory::Aura)
+                .filter(|entry| {
+                    entry.category != StatusCategory::Aura && entry.stage_modifiers.is_empty()
+                })
                 .map(|entry| {
                     (
                         entry.name.clone(),

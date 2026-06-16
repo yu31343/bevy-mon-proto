@@ -144,26 +144,6 @@ pub(crate) struct TeamMemberShieldBarFill {
 }
 
 #[derive(Component)]
-pub(crate) struct ReserveInfoButton {
-    pub side: crate::battle::Side,
-}
-
-#[derive(Component)]
-pub(crate) struct ReserveInfoCloseButton;
-
-#[derive(Component)]
-pub(crate) struct ReserveInfoOverlayRoot;
-
-#[derive(Component)]
-pub(crate) struct ReserveInfoOverlayTitle;
-
-#[derive(Component)]
-pub(crate) struct PlayerReserveInfoDetails;
-
-#[derive(Component)]
-pub(crate) struct EnemyReserveInfoDetails;
-
-#[derive(Component)]
 pub(crate) struct PlayerBenchCard {
     pub index: usize,
 }
@@ -206,16 +186,6 @@ pub(crate) struct PlayerBenchShieldBarFill {
 #[derive(Component)]
 pub(crate) struct PlayerBenchShieldValueText {
     pub index: usize,
-}
-
-#[derive(Component)]
-pub(crate) struct PlayerBenchDetailRoot {
-    pub index: usize,
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct PlayerBenchDetailState {
-    pub expanded_index: Option<usize>,
 }
 
 #[derive(Component)]
@@ -424,6 +394,26 @@ pub(crate) struct PlayerStatusLine;
 
 #[derive(Component)]
 pub(crate) struct EnemyStatusLine;
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct StatStageModifierBadge {
+    pub side: crate::battle::Side,
+    pub stat: StatStageModifierKind,
+}
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct StatStageModifierText {
+    pub side: crate::battle::Side,
+    pub stat: StatStageModifierKind,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum StatStageModifierKind {
+    Atk,
+    Def,
+    Acc,
+    Spd,
+}
 
 #[derive(Component, Clone, Copy)]
 pub(crate) struct DebugAuraToken;
