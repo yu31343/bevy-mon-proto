@@ -241,14 +241,25 @@ pub(crate) fn hand_full_warning_visual_system(
 pub(crate) fn update_discard_armed_visual_system(
     selected: Res<SelectedCards>,
     ui_control_side: Res<UiControlSide>,
-    mut q: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (
-            With<DiscardButton>,
-            Without<ButtonClickFlash>,
-            Without<ActionDialButton>,
-        ),
-    >,
+    mut queries: ParamSet<(
+        Query<
+            (&Interaction, &mut BackgroundColor, &mut BorderColor),
+            (
+                With<DiscardButton>,
+                Without<ButtonClickFlash>,
+                Without<ActionDialButton>,
+            ),
+        >,
+        Query<
+            (&Interaction, &Children),
+            (
+                With<DiscardButton>,
+                With<ActionDialButton>,
+                Without<ButtonClickFlash>,
+            ),
+        >,
+        Query<&mut BackgroundColor, With<ActionDialHighlight>>,
+    )>,
     theme: Res<UiTheme>,
 ) {
     let discard_armed = match ui_control_side.0 {
@@ -256,7 +267,7 @@ pub(crate) fn update_discard_armed_visual_system(
         Side::Enemy => selected.enemy.discard_armed,
     };
 
-    for (interaction, mut bg, mut border) in &mut q {
+    for (interaction, mut bg, mut border) in &mut queries.p0() {
         // 仅在未悬停/未按下时介入，Hover/Press 状态交给 button_visual_state_system
         if *interaction == Interaction::None {
             if discard_armed {
@@ -266,6 +277,28 @@ pub(crate) fn update_discard_armed_visual_system(
                 *bg = BackgroundColor(theme.button_idle);
                 *border = BorderColor::all(theme.button_border_idle);
             }
+        }
+    }
+
+    let mut highlight_updates = Vec::new();
+    for (interaction, children) in &queries.p1() {
+        // 圆盘按钮的颜色显示在 ActionDialHighlight 子节点上。
+        if *interaction == Interaction::None {
+            let color = if discard_armed {
+                DISCARD_ARMED_COLOR
+            } else {
+                Color::NONE
+            };
+            for child in children.iter() {
+                highlight_updates.push((child, color));
+            }
+        }
+    }
+
+    let mut highlights = queries.p2();
+    for (child, color) in highlight_updates {
+        if let Ok(mut highlight_bg) = highlights.get_mut(child) {
+            *highlight_bg = BackgroundColor(color);
         }
     }
 }
