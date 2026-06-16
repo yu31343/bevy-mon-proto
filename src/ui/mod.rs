@@ -201,6 +201,7 @@ fn despawn_pending_battle_ui_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut BattleUiCleanupPending), With<BattleUiRoot>>,
     children_query: Query<&Children>,
+    spine_proxy_query: Query<&bevy_spine::SpineUiProxy>,
     uninitialized_spine_nodes: Query<
         (),
         (
@@ -221,6 +222,12 @@ fn despawn_pending_battle_ui_system(
         if pending.frames_remaining > 0 {
             pending.frames_remaining -= 1;
         } else {
+            despawn_spine_ui_proxy_descendants(
+                &mut commands,
+                entity,
+                &children_query,
+                &spine_proxy_query,
+            );
             commands.entity(entity).despawn();
         }
     }
@@ -246,6 +253,24 @@ fn has_uninitialized_spine_ui_descendant(
             has_uninitialized_spine_ui_descendant(child, children_query, uninitialized_spine_nodes)
         })
     })
+}
+
+fn despawn_spine_ui_proxy_descendants(
+    commands: &mut Commands,
+    entity: Entity,
+    children_query: &Query<&Children>,
+    spine_proxy_query: &Query<&bevy_spine::SpineUiProxy>,
+) {
+    if let Ok(proxy) = spine_proxy_query.get(entity) {
+        commands.entity(proxy.proxy_entity).despawn();
+        commands.entity(proxy.camera_entity).despawn();
+    }
+
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            despawn_spine_ui_proxy_descendants(commands, child, children_query, spine_proxy_query);
+        }
+    }
 }
 
 #[allow(dead_code)]
