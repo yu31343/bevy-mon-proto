@@ -803,14 +803,18 @@ pub(super) fn handle_vfx_animation_complete(
 pub(super) fn despawn_ready_spine_ui_nodes(
     mut commands: Commands,
     query: Query<
-        Entity,
+        (Entity, Option<&SpineUiProxy>),
         (
             With<PendingSpineUiDespawn>,
             Or<(With<SpineUiProxy>, Without<SpineUiNode>)>,
         ),
     >,
 ) {
-    for entity in &query {
+    for (entity, proxy) in &query {
+        if let Some(proxy) = proxy {
+            commands.entity(proxy.proxy_entity).despawn();
+            commands.entity(proxy.camera_entity).despawn();
+        }
         commands.entity(entity).despawn();
     }
 }
