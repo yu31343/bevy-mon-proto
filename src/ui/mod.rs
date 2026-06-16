@@ -54,7 +54,8 @@ fn update_ui_scale_system(
 ///
 /// 后续重构会逐步把实现迁移进 `src/ui/battle/`，此处保持行为不变。
 pub(crate) fn register_legacy_battle_ui(app: &mut App) {
-    app.init_resource::<SwitchOverlayOpen>()
+    app.add_message::<battle::components::BattleUiNotice>()
+        .init_resource::<SwitchOverlayOpen>()
         .init_resource::<PendingSwitchOverlayToggle>()
         .init_resource::<RetreatConfirmState>()
         .init_resource::<BattleHintOverlayState>()
