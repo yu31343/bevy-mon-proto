@@ -12,6 +12,7 @@ use crate::{
     data::{BattleDbs, BattleRules},
     game_state::{BattlePhase, GameState},
     pvp,
+    ui::battle::components::BattleUiNotice,
 };
 
 use super::{
@@ -32,6 +33,7 @@ pub(crate) struct PlayerTurnEventWriters<'w> {
     event_writer: MessageWriter<'w, BattleEvent>,
     formula_writer: MessageWriter<'w, BattleFormulaEvent>,
     status_writer: MessageWriter<'w, BattleStatusEvent>,
+    ui_notices: MessageWriter<'w, BattleUiNotice>,
 }
 
 #[derive(SystemParam)]
@@ -245,9 +247,15 @@ pub fn player_turn_input_system(
     };
 
     if let Some(target_index) = switch_target {
-        if action_points.player >= 1
-            && target_index < player_team.0.combatants.len()
-            && target_index != player_team.0.active_index
+        if target_index >= player_team.0.combatants.len()
+            || target_index == player_team.0.active_index
+        {
+            return;
+        }
+        if action_points.player < 1 {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+            return;
+        }
         {
             let current_entity = player_team.0.combatants[player_team.0.active_index];
             let target_entity = player_team.0.combatants[target_index];
@@ -324,6 +332,7 @@ pub fn player_turn_input_system(
 
         // 如果 AP 不够：不执行并清空，避免下一帧重复触发。
         if action_points.player < cost {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
             turn_ctx.player_action = None;
             return;
         }
@@ -931,64 +940,66 @@ pub fn player_turn_input_system(
             // 第二步：出牌
             let card_id = hand.player[idx];
             if let Some(card) = dbs.cards.get(&card_id) {
-                if action_points.player >= card.cost_ap {
-                    if send_pvp_intent(
-                        battle_mode,
-                        pvp_connection,
-                        pvp_pending_intent,
-                        pvp::BattleIntent::UseCard { card_index: idx },
-                    ) {
-                        selected.player.index = None;
-                        selected.player.discard_armed = false;
-                        return;
-                    }
-                    hand.player.remove(idx);
-                    action_points.player -= card.cost_ap;
-
-                    let card_name = card.name.to_string();
-                    writers.event_writer.write(BattleEvent::CardUsed {
-                        side: Side::Player,
-                        card_name: card_name.clone(),
-                    });
-
-                    let effect_detail = "效果已排入卡牌结算".to_string();
-                    note_action_phase(
-                        &mut logs.structured_log,
-                        logs.turn_count.0,
-                        Side::Player,
-                        "玩家使用卡牌",
-                        format!(
-                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
-                            card_name, card.cost_ap, effect_detail, action_points.player
-                        ),
-                    );
-                    push_named_action_trace(
-                        &mut logs.action_trace,
-                        logs.turn_count.0,
-                        Side::Player,
-                        "use_card",
-                        format!(
-                            "卡牌={}；效果={}；当前AP={}",
-                            card_name, effect_detail, action_points.player
-                        ),
-                    );
-
+                if action_points.player < card.cost_ap {
+                    writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+                    return;
+                }
+                if send_pvp_intent(
+                    battle_mode,
+                    pvp_connection,
+                    pvp_pending_intent,
+                    pvp::BattleIntent::UseCard { card_index: idx },
+                ) {
                     selected.player.index = None;
                     selected.player.discard_armed = false;
+                    return;
+                }
+                hand.player.remove(idx);
+                action_points.player -= card.cost_ap;
 
-                    let should_go_check_end = query
-                        .get(p_entity)
+                let card_name = card.name.to_string();
+                writers.event_writer.write(BattleEvent::CardUsed {
+                    side: Side::Player,
+                    card_name: card_name.clone(),
+                });
+
+                let effect_detail = "效果已排入卡牌结算".to_string();
+                note_action_phase(
+                    &mut logs.structured_log,
+                    logs.turn_count.0,
+                    Side::Player,
+                    "玩家使用卡牌",
+                    format!(
+                        "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                        card_name, card.cost_ap, effect_detail, action_points.player
+                    ),
+                );
+                push_named_action_trace(
+                    &mut logs.action_trace,
+                    logs.turn_count.0,
+                    Side::Player,
+                    "use_card",
+                    format!(
+                        "卡牌={}；效果={}；当前AP={}",
+                        card_name, effect_detail, action_points.player
+                    ),
+                );
+
+                selected.player.index = None;
+                selected.player.discard_armed = false;
+
+                let should_go_check_end = query
+                    .get(p_entity)
+                    .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                    .unwrap_or(false)
+                    || query
+                        .get(e_entity)
                         .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                        .unwrap_or(false)
-                        || query
-                            .get(e_entity)
-                            .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false);
-                    if should_go_check_end {
-                        pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
-                        next_phase.set(BattlePhase::CheckEnd);
-                        return;
-                    }
+                        .unwrap_or(false);
+                if should_go_check_end {
+                    pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
+                    next_phase.set(BattlePhase::CheckEnd);
+                    return;
                 }
             }
             return;
@@ -1023,6 +1034,7 @@ pub fn player_turn_input_system(
     };
     let cost = skill.cost_ap;
     if action_points.player < cost {
+        writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
         return;
     }
 

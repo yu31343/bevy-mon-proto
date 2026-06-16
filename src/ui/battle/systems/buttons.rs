@@ -311,6 +311,7 @@ pub(crate) fn button_switch_member_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
     mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<InBattle>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
@@ -341,10 +342,11 @@ pub(crate) fn button_switch_member_system(
                 (&mut team.0, &mut action_points.enemy, Side::Enemy)
             }
         };
-        if *ap < 1 {
+        if target_index >= team.combatants.len() || target_index == team.active_index {
             continue;
         }
-        if target_index >= team.combatants.len() || target_index == team.active_index {
+        if *ap < 1 {
+            ui_notices.write(BattleUiNotice { text: "AP不足" });
             continue;
         }
 

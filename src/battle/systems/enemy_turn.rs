@@ -15,6 +15,7 @@ use crate::{
         EnemyAiConfig, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
+    ui::battle::components::BattleUiNotice,
 };
 
 use super::{
@@ -45,6 +46,7 @@ pub(crate) struct EnemyTurnEventWriters<'w> {
     event_writer: MessageWriter<'w, BattleEvent>,
     formula_writer: MessageWriter<'w, BattleFormulaEvent>,
     status_writer: MessageWriter<'w, BattleStatusEvent>,
+    ui_notices: MessageWriter<'w, BattleUiNotice>,
 }
 
 #[derive(SystemParam)]
@@ -305,9 +307,15 @@ pub fn enemy_turn_input_system(
     };
 
     if !remote_controlled && let Some(target_index) = switch_target {
-        if action_points.enemy >= 1
-            && target_index < enemy_team.0.combatants.len()
-            && target_index != enemy_team.0.active_index
+        if target_index >= enemy_team.0.combatants.len()
+            || target_index == enemy_team.0.active_index
+        {
+            return;
+        }
+        if action_points.enemy < 1 {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+            return;
+        }
         {
             let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
             let target_entity = enemy_team.0.combatants[target_index];
@@ -479,6 +487,7 @@ pub fn enemy_turn_input_system(
         };
         let cost = skill.cost_ap;
         if action_points.enemy < cost {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
             turn_ctx.enemy_action = None;
             return;
         }
@@ -917,54 +926,56 @@ pub fn enemy_turn_input_system(
                 }
                 let card_id = hand.enemy[idx];
                 if let Some(card) = dbs.cards.get(&card_id) {
-                    if action_points.enemy >= card.cost_ap {
-                        hand.enemy.remove(idx);
-                        action_points.enemy -= card.cost_ap;
+                    if action_points.enemy < card.cost_ap {
+                        writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+                        return;
+                    }
+                    hand.enemy.remove(idx);
+                    action_points.enemy -= card.cost_ap;
 
-                        let card_name = card.name.to_string();
-                        writers.event_writer.write(BattleEvent::CardUsed {
-                            side: Side::Enemy,
-                            card_name: card_name.clone(),
-                        });
+                    let card_name = card.name.to_string();
+                    writers.event_writer.write(BattleEvent::CardUsed {
+                        side: Side::Enemy,
+                        card_name: card_name.clone(),
+                    });
 
-                        let effect_detail = "效果已排入卡牌结算".to_string();
-                        note_action_phase(
-                            &mut logs.structured_log,
-                            logs.turn_count.0,
-                            Side::Enemy,
-                            "敌方使用卡牌",
-                            format!(
-                                "卡牌={}；消耗AP={}；效果={}；当前AP={}",
-                                card_name, card.cost_ap, effect_detail, action_points.enemy
-                            ),
-                        );
-                        push_named_action_trace(
-                            &mut logs.action_trace,
-                            logs.turn_count.0,
-                            Side::Enemy,
-                            "use_card",
-                            format!(
-                                "卡牌={}；效果={}；当前AP={}",
-                                card_name, effect_detail, action_points.enemy
-                            ),
-                        );
+                    let effect_detail = "效果已排入卡牌结算".to_string();
+                    note_action_phase(
+                        &mut logs.structured_log,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "敌方使用卡牌",
+                        format!(
+                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                            card_name, card.cost_ap, effect_detail, action_points.enemy
+                        ),
+                    );
+                    push_named_action_trace(
+                        &mut logs.action_trace,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "use_card",
+                        format!(
+                            "卡牌={}；效果={}；当前AP={}",
+                            card_name, effect_detail, action_points.enemy
+                        ),
+                    );
 
-                        selected.enemy.index = None;
-                        selected.enemy.discard_armed = false;
+                    selected.enemy.index = None;
+                    selected.enemy.discard_armed = false;
 
-                        let should_go_check_end = exec_query
-                            .get(p_entity)
+                    let should_go_check_end = exec_query
+                        .get(p_entity)
+                        .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                        .unwrap_or(false)
+                        || exec_query
+                            .get(e_entity)
                             .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false)
-                            || exec_query
-                                .get(e_entity)
-                                .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                                .unwrap_or(false);
-                        if should_go_check_end {
-                            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-                            next_phase.set(BattlePhase::CheckEnd);
-                            return;
-                        }
+                            .unwrap_or(false);
+                    if should_go_check_end {
+                        pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
+                        next_phase.set(BattlePhase::CheckEnd);
+                        return;
                     }
                 }
                 return;
