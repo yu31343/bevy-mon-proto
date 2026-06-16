@@ -227,8 +227,8 @@
             duration_turns: 2,
             tick_timing: Some(OwnerActionEnd),
             stage_modifiers: [
-                (attribute: Atk, amount: -2),
-                (attribute: Acc, amount: -2),
+                (attribute: Atk, amount: -1),
+                (attribute: Acc, amount: -1),
             ],
         ),
         (
