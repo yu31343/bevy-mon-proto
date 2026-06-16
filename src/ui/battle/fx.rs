@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 
-use crate::battle::{BattleEvent, Side};
+use crate::battle::{BattleEvent, DamageType, Side};
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
@@ -18,6 +18,13 @@ use super::{
     resources::UiFontHandle,
     theme::UiTheme,
 };
+
+const DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX: f32 = 356.0;
+const DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX: f32 = 1180.0;
+const DAMAGE_TEXT_TARGET_TOP_PX: f32 = 326.0;
+const DAMAGE_TEXT_FONT_SIZE: f32 = 34.0;
+const DAMAGE_TEXT_FIXED_DAMAGE_ROW_OFFSET_PX: f32 = 46.0;
+const DAMAGE_TEXT_STACK_ROW_GAP_PX: f32 = 40.0;
 
 /// 技能格闪白计时器组件
 /// - 与 `SkillSlotId` 组件附加在同一实体上
@@ -73,6 +80,15 @@ pub fn process_battle_fx_events(
         f
     };
 
+    let mut player_direct_damage_rows = 0;
+    let mut player_fixed_damage_rows = 0;
+    let mut player_heal_rows = 0;
+    let mut player_miss_rows = 0;
+    let mut enemy_direct_damage_rows = 0;
+    let mut enemy_fixed_damage_rows = 0;
+    let mut enemy_heal_rows = 0;
+    let mut enemy_miss_rows = 0;
+
     // 遍历所有战斗事件
     for event in events.read() {
         match event {
@@ -98,17 +114,57 @@ pub fn process_battle_fx_events(
                 }
             }
             // 处理伤害事件：显示伤害飘字和受击闪屏
-            BattleEvent::DamageDealt { target, amount, .. } => {
+            BattleEvent::DamageDealt {
+                target,
+                amount,
+                damage_type,
+                ..
+            } => {
                 // 跳过无效伤害值
                 if *amount <= 0 {
                     continue;
                 }
 
-                // 根据目标阵营确定飘字位置
-                let top = if *target == Side::Enemy {
-                    Val::Percent(22.0) // 敌方飘字位置
+                let left = if *target == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
                 } else {
-                    Val::Percent(68.0) // 玩家飘字位置
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = match (*target, *damage_type) {
+                    (Side::Player, DamageType::Direct) => {
+                        let row = player_direct_damage_rows;
+                        player_direct_damage_rows += 1;
+                        row
+                    }
+                    (Side::Player, DamageType::Fixed) => {
+                        let row = player_fixed_damage_rows;
+                        player_fixed_damage_rows += 1;
+                        row
+                    }
+                    (Side::Enemy, DamageType::Direct) => {
+                        let row = enemy_direct_damage_rows;
+                        enemy_direct_damage_rows += 1;
+                        row
+                    }
+                    (Side::Enemy, DamageType::Fixed) => {
+                        let row = enemy_fixed_damage_rows;
+                        enemy_fixed_damage_rows += 1;
+                        row
+                    }
+                };
+                let type_offset = if *damage_type == DamageType::Fixed {
+                    DAMAGE_TEXT_FIXED_DAMAGE_ROW_OFFSET_PX
+                } else {
+                    0.0
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX
+                        + type_offset
+                        + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
+                let bg_color = match *damage_type {
+                    DamageType::Direct => Color::srgba(0.82, 0.05, 0.04, 0.88),
+                    DamageType::Fixed => Color::srgba(1.0, 0.42, 0.70, 0.88),
                 };
 
                 // 创建伤害飘字
@@ -116,19 +172,31 @@ pub fn process_battle_fx_events(
                     p.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(44.0),
+                            left,
                             top,
+                            min_width: Val::Px(58.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         },
-                        Text::new(format!("-{amount}")), // 伤害值显示（带负号）
-                        make_font(26.0),
-                        TextColor(Color::srgb(1.0, 0.35, 0.35)), // 红色伤害文字
-                        TextShadow {
-                            offset: Vec2::new(1.0, 1.0),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.75),
-                        },
+                        BackgroundColor(bg_color),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
                         FxLifetime(Timer::from_seconds(1.1, TimerMode::Once)), // 飘字持续1.1秒
-                    ));
+                    ))
+                    .with_children(|damage_label| {
+                        damage_label.spawn((
+                            Text::new(format!("-{amount}")),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
                 });
 
                 // 创建受击闪屏效果
@@ -147,31 +215,119 @@ pub fn process_battle_fx_events(
                     ));
                 });
             }
+            // 处理攻击未命中事件：显示 miss 提示
+            BattleEvent::AttackMissed { target, .. } => {
+                let left = if *target == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
+                } else {
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = if *target == Side::Enemy {
+                    let row = enemy_direct_damage_rows
+                        + enemy_fixed_damage_rows
+                        + enemy_heal_rows
+                        + enemy_miss_rows;
+                    enemy_miss_rows += 1;
+                    row
+                } else {
+                    let row = player_direct_damage_rows
+                        + player_fixed_damage_rows
+                        + player_heal_rows
+                        + player_miss_rows;
+                    player_miss_rows += 1;
+                    row
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
+
+                commands.entity(root).with_children(|p| {
+                    p.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left,
+                            top,
+                            min_width: Val::Px(68.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.08, 0.28, 0.88, 0.88)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                        FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)),
+                    ))
+                    .with_children(|miss_label| {
+                        miss_label.spawn((
+                            Text::new("miss"),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
+                });
+            }
             // 处理治疗事件：显示治疗飘字
-            BattleEvent::Healed { amount, .. } => {
+            BattleEvent::Healed { side, amount } => {
                 // 跳过无效治疗值
                 if *amount <= 0 {
                     continue;
                 }
+
+                let left = if *side == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
+                } else {
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = if *side == Side::Enemy {
+                    let row = enemy_direct_damage_rows + enemy_fixed_damage_rows + enemy_heal_rows;
+                    enemy_heal_rows += 1;
+                    row
+                } else {
+                    let row =
+                        player_direct_damage_rows + player_fixed_damage_rows + player_heal_rows;
+                    player_heal_rows += 1;
+                    row
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
 
                 // 创建治疗飘字
                 commands.entity(root).with_children(|p| {
                     p.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(44.0),
-                            top: Val::Percent(52.0), // 治疗飘字位置
+                            left,
+                            top,
+                            min_width: Val::Px(58.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         },
-                        Text::new(format!("+{amount}")), // 治疗值显示（带加号）
-                        make_font(24.0),
-                        TextColor(Color::srgb(0.45, 1.0, 0.55)), // 绿色治疗文字
-                        TextShadow {
-                            offset: Vec2::new(1.0, 1.0),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.65),
-                        },
+                        BackgroundColor(Color::srgba(0.08, 0.62, 0.22, 0.88)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
                         FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)), // 飘字持续1.0秒
-                    ));
+                    ))
+                    .with_children(|heal_label| {
+                        heal_label.spawn((
+                            Text::new(format!("+{amount}")),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
                 });
             }
             // 其他事件类型暂不处理

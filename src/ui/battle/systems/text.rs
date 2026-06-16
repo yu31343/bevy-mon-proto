@@ -6,9 +6,21 @@ use crate::{
         BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, SkillCount,
         SkillList, Stats, StatusBoard, Team,
     },
-    data::{BattleDbs, BattleFormulaRules, StatusCategory},
+    data::{BattleDbs, BattleFormulaRules, ElementType, StatusCategory},
     game_state::BattlePhase,
 };
+
+fn element_icon_path(element: ElementType) -> &'static str {
+    match element {
+        ElementType::Fire => "images/icons/elements/fire.png",
+        ElementType::Water => "images/icons/elements/water.png",
+        ElementType::Grass => "images/icons/elements/grass.png",
+        ElementType::Light => "images/icons/elements/light.png",
+        ElementType::Dark => "images/icons/elements/dark.png",
+        ElementType::Thunder => "images/icons/elements/thunder.png",
+        ElementType::Wind => "images/icons/elements/wind.png",
+    }
+}
 
 type ActiveCombatantRef<'a> = (
     &'a Combatant,
@@ -44,13 +56,8 @@ fn active_summary(active: Option<ActiveCombatantRef<'_>>) -> String {
     super::super::helpers::element_name(combatant.element).to_string()
 }
 
-fn stat_line(label: &str, stage: i32, current: i32) -> String {
-    format!(
-        "{}: {}{}",
-        label,
-        super::super::helpers::stage_prefix(stage),
-        current
-    )
+fn stat_value(stage: i32, current: i32) -> String {
+    format!("{}{}", super::super::helpers::stage_prefix(stage), current)
 }
 
 pub(crate) fn update_phase_text_system(
@@ -62,6 +69,46 @@ pub(crate) fn update_phase_text_system(
             "战斗阶段：{}",
             super::super::helpers::phase_label(*battle_phase.get())
         );
+    }
+}
+
+pub(crate) fn update_element_icon_system(
+    asset_server: Res<AssetServer>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<(&Combatant,), With<InBattle>>,
+    mut icons: Query<(&mut ImageNode, Option<&PlayerElementIcon>, Option<&EnemyElementIcon>)>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+
+    let player_element = player_team
+        .0
+        .active_combatant()
+        .and_then(|entity| combat_query.get(entity).ok())
+        .map(|(combatant,)| combatant.element);
+    let enemy_element = enemy_team
+        .0
+        .active_combatant()
+        .and_then(|entity| combat_query.get(entity).ok())
+        .map(|(combatant,)| combatant.element);
+
+    for (mut image, is_player, is_enemy) in &mut icons {
+        let element = if is_player.is_some() {
+            player_element
+        } else if is_enemy.is_some() {
+            enemy_element
+        } else {
+            None
+        };
+
+        if let Some(element) = element {
+            image.image = asset_server.load(element_icon_path(element));
+            image.color = Color::WHITE;
+        } else {
+            image.color = Color::NONE;
+        }
     }
 }
 
@@ -84,6 +131,7 @@ pub(crate) fn update_active_panel_text_system(
                 Option<&PlayerHpValueText>,
                 Option<&PlayerHpStatText>,
                 Option<&EnemyHpValueText>,
+                Option<&EnemyHpStatText>,
                 Option<&PlayerShieldValueText>,
                 Option<&EnemyShieldValueText>,
                 Option<&PlayerAtkText>,
@@ -155,6 +203,7 @@ pub(crate) fn update_active_panel_text_system(
         is_player_hp,
         is_player_hp_stat,
         is_enemy_hp,
+        is_enemy_hp_stat,
         is_player_shield,
         is_enemy_shield,
         is_player_atk,
@@ -177,9 +226,9 @@ pub(crate) fn update_active_panel_text_system(
         }
         if is_player_hp_stat.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                format!("HP: {}", stats.max_hp)
+                stats.max_hp.to_string()
             } else {
-                "HP: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
@@ -188,6 +237,14 @@ pub(crate) fn update_active_panel_text_system(
                 format!("{}/{}", stats.hp.max(0), stats.max_hp)
             } else {
                 "0/0".to_string()
+            };
+            continue;
+        }
+        if is_enemy_hp_stat.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stats.max_hp.to_string()
+            } else {
+                "0".to_string()
             };
             continue;
         }
@@ -209,97 +266,89 @@ pub(crate) fn update_active_panel_text_system(
         }
         if is_player_atk.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Atk",
+                stat_value(
                     stats.atk_stage,
                     super::super::helpers::effective_atk_value(stats, &formula_rules),
                 )
             } else {
-                "Atk: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_atk.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Atk",
+                stat_value(
                     stats.atk_stage,
                     super::super::helpers::effective_atk_value(stats, &formula_rules),
                 )
             } else {
-                "Atk: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_def.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Def",
+                stat_value(
                     stats.def_stage,
                     super::super::helpers::effective_def_value(stats, &formula_rules),
                 )
             } else {
-                "Def: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_def.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Def",
+                stat_value(
                     stats.def_stage,
                     super::super::helpers::effective_def_value(stats, &formula_rules),
                 )
             } else {
-                "Def: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_acc.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Acc",
+                stat_value(
                     stats.acc_stage,
                     super::super::helpers::effective_acc_value(stats, &formula_rules),
                 )
             } else {
-                "Acc: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_acc.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Acc",
+                stat_value(
                     stats.acc_stage,
                     super::super::helpers::effective_acc_value(stats, &formula_rules),
                 )
             } else {
-                "Acc: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_spd.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Spd",
+                stat_value(
                     stats.spd_stage,
                     super::super::helpers::effective_spd_value(stats, &formula_rules),
                 )
             } else {
-                "Spd: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_spd.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Spd",
+                stat_value(
                     stats.spd_stage,
                     super::super::helpers::effective_spd_value(stats, &formula_rules),
                 )
             } else {
-                "Spd: 0".to_string()
+                "0".to_string()
             };
         }
     }
@@ -426,6 +475,8 @@ pub(crate) fn update_skill_text_system(
     mut text_q: Query<
         (
             &mut Text,
+            Option<&mut TextColor>,
+            Option<&mut TextShadow>,
             Option<&TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
@@ -472,6 +523,8 @@ pub(crate) fn update_skill_text_system(
 
     for (
         mut text,
+        text_color,
+        text_shadow,
         is_turn_banner,
         skill_button_text,
         skill_button_meta_text,
@@ -482,14 +535,20 @@ pub(crate) fn update_skill_text_system(
     ) in &mut text_q
     {
         if is_turn_banner.is_some() {
-            text.0 = match *battle_phase.get() {
-                BattlePhase::PlayerTurn => "你的回合".to_string(),
-                BattlePhase::EnemyTurn if ui_control_side.0 == crate::battle::Side::Enemy => {
-                    "敌方操作回合".to_string()
-                }
-                BattlePhase::EnemyTurn => "对手的回合".to_string(),
-                _ => String::new(),
+            let (banner_text, outline_color) = match *battle_phase.get() {
+                BattlePhase::PlayerTurn => ("你的回合", Color::srgba(0.05, 0.24, 1.0, 0.95)),
+                BattlePhase::EnemyTurn => ("敌方回合", Color::srgba(1.0, 0.05, 0.04, 0.95)),
+                BattlePhase::Discard => ("弃牌阶段", Color::srgba(0.05, 0.24, 1.0, 0.95)),
+                _ => ("", Color::srgba(0.0, 0.0, 0.0, 0.0)),
             };
+            text.0 = banner_text.to_string();
+            if let Some(mut text_color) = text_color {
+                text_color.0 = Color::WHITE;
+            }
+            if let Some(mut text_shadow) = text_shadow {
+                text_shadow.offset = Vec2::new(3.0, 3.0);
+                text_shadow.color = outline_color;
+            }
             continue;
         }
         let control_skills = match ui_control_side.0 {

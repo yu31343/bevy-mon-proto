@@ -31,7 +31,7 @@ use crate::battle::ai::{
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 1.25;
+const ENEMY_AI_ACTION_DELAY: f32 = 0.0;
 
 #[derive(SystemParam)]
 pub(crate) struct EnemyTurnLogs<'w> {
@@ -2194,7 +2194,7 @@ pub fn enemy_turn_ai_system(
     }
 
     if acted_this_update && action_points.enemy > 0 {
-        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 敌方每两个操作之间间隔 0.75 秒。
+        ai_state.0 = ENEMY_AI_ACTION_DELAY;
         return;
     }
 

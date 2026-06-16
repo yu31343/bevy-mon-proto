@@ -21,6 +21,10 @@ pub(crate) struct PlayerStatsText;
 #[derive(Component)]
 pub(crate) struct EnemyStatsText;
 #[derive(Component)]
+pub(crate) struct PlayerElementIcon;
+#[derive(Component)]
+pub(crate) struct EnemyElementIcon;
+#[derive(Component)]
 pub(crate) struct ResultText;
 #[derive(Component)]
 pub(crate) struct BattlePhaseText;
@@ -86,6 +90,15 @@ pub(crate) struct SwitchMonsterButton;
 pub(crate) struct ActionDialButton;
 
 #[derive(Component)]
+pub(crate) struct ActionDialHighlight;
+
+#[derive(Component)]
+pub(crate) struct HandFullHintRoot;
+
+#[derive(Component)]
+pub(crate) struct HandFullHintText;
+
+#[derive(Component)]
 pub(crate) struct SwitchCancelButton;
 
 #[derive(Component)]
@@ -117,6 +130,26 @@ pub(crate) struct TeamMemberShieldBarTrack {
 pub(crate) struct TeamMemberShieldBarFill {
     pub index: usize,
 }
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoButton {
+    pub side: crate::battle::Side,
+}
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoCloseButton;
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct ReserveInfoOverlayTitle;
+
+#[derive(Component)]
+pub(crate) struct PlayerReserveInfoDetails;
+
+#[derive(Component)]
+pub(crate) struct EnemyReserveInfoDetails;
 
 #[derive(Component)]
 pub(crate) struct PlayerBenchCard {
@@ -352,6 +385,15 @@ pub(crate) struct PlayerSpdText;
 
 #[derive(Component)]
 pub(crate) struct EnemySpdText;
+
+#[derive(Component)]
+pub(crate) struct StatIconButton;
+
+#[derive(Component)]
+pub(crate) struct StatIconTooltip;
+
+#[derive(Component)]
+pub(crate) struct EnemyHpStatText;
 
 #[derive(Component)]
 pub(crate) struct PlayerAuraLine;

@@ -353,11 +353,11 @@ pub fn resolve_ko_system(
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
         battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
-            "平局！按 R 返回大厅。".to_string()
+            "平局！按 R 返回。".to_string()
         } else if pending_ko.enemy_defeated {
-            "胜利！全歼敌方。按 R 返回大厅。".to_string()
+            "胜利！全歼敌方。按 R 返回。".to_string()
         } else {
-            "失败！队伍全灭。按 R 返回大厅。".to_string()
+            "失败！队伍全灭。按 R 返回。".to_string()
         };
         note_structured_phase(
             &mut structured_log,
@@ -466,6 +466,8 @@ pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut selection_state: ResMut<crate::team_selection::SelectionState>,
     mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
+    mut map_battle_context: ResMut<crate::data::MapBattleContext>,
+    mut current_map: ResMut<crate::map::components::CurrentMap>,
     team_selections: Option<ResMut<crate::data::TeamSelections>>,
     replay_log: Res<ReplayEventLog>,
     action_trace: Res<ActionTrace>,
@@ -486,6 +488,8 @@ pub fn restart_from_result_system(
     }
 
     if keyboard.just_pressed(KeyCode::KeyR) {
+        let return_map = map_battle_context.return_map.take();
+        map_battle_context.enemy_monster_index = None;
         battle_result.message.clear();
         battle_result.export_status = None;
         selection_state.reset();
@@ -499,7 +503,12 @@ pub fn restart_from_result_system(
         }
 
         next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::Map); // 修改为返回地图
+        if let Some(map) = return_map {
+            *current_map = map;
+            next_game_state.set(GameState::Map);
+        } else {
+            next_game_state.set(GameState::Lobby);
+        }
     }
 }
 
@@ -1143,6 +1152,7 @@ mod tests {
                 source: Side::Player,
                 target: Side::Enemy,
                 amount: 7,
+                damage_type: crate::battle::DamageType::Direct,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleTraceEvent>>()
@@ -1196,7 +1206,7 @@ mod tests {
         assert_eq!(replay_log.0[0].summary, "BattleEvent");
         assert_eq!(replay_log.0[0].detail, "玩家 使用了 火拳。");
         assert_eq!(replay_log.0[1].seq, 2);
-        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点实际伤害。");
+        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点直接伤害。");
         assert_eq!(replay_log.0[2].phase, "trace-r3");
         assert_eq!(replay_log.0[2].summary, "skill:FirePunch");
         assert_eq!(replay_log.0[3].phase, "battle-result");
@@ -1220,7 +1230,7 @@ mod tests {
 
         assert!(replay_text.contains("phase: \"battle-event\""));
         assert!(replay_text.contains("detail: \"玩家 使用了 火拳。\""));
-        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点实际伤害。\""));
+        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点直接伤害。\""));
         assert!(replay_text.contains("phase: \"trace-r3\""));
         assert!(replay_text.contains("summary: \"skill:FirePunch\""));
         assert!(replay_text.contains("phase: \"battle-result\""));

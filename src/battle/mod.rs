@@ -9,7 +9,7 @@ use crate::game_state::{BattlePhase, GameState};
 
 pub use components::*;
 pub use events::*;
-pub(crate) use systems::SideEndTickParams;
+pub(crate) use systems::{SideEndTickParams, battle_action_cooldown_ready};
 
 /// 战斗插件：注册战斗资源、事件与各阶段系统。
 pub struct BattlePlugin;
@@ -17,6 +17,7 @@ pub struct BattlePlugin;
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TurnContext>()
+            .init_resource::<BattleActionCooldown>()
             .init_resource::<BattleLog>()
             .init_resource::<StructuredBattleLog>()
             .init_resource::<ReplayEventLog>()
@@ -42,6 +43,10 @@ impl Plugin for BattlePlugin {
             .add_message::<BattleStatusEvent>()
             .add_systems(
                 Update,
+                systems::tick_battle_action_cooldown_system.run_if(in_state(GameState::Battle)),
+            )
+            .add_systems(
+                Update,
                 systems::init_battle_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Init))),
             )
@@ -53,20 +58,24 @@ impl Plugin for BattlePlugin {
             .add_systems(
                 Update,
                 systems::player_turn_input_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn))),
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
+                    .run_if(systems::battle_action_cooldown_ready),
             )
             .add_systems(
                 Update,
                 systems::hand_discard_phase_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Discard))),
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Discard)))
+                    .run_if(systems::battle_action_cooldown_ready),
             );
         app.add_systems(
             Update,
             (
                 systems::enemy_turn_ai_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn)))
+                    .run_if(systems::battle_action_cooldown_ready),
                 systems::enemy_turn_input_system
-                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn))),
+                    .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn)))
+                    .run_if(systems::battle_action_cooldown_ready),
                 systems::sync_ui_control_side_system.run_if(in_state(GameState::Battle)),
             ),
         );
@@ -89,6 +98,7 @@ impl Plugin for BattlePlugin {
             Update,
             (
                 systems::card_trigger_event_system,
+                systems::start_battle_action_cooldown_system,
                 systems::consume_battle_events_system,
             )
                 .chain(),

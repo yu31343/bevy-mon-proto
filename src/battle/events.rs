@@ -1,8 +1,15 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::data::ElementType;
 
 use super::{Side, TurnAction};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DamageType {
+    Direct,
+    Fixed,
+}
 
 /// 战斗事件：逻辑层发出，日志/UI 统一消费。
 #[derive(Message, Debug, Clone)]
@@ -26,6 +33,7 @@ pub enum BattleEvent {
         source: Side,
         target: Side,
         amount: i32,
+        damage_type: DamageType,
     },
     AttackMissed {
         source: Side,

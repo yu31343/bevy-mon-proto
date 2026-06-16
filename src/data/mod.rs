@@ -873,6 +873,7 @@ pub struct TeamSelections {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MapBattleContext {
     pub enemy_monster_index: Option<usize>,
+    pub return_map: Option<crate::map::components::CurrentMap>,
 }
 
 /// 数据加载状态：当配置读取/解析/校验失败时记录错误原因。

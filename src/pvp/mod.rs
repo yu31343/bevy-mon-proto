@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleShuffleSeed, ElementAura,
-        EnemyTeam, Hand, InBattle, PendingBoosts, PendingHandDiscard, PendingKoResolution,
-        PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard,
-        StatusInstance, TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed,
-        recalculate_stage_modifiers, transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleShuffleSeed, DamageType,
+        ElementAura, EnemyTeam, Hand, InBattle, PendingBoosts, PendingHandDiscard,
+        PendingKoResolution, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side,
+        Stats, StatusBoard, StatusInstance, TurnAction, TurnContext, TurnCount,
+        new_battle_shuffle_seed, recalculate_stage_modifiers, transfer_status_by_id,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{
@@ -31,7 +31,7 @@ use crate::{
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 3;
+const PROTOCOL_VERSION: u32 = 4;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
@@ -343,6 +343,7 @@ enum PvpBattleFeedback {
         source: Side,
         target: Side,
         amount: i32,
+        damage_type: DamageType,
     },
     AttackMissed {
         source: Side,
@@ -2180,10 +2181,12 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
             source,
             target,
             amount,
+            damage_type,
         } => PvpBattleFeedback::DamageDealt {
             source: *source,
             target: *target,
             amount: *amount,
+            damage_type: *damage_type,
         },
         BattleEvent::AttackMissed { source, target } => PvpBattleFeedback::AttackMissed {
             source: *source,
@@ -2237,10 +2240,12 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
             source,
             target,
             amount,
+            damage_type,
         } => BattleEvent::DamageDealt {
             source: mirror_side(source),
             target: mirror_side(target),
             amount,
+            damage_type,
         },
         PvpBattleFeedback::AttackMissed { source, target } => BattleEvent::AttackMissed {
             source: mirror_side(source),

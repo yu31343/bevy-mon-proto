@@ -7,7 +7,9 @@ use crate::{
         SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::BattleDbs,
+    data::MapBattleContext,
     game_state::{BattlePhase, GameState},
+    map::components::CurrentMap,
     pvp,
 };
 
@@ -19,6 +21,26 @@ pub(crate) struct SwitchOverlayOpen(pub bool);
 #[derive(Resource, Default)]
 pub(crate) struct RetreatConfirmState {
     pub armed: bool,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct ReserveInfoOverlayState {
+    pub open_side: Option<Side>,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub(crate) struct HandFullEndTurnWarning {
+    pub border_timer: Timer,
+    pub hint_timer: Timer,
+}
+
+impl Default for HandFullEndTurnWarning {
+    fn default() -> Self {
+        Self {
+            border_timer: Timer::from_seconds(0.0, TimerMode::Once),
+            hint_timer: Timer::from_seconds(0.0, TimerMode::Once),
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -257,6 +279,7 @@ pub(crate) fn button_select_skill_system(
         if ap < cost {
             continue;
         }
+
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id));
@@ -710,6 +733,7 @@ pub(crate) fn button_discard_system(
         if *interaction != Interaction::Pressed {
             continue;
         }
+
         match ui_control_side.0 {
             Side::Player => {
                 let cards = &mut hand.player;
@@ -799,6 +823,8 @@ pub(crate) fn button_end_turn_system(
         (Changed<Interaction>, With<Button>),
     >,
     ui_control_side: Res<UiControlSide>,
+    hand: Res<Hand>,
+    mut hand_full_warning: ResMut<HandFullEndTurnWarning>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
@@ -814,6 +840,17 @@ pub(crate) fn button_end_turn_system(
         if *interaction != Interaction::Pressed {
             continue;
         }
+
+        let current_hand_len = match ui_control_side.0 {
+            Side::Player => hand.player.len(),
+            Side::Enemy => hand.enemy.len(),
+        };
+        if current_hand_len >= 6 {
+            hand_full_warning.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
+            hand_full_warning.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
+            break;
+        }
+
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = None;
@@ -833,6 +870,97 @@ pub(crate) fn button_end_turn_system(
     }
 }
 
+pub(crate) fn button_reserve_info_system(
+    mut state: ResMut<ReserveInfoOverlayState>,
+    mut reserve_buttons: Query<
+        (&Interaction, &ReserveInfoButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut close_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ReserveInfoCloseButton>,
+        ),
+    >,
+) {
+    for (interaction, button) in &mut reserve_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open_side = if state.open_side == Some(button.side) {
+                None
+            } else {
+                Some(button.side)
+            };
+            return;
+        }
+    }
+
+    for interaction in &mut close_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open_side = None;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_reserve_info_overlay_system(
+    state: Res<ReserveInfoOverlayState>,
+    mut visibility_q: ParamSet<(
+        Query<&mut Visibility, With<ReserveInfoOverlayRoot>>,
+        Query<
+            &mut Visibility,
+            (
+                With<PlayerReserveInfoDetails>,
+                Without<EnemyReserveInfoDetails>,
+            ),
+        >,
+        Query<
+            &mut Visibility,
+            (
+                With<EnemyReserveInfoDetails>,
+                Without<PlayerReserveInfoDetails>,
+            ),
+        >,
+    )>,
+    mut title_q: Query<&mut Text, With<ReserveInfoOverlayTitle>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    if let Ok(mut root_visibility) = visibility_q.p0().single_mut() {
+        *root_visibility = if state.open_side.is_some() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    if let Ok(mut title) = title_q.single_mut() {
+        title.0 = match state.open_side {
+            Some(Side::Player) => "我方待机位信息".to_string(),
+            Some(Side::Enemy) => "敌方待机位信息".to_string(),
+            None => "待机位信息".to_string(),
+        };
+    }
+
+    for mut visibility in &mut visibility_q.p1() {
+        *visibility = if state.open_side == Some(Side::Player) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    for mut visibility in &mut visibility_q.p2() {
+        *visibility = if state.open_side == Some(Side::Enemy) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 pub(crate) fn button_retreat_system(
     mut interaction_query: Query<
         (&Interaction, &RetreatButton),
@@ -841,6 +969,8 @@ pub(crate) fn button_retreat_system(
     mut retreat_confirm: ResMut<RetreatConfirmState>,
     mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
     battle_mode: Res<BattleControlMode>,
+    mut map_battle_context: ResMut<MapBattleContext>,
+    mut current_map: ResMut<CurrentMap>,
     pvp_connection: Option<Res<pvp::PvpConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -859,13 +989,23 @@ pub(crate) fn button_retreat_system(
 
             retreat_confirm.armed = false;
             retreat_text.0 = "撤退".to_string();
-            if *battle_mode == BattleControlMode::PlayerVsRemote {
+            let return_map = if *battle_mode == BattleControlMode::PlayerVsRemote {
                 if let Some(connection) = pvp_connection.as_ref() {
                     pvp::surrender(connection);
                 }
-            }
+                None
+            } else {
+                map_battle_context.return_map.take()
+            };
+            map_battle_context.enemy_monster_index = None;
+
             next_phase.set(BattlePhase::Init);
-            next_game_state.set(GameState::Lobby);
+            if let Some(map) = return_map {
+                *current_map = map;
+                next_game_state.set(GameState::Map);
+            } else {
+                next_game_state.set(GameState::Lobby);
+            }
             break;
         }
     }

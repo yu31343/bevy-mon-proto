@@ -2,11 +2,11 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        AccuracyRng, ActionPoints, ActionTrace, BattleControlMode, BattleLog, BattleResult,
-        BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand, InBattle,
-        PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side, SkillCount,
-        SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount, UiControlSide,
-        clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
+        AccuracyRng, ActionPoints, ActionTrace, BattleActionCooldown, BattleControlMode, BattleLog,
+        BattleResult, BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand,
+        InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
+        SkillCount, SkillList, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
+        UiControlSide, clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
         note_structured_phase, push_battle_line,
     },
     console_log::{ConsoleLogCategory, log as console_log},
@@ -33,6 +33,7 @@ pub(crate) struct InitBattleRuntime<'w> {
     battle_mode: Res<'w, BattleControlMode>,
     shuffle_seed: Option<Res<'w, BattleShuffleSeed>>,
     turn_ctx: ResMut<'w, TurnContext>,
+    action_cooldown: ResMut<'w, BattleActionCooldown>,
     battle_log: ResMut<'w, BattleLog>,
     structured_log: ResMut<'w, StructuredBattleLog>,
     replay_log: ResMut<'w, ReplayEventLog>,
@@ -59,6 +60,7 @@ pub fn init_battle_system(
     let battle_mode = &runtime.battle_mode;
     let shuffle_seed = &runtime.shuffle_seed;
     let turn_ctx = &mut runtime.turn_ctx;
+    let action_cooldown = &mut runtime.action_cooldown;
     let battle_log = &mut runtime.battle_log;
     let structured_log = &mut runtime.structured_log;
     let replay_log = &mut runtime.replay_log;
@@ -79,6 +81,7 @@ pub fn init_battle_system(
     }
 
     clear_turn_context(turn_ctx);
+    action_cooldown.reset();
     clear_runtime_battle_logs(battle_log, structured_log, replay_log, action_trace);
     result.message.clear();
     result.export_status = None;

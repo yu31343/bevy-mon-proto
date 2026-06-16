@@ -58,6 +58,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .init_resource::<PendingSwitchOverlayToggle>()
         .init_resource::<RetreatConfirmState>()
         .init_resource::<PlayerBenchDetailState>()
+        .init_resource::<ReserveInfoOverlayState>()
+        .init_resource::<HandFullEndTurnWarning>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
@@ -67,10 +69,18 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .add_systems(
             Update,
             (
-                button_select_skill_system.run_if(in_state(GameState::Battle)),
-                button_discard_system.run_if(in_state(GameState::Battle)),
-                button_switch_member_system.run_if(in_state(GameState::Battle)),
-                button_play_card_two_step_system.run_if(in_state(GameState::Battle)),
+                button_select_skill_system
+                    .run_if(in_state(GameState::Battle))
+                    .run_if(crate::battle::battle_action_cooldown_ready),
+                button_discard_system
+                    .run_if(in_state(GameState::Battle))
+                    .run_if(crate::battle::battle_action_cooldown_ready),
+                button_switch_member_system
+                    .run_if(in_state(GameState::Battle))
+                    .run_if(crate::battle::battle_action_cooldown_ready),
+                button_play_card_two_step_system
+                    .run_if(in_state(GameState::Battle))
+                    .run_if(crate::battle::battle_action_cooldown_ready),
                 button_cancel_card_selection_system.run_if(in_state(GameState::Battle)),
                 button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
                 close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
@@ -78,6 +88,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 update_player_bench_detail_visibility_system
                     .run_if(in_state(GameState::Battle))
                     .after(toggle_player_bench_detail_system),
+                button_reserve_info_system.run_if(in_state(GameState::Battle)),
+                update_reserve_info_overlay_system
+                    .run_if(in_state(GameState::Battle))
+                    .after(button_reserve_info_system),
                 apply_pending_switch_overlay_toggle_system
                     .run_if(in_state(GameState::Battle))
                     .after(button_toggle_switch_overlay_system)
@@ -105,6 +119,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         (
             update_phase_text_system,
             update_active_panel_text_system,
+            update_element_icon_system,
             update_active_panel_tokens_system,
             update_skill_text_system,
         )
@@ -114,9 +129,17 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.add_systems(
         Update,
         (
-            button_end_turn_system.run_if(in_state(GameState::Battle)),
+            button_end_turn_system
+                .run_if(in_state(GameState::Battle))
+                .run_if(crate::battle::battle_action_cooldown_ready),
             button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
+            hand_full_warning_visual_system
+                .run_if(in_state(GameState::Battle))
+                .after(button_end_turn_system)
+                .before(action_dial_visual_state_system),
+            action_dial_visual_state_system.run_if(in_state(GameState::Battle)),
+            stat_icon_tooltip_system.run_if(in_state(GameState::Battle)),
             update_discard_armed_visual_system
                 .run_if(in_state(GameState::Battle))
                 .after(button_visual_state_system)
