@@ -761,14 +761,6 @@ pub(crate) fn effective_acc_value(stats: &Stats, rules: &crate::data::BattleForm
         .round() as i32
 }
 
-pub(crate) fn stage_prefix(stage: i32) -> String {
-    if stage == 0 {
-        String::new()
-    } else {
-        format!("{:+} ", stage)
-    }
-}
-
 pub(crate) fn replace_debug_tokens(
     commands: &mut Commands,
     line_entity: Entity,

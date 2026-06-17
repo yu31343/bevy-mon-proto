@@ -1,11 +1,7 @@
 use bevy::prelude::*;
 
-use crate::{
-    battle::{
-        ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard,
-        UiControlSide,
-    },
-    data::BattleFormulaRules,
+use crate::battle::{
+    ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard, UiControlSide,
 };
 
 use super::super::components::*;
@@ -22,7 +18,6 @@ pub(crate) fn update_player_roster_ui_system(
             Option<&TeamMemberButtonText>,
             Option<&TeamMemberAuraText>,
             Option<&PlayerBenchNameText>,
-            Option<&PlayerBenchStatsText>,
             Option<&PlayerBenchAuraText>,
             Option<&PlayerBenchHpValueText>,
             Option<&PlayerBenchShieldValueText>,
@@ -46,7 +41,6 @@ pub(crate) fn update_player_roster_ui_system(
             &Interaction,
             &mut Node,
             &mut BackgroundColor,
-            &mut BorderColor,
         )>,
     )>,
     mut visibilities: ParamSet<(
@@ -54,7 +48,6 @@ pub(crate) fn update_player_roster_ui_system(
         Query<(&PlayerBenchShieldBarTrack, &mut Visibility)>,
     )>,
     theme: Res<UiTheme>,
-    formula_rules: Res<BattleFormulaRules>,
 ) {
     let player_team = player_team.map(|team| team.0.clone());
     let enemy_team = enemy_team.map(|team| team.0.clone());
@@ -72,16 +65,8 @@ pub(crate) fn update_player_roster_ui_system(
     let get_controlled_entity = |index: usize| controlled_team.combatants.get(index).copied();
     let get_player_entity = |index: usize| player_team.combatants.get(index).copied();
 
-    for (
-        mut text,
-        overlay_name,
-        overlay_aura,
-        bench_name,
-        bench_stats,
-        bench_aura,
-        bench_hp,
-        bench_shield,
-    ) in &mut text_q
+    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura, bench_hp, bench_shield) in
+        &mut text_q
     {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_controlled_entity(meta.index) {
@@ -130,29 +115,6 @@ pub(crate) fn update_player_roster_ui_system(
                 }
             } else {
                 text.0 = format!("队伍{}", meta.index + 1);
-            }
-            continue;
-        }
-
-        if let Some(meta) = bench_stats {
-            if let Some(entity) = get_player_entity(meta.index) {
-                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
-                    text.0 = format!(
-                        "Atk: {}{} Def: {}{} Acc: {}{} Spd: {}{}",
-                        super::super::helpers::stage_prefix(stats.atk_stage),
-                        super::super::helpers::effective_atk_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.def_stage),
-                        super::super::helpers::effective_def_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.acc_stage),
-                        super::super::helpers::effective_acc_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.spd_stage),
-                        super::super::helpers::effective_spd_value(stats, &formula_rules),
-                    );
-                } else {
-                    text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
-                }
-            } else {
-                text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
             }
             continue;
         }
@@ -269,7 +231,7 @@ pub(crate) fn update_player_roster_ui_system(
         };
     }
 
-    for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p5() {
+    for (meta, interaction, mut node, mut bg) in &mut nodes.p5() {
         let exists = get_player_entity(meta.index).is_some();
         let active = meta.index == player_team.active_index;
         node.display = if !exists || active {
@@ -277,15 +239,11 @@ pub(crate) fn update_player_roster_ui_system(
         } else {
             Display::Flex
         };
+        // 无边框：仅用半透明底色区分悬停/按下，去掉原本的“黑方框”。
         *bg = match *interaction {
-            Interaction::Hovered => BackgroundColor(theme.button_hover),
-            Interaction::Pressed => BackgroundColor(theme.button_pressed),
-            Interaction::None => BackgroundColor(theme.button_idle),
-        };
-        *border = match *interaction {
-            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-            Interaction::None => BorderColor::all(theme.button_border_idle),
+            Interaction::Hovered => BackgroundColor(super::super::layout::BENCH_BG_HOVER),
+            Interaction::Pressed => BackgroundColor(super::super::layout::BENCH_BG_PRESSED),
+            Interaction::None => BackgroundColor(super::super::layout::BENCH_BG),
         };
     }
 
@@ -316,7 +274,6 @@ pub(crate) fn update_enemy_roster_ui_system(
             Option<&EnemyTeamMemberButtonText>,
             Option<&EnemyTeamMemberAuraText>,
             Option<&EnemyBenchNameText>,
-            Option<&EnemyBenchStatsText>,
             Option<&EnemyBenchAuraText>,
             Option<&EnemyBenchHpValueText>,
             Option<&EnemyBenchShieldValueText>,
@@ -341,7 +298,6 @@ pub(crate) fn update_enemy_roster_ui_system(
         Query<(&EnemyBenchShieldBarTrack, &mut Visibility)>,
     )>,
     theme: Res<UiTheme>,
-    formula_rules: Res<BattleFormulaRules>,
 ) {
     let Some(enemy_team) = enemy_team else {
         return;
@@ -349,16 +305,8 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     let get_entity = |index: usize| enemy_team.0.combatants.get(index).copied();
 
-    for (
-        mut text,
-        overlay_name,
-        overlay_aura,
-        bench_name,
-        bench_stats,
-        bench_aura,
-        bench_hp,
-        bench_shield,
-    ) in &mut text_q
+    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura, bench_hp, bench_shield) in
+        &mut text_q
     {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
@@ -406,29 +354,6 @@ pub(crate) fn update_enemy_roster_ui_system(
                 }
             } else {
                 text.0 = format!("队伍{}", meta.index + 1);
-            }
-            continue;
-        }
-
-        if let Some(meta) = bench_stats {
-            if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
-                    text.0 = format!(
-                        "Atk: {}{} Def: {}{} Acc: {}{} Spd: {}{}",
-                        super::super::helpers::stage_prefix(stats.atk_stage),
-                        super::super::helpers::effective_atk_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.def_stage),
-                        super::super::helpers::effective_def_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.acc_stage),
-                        super::super::helpers::effective_acc_value(stats, &formula_rules),
-                        super::super::helpers::stage_prefix(stats.spd_stage),
-                        super::super::helpers::effective_spd_value(stats, &formula_rules),
-                    );
-                } else {
-                    text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
-                }
-            } else {
-                text.0 = "Atk: 0 Def: 0 Acc: 0 Spd: 0".to_string();
             }
             continue;
         }

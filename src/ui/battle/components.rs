@@ -166,11 +166,6 @@ pub(crate) struct PlayerBenchAuraText {
 }
 
 #[derive(Component)]
-pub(crate) struct PlayerBenchStatsText {
-    pub index: usize,
-}
-
-#[derive(Component)]
 pub(crate) struct PlayerBenchHpBarFill {
     pub index: usize,
 }
@@ -207,11 +202,6 @@ pub(crate) struct EnemyBenchNameText {
 
 #[derive(Component)]
 pub(crate) struct EnemyBenchAuraText {
-    pub index: usize,
-}
-
-#[derive(Component)]
-pub(crate) struct EnemyBenchStatsText {
     pub index: usize,
 }
 
