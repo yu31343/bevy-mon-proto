@@ -85,7 +85,9 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                     .run_if(crate::battle::battle_action_cooldown_ready),
                 button_cancel_card_selection_system.run_if(in_state(GameState::Battle)),
                 button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
-                close_switch_overlay_on_switch_system.run_if(in_state(GameState::Battle)),
+                close_switch_overlay_on_switch_system
+                    .run_if(in_state(GameState::Battle))
+                    .run_if(crate::battle::battle_action_cooldown_ready),
                 button_battle_hint_system.run_if(in_state(GameState::Battle)),
                 update_battle_hint_overlay_system
                     .run_if(in_state(GameState::Battle))
@@ -161,6 +163,14 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             tick_button_click_flash
                 .run_if(in_state(GameState::Battle))
                 .after(keyboard_button_flash_system),
+            battle_action_cooldown_visual_system
+                .run_if(in_state(GameState::Battle))
+                .after(update_player_hand_ui_system)
+                .after(update_player_roster_ui_system)
+                .after(button_visual_state_system)
+                .after(action_dial_visual_state_system)
+                .after(update_discard_armed_visual_system)
+                .after(tick_button_click_flash),
         ),
     );
 

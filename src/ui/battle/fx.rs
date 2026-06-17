@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 
-use crate::battle::{BattleEvent, DamageType, Side};
+use crate::battle::{BattleActionCooldown, BattleEvent, DamageType, Side};
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
@@ -448,9 +448,18 @@ const CLICK_FLASH_BORDER: Color = Color::srgba(0.72, 0.88, 1.0, 0.70);
 /// 检测技能格与结束回合按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
 /// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn spawn_button_click_flash(
+    cooldown: Res<BattleActionCooldown>,
     mut commands: Commands,
     mut q: Query<
-        (Entity, &Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Entity,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Has<SkillButton>,
+            Has<EndTurnButton>,
+            Has<TeamMemberButton>,
+        ),
         (
             Changed<Interaction>,
             Or<(
@@ -464,8 +473,12 @@ pub fn spawn_button_click_flash(
         ),
     >,
 ) {
-    for (entity, interaction, mut bg, mut border) in &mut q {
+    let locked = !cooldown.ready();
+    for (entity, interaction, mut bg, mut border, is_skill, is_end_turn, is_team_member) in &mut q {
         if *interaction == Interaction::Pressed {
+            if locked && (is_skill || is_end_turn || is_team_member) {
+                continue;
+            }
             *bg = BackgroundColor(CLICK_FLASH_COLOR);
             *border = BorderColor::all(CLICK_FLASH_BORDER);
             commands
@@ -518,6 +531,7 @@ pub fn tick_button_click_flash(
 /// 注意：弃牌按钮（F 键）不在此列，其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn keyboard_button_flash_system(
     keyboard: Res<ButtonInput<KeyCode>>,
+    cooldown: Res<BattleActionCooldown>,
     open: Res<SwitchOverlayOpen>,
     mut commands: Commands,
     mut queries: ParamSet<(
@@ -559,6 +573,8 @@ pub fn keyboard_button_flash_system(
         >,
     )>,
 ) {
+    let locked = !cooldown.ready();
+
     // 辅助宏：写颜色并 insert 计时器
     // 宏展开为内联代码，commands 来自外部作用域，entity 为 Copy，无借用冲突
     macro_rules! do_flash {
@@ -571,74 +587,76 @@ pub fn keyboard_button_flash_system(
         };
     }
 
-    // 1-4 → 技能按钮（slot 0-3）
-    for (key, idx) in [
-        (KeyCode::Digit1, 0usize),
-        (KeyCode::Digit2, 1),
-        (KeyCode::Digit3, 2),
-        (KeyCode::Digit4, 3),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p0().iter_mut() {
-                if btn.index == idx {
-                    do_flash!(entity, bg, border);
-                    break;
+    if !locked {
+        // 1-4 → 技能按钮（slot 0-3）
+        for (key, idx) in [
+            (KeyCode::Digit1, 0usize),
+            (KeyCode::Digit2, 1),
+            (KeyCode::Digit3, 2),
+            (KeyCode::Digit4, 3),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p0().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    // E → 结束回合按钮
-    if keyboard.just_pressed(KeyCode::KeyE) {
-        if let Ok((entity, mut bg, mut border)) = queries.p1().single_mut() {
-            do_flash!(entity, bg, border);
+        // E → 结束回合按钮
+        if keyboard.just_pressed(KeyCode::KeyE) {
+            if let Ok((entity, mut bg, mut border)) = queries.p1().single_mut() {
+                do_flash!(entity, bg, border);
+            }
         }
-    }
 
-    // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
+        // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
 
-    // 手牌热键 → 手牌按钮
-    for (key, idx) in [
-        (KeyCode::KeyZ, 0usize),
-        (KeyCode::KeyX, 1),
-        (KeyCode::KeyC, 2),
-        (KeyCode::KeyV, 3),
-        (KeyCode::KeyB, 4),
-        (KeyCode::KeyN, 5),
-        (KeyCode::KeyA, 6),
-        (KeyCode::KeyS, 7),
-        (KeyCode::KeyD, 8),
-        (KeyCode::KeyG, 9),
-        (KeyCode::KeyH, 10),
-        (KeyCode::KeyJ, 11),
-        (KeyCode::KeyK, 12),
-        (KeyCode::KeyL, 13),
-        (KeyCode::KeyU, 14),
-        (KeyCode::KeyI, 15),
-        (KeyCode::KeyO, 16),
-        (KeyCode::KeyP, 17),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {
-                if btn.index == idx {
-                    do_flash!(entity, bg, border);
-                    break;
+        // 手牌热键 → 手牌按钮
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0usize),
+            (KeyCode::KeyX, 1),
+            (KeyCode::KeyC, 2),
+            (KeyCode::KeyV, 3),
+            (KeyCode::KeyB, 4),
+            (KeyCode::KeyN, 5),
+            (KeyCode::KeyA, 6),
+            (KeyCode::KeyS, 7),
+            (KeyCode::KeyD, 8),
+            (KeyCode::KeyG, 9),
+            (KeyCode::KeyH, 10),
+            (KeyCode::KeyJ, 11),
+            (KeyCode::KeyK, 12),
+            (KeyCode::KeyL, 13),
+            (KeyCode::KeyU, 14),
+            (KeyCode::KeyI, 15),
+            (KeyCode::KeyO, 16),
+            (KeyCode::KeyP, 17),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    // 5/6/7 → 队员切换按钮（index 0/1/2）
-    for (key, idx) in [
-        (KeyCode::Digit5, 0usize),
-        (KeyCode::Digit6, 1),
-        (KeyCode::Digit7, 2),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
-                if btn.index == idx {
-                    do_flash!(entity, bg, border);
-                    break;
+        // 5/6/7 → 队员切换按钮（index 0/1/2）
+        for (key, idx) in [
+            (KeyCode::Digit5, 0usize),
+            (KeyCode::Digit6, 1),
+            (KeyCode::Digit7, 2),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
                 }
             }
         }

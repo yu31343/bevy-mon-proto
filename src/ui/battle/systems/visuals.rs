@@ -6,10 +6,10 @@ use super::super::components::{
     RetreatButton, SkillButton, StatIconButton, StatIconTooltip, SwitchCancelButton,
     SwitchMonsterButton, TeamMemberButton,
 };
-use super::super::fx::ButtonClickFlash;
+use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
 use super::buttons::HandFullEndTurnWarning;
-use crate::battle::{SelectedCards, Side, UiControlSide};
+use crate::battle::{BattleActionCooldown, SelectedCards, Side, UiControlSide};
 
 /// 弃牌武装状态的高亮颜色（琥珀色，与蓝白点击闪光明显区分）
 const DISCARD_ARMED_COLOR: Color = Color::srgba(0.85, 0.60, 0.10, 0.88);
@@ -17,6 +17,45 @@ const DISCARD_ARMED_BORDER: Color = Color::srgba(0.90, 0.72, 0.18, 0.85);
 const HAND_FULL_BORDER: Color = Color::srgba(1.0, 0.08, 0.08, 0.95);
 const HAND_FULL_HINT_DURATION: f32 = 3.0;
 const HAND_FULL_HINT_FADE: f32 = 0.65;
+const ACTION_COOLDOWN_LOCKED_BG: Color = Color::srgba(0.045, 0.060, 0.085, 0.88);
+const ACTION_COOLDOWN_LOCKED_BORDER: Color = Color::srgba(0.20, 0.28, 0.38, 0.55);
+const ACTION_COOLDOWN_DIAL_HIGHLIGHT: Color = Color::srgba(0.52, 0.60, 0.68, 0.16);
+
+fn apply_regular_button_style(
+    interaction: &Interaction,
+    bg: &mut BackgroundColor,
+    border: &mut BorderColor,
+    theme: &UiTheme,
+) {
+    *bg = match *interaction {
+        Interaction::Pressed => BackgroundColor(theme.button_pressed),
+        Interaction::Hovered => BackgroundColor(theme.button_hover),
+        Interaction::None => BackgroundColor(theme.button_idle),
+    };
+    *border = match *interaction {
+        Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+        Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+        Interaction::None => BorderColor::all(theme.button_border_idle),
+    };
+}
+
+fn apply_card_button_style(
+    interaction: &Interaction,
+    bg: &mut BackgroundColor,
+    border: &mut BorderColor,
+    theme: &UiTheme,
+) {
+    *bg = match *interaction {
+        Interaction::Pressed => BackgroundColor(theme.button_pressed),
+        Interaction::Hovered => BackgroundColor(theme.button_hover),
+        Interaction::None => BackgroundColor(theme.card_bg),
+    };
+    *border = match *interaction {
+        Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+        Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+        Interaction::None => BorderColor::all(theme.card_border),
+    };
+}
 
 pub(crate) fn button_visual_state_system(
     mut skill_buttons: Query<
@@ -89,33 +128,91 @@ pub(crate) fn button_visual_state_system(
     >,
     theme: Res<UiTheme>,
 ) {
-    let apply = |interaction: &Interaction,
-                 bg: &mut BackgroundColor,
-                 border: &mut BorderColor,
-                 theme: &UiTheme| {
-        *bg = match *interaction {
-            Interaction::Pressed => BackgroundColor(theme.button_pressed),
-            Interaction::Hovered => BackgroundColor(theme.button_hover),
-            Interaction::None => BackgroundColor(theme.button_idle),
-        };
-        *border = match *interaction {
-            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-            Interaction::None => BorderColor::all(theme.button_border_idle),
-        };
-    };
     for (interaction, mut bg, mut border) in &mut skill_buttons {
-        apply(interaction, &mut bg, &mut border, &theme);
+        apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut action_buttons {
-        apply(interaction, &mut bg, &mut border, &theme);
+        apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut card_buttons {
-        apply(interaction, &mut bg, &mut border, &theme);
+        apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut switch_buttons {
-        apply(interaction, &mut bg, &mut border, &theme);
+        apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
     }
+}
+
+pub(crate) fn battle_action_cooldown_visual_system(
+    cooldown: Res<BattleActionCooldown>,
+    theme: Res<UiTheme>,
+    mut was_locked: Local<bool>,
+    mut queries: ParamSet<(
+        Query<
+            (
+                &Interaction,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                Has<PlayerCardButton>,
+            ),
+            (
+                Or<(
+                    With<SkillButton>,
+                    With<PlayerCardButton>,
+                    With<TeamMemberButton>,
+                    With<EndTurnButton>,
+                )>,
+                Without<ActionDialButton>,
+                Without<ActionDialHighlight>,
+                Without<ButtonClickFlash>,
+                Without<SkillFlashTimer>,
+            ),
+        >,
+        Query<
+            (&Children, Has<DiscardButton>, Has<EndTurnButton>),
+            (With<ActionDialButton>, Without<ButtonClickFlash>),
+        >,
+        Query<&mut BackgroundColor, With<ActionDialHighlight>>,
+    )>,
+) {
+    let locked = !cooldown.ready();
+    let should_restore = *was_locked && !locked;
+    if !locked && !should_restore {
+        return;
+    }
+
+    for (interaction, mut bg, mut border, is_card) in &mut queries.p0() {
+        if locked {
+            *bg = BackgroundColor(ACTION_COOLDOWN_LOCKED_BG);
+            *border = BorderColor::all(ACTION_COOLDOWN_LOCKED_BORDER);
+        } else if is_card {
+            apply_card_button_style(interaction, &mut bg, &mut border, &theme);
+        } else {
+            apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
+        }
+    }
+
+    if !locked {
+        *was_locked = false;
+        return;
+    }
+
+    let mut highlight_updates = Vec::new();
+    for (children, is_discard, is_end_turn) in &queries.p1() {
+        if !is_discard && !is_end_turn {
+            continue;
+        }
+        for child in children.iter() {
+            highlight_updates.push(child);
+        }
+    }
+
+    let mut highlights = queries.p2();
+    for child in highlight_updates {
+        if let Ok(mut highlight_bg) = highlights.get_mut(child) {
+            *highlight_bg = BackgroundColor(ACTION_COOLDOWN_DIAL_HIGHLIGHT);
+        }
+    }
+    *was_locked = true;
 }
 
 pub(crate) fn stat_icon_tooltip_system(
