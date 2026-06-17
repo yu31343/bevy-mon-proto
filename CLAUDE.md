@@ -51,7 +51,7 @@ The README says active development happens on `develop`. New work is expected to
 
 ## Architecture
 
-`src/main.rs` is intentionally thin. It initializes the top-level `GameState` and nested `BattlePhase`, adds `EguiPlugin`, then registers gameplay plugins in this order: `DataPlugin`, `UiPlugin`, `LobbyPlugin`, `MapPlugin`, `PvpPlugin`, `TeamSelectionPlugin`, `BattlePlugin`, and `SpineAnimPlugin`.
+`src/main.rs` is intentionally thin. It initializes the top-level `GameState` and nested `BattlePhase`, adds `EguiPlugin` and `FramepacePlugin` (a startup system caps the framerate at 60 FPS), then registers gameplay plugins in this order: `DataPlugin`, `UiPlugin`, `LobbyPlugin`, `MapPlugin`, `PvpPlugin`, `TeamSelectionPlugin`, `BattlePlugin`, and `SpineAnimPlugin`.
 
 ### State flow
 
