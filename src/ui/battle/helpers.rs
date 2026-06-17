@@ -390,6 +390,29 @@ pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     }
 }
 
+/// 主面板/待机面板状态行的可见性规则：排除附着与纯属性阶段类（stage_shift_/card_stage_）状态。
+pub(crate) fn is_status_line_visible(status_id: &str, category: StatusCategory) -> bool {
+    category != StatusCategory::Aura
+        && !status_id.starts_with("stage_shift_")
+        && !status_id.starts_with("card_stage_")
+}
+
+/// 待机面板状态文本，与主精灵面板状态行使用同一可见性规则，避免上场/待机显示不一致。
+pub(crate) fn bench_status_label(statuses: &StatusBoard) -> String {
+    let labels = statuses
+        .entries
+        .iter()
+        .filter(|entry| is_status_line_visible(&entry.id, entry.category))
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>();
+
+    if labels.is_empty() {
+        "无".to_string()
+    } else {
+        labels.join("/")
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) fn aura_and_status_label(aura: &[ElementType], statuses: &StatusBoard) -> String {
     format!(

@@ -6,7 +6,7 @@ use crate::{
         BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side,
         SkillCount, SkillList, Stats, StatusBoard, Team,
     },
-    data::{BattleDbs, BattleFormulaRules, ElementType, StatusCategory},
+    data::{BattleDbs, BattleFormulaRules, ElementType},
     game_state::BattlePhase,
 };
 
@@ -30,12 +30,6 @@ type ActiveCombatantRef<'a> = (
     &'a ElementAura,
     &'a StatusBoard,
 );
-
-fn is_status_line_entry_visible(status_id: &str, category: StatusCategory) -> bool {
-    category != StatusCategory::Aura
-        && !status_id.starts_with("stage_shift_")
-        && !status_id.starts_with("card_stage_")
-}
 
 fn status_icon_path(status_id: &str, status_name: &str) -> Option<&'static str> {
     match status_id {
@@ -523,7 +517,9 @@ pub(crate) fn update_active_panel_tokens_system(
             let labels: Vec<_> = statuses
                 .entries
                 .iter()
-                .filter(|entry| is_status_line_entry_visible(&entry.id, entry.category))
+                .filter(|entry| {
+                    super::super::helpers::is_status_line_visible(&entry.id, entry.category)
+                })
                 .map(|entry| {
                     if let Some(path) = status_icon_path(&entry.id, &entry.name) {
                         super::super::helpers::DebugTokenContent::Image(path)

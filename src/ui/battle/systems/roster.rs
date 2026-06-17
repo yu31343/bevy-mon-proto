@@ -122,7 +122,10 @@ pub(crate) fn update_player_roster_ui_system(
         if let Some(meta) = bench_aura {
             if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
-                    text.0 = format!("状态：{}", super::super::helpers::status_label(statuses));
+                    text.0 = format!(
+                        "状态：{}",
+                        super::super::helpers::bench_status_label(statuses)
+                    );
                 } else {
                     text.0 = "状态：无".to_string();
                 }
@@ -361,7 +364,10 @@ pub(crate) fn update_enemy_roster_ui_system(
         if let Some(meta) = bench_aura {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
-                    text.0 = format!("状态：{}", super::super::helpers::status_label(statuses));
+                    text.0 = format!(
+                        "状态：{}",
+                        super::super::helpers::bench_status_label(statuses)
+                    );
                 } else {
                     text.0 = "状态：无".to_string();
                 }
