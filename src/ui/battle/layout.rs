@@ -39,6 +39,7 @@ fn spawn_hp_bar(
     theme: &UiTheme,
     border_1: UiRect,
     radius_hp: Val,
+    fill_justify: JustifyContent,
     fill: Color,
     fill_marker: impl Component,
 ) {
@@ -50,6 +51,7 @@ fn spawn_hp_bar(
                 overflow: Overflow::clip(),
                 border_radius: BorderRadius::all(radius_hp),
                 border: border_1,
+                justify_content: fill_justify,
                 ..default()
             },
             BackgroundColor(theme.hp_track),
@@ -89,6 +91,7 @@ fn spawn_shield_bar(
     theme: &UiTheme,
     border_1: UiRect,
     _radius_hp: Val,
+    fill_justify: JustifyContent,
     fill: Color,
     fill_marker: impl Component,
     track_marker: impl Component,
@@ -102,6 +105,7 @@ fn spawn_shield_bar(
                 overflow: Overflow::clip(),
                 border_radius: BorderRadius::all(Val::Px(6.0)),
                 border: border_1,
+                justify_content: fill_justify,
                 ..default()
             },
             BackgroundColor(theme.shield_track),
@@ -396,6 +400,7 @@ fn spawn_small_bench_card(
                                     height: Val::Px(8.0),
                                     overflow: Overflow::clip(),
                                     border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    justify_content: JustifyContent::FlexEnd,
                                     ..default()
                                 },
                                 BackgroundColor(theme.hp_track),
@@ -435,6 +440,7 @@ fn spawn_small_bench_card(
                                     height: Val::Px(6.0),
                                     overflow: Overflow::clip(),
                                     border_radius: BorderRadius::all(Val::Px(3.0)),
+                                    justify_content: JustifyContent::FlexEnd,
                                     ..default()
                                 },
                                 BackgroundColor(theme.shield_track),
@@ -812,6 +818,7 @@ pub(crate) fn setup_ui_system(
                                 &theme,
                                 border_1,
                                 radius_hp,
+                                JustifyContent::FlexStart,
                                 theme.hp_fill_player,
                                 PlayerHpBarFill,
                             );
@@ -854,6 +861,7 @@ pub(crate) fn setup_ui_system(
                                 &theme,
                                 border_1,
                                 radius_hp,
+                                JustifyContent::FlexStart,
                                 theme.shield_fill_player,
                                 PlayerShieldBarFill,
                                 PlayerShieldBarTrack,
@@ -1120,6 +1128,7 @@ pub(crate) fn setup_ui_system(
                                 &theme,
                                 border_1,
                                 radius_hp,
+                                JustifyContent::FlexEnd,
                                 theme.hp_fill_enemy,
                                 EnemyHpBarFill,
                             );
@@ -1150,6 +1159,7 @@ pub(crate) fn setup_ui_system(
                                 &theme,
                                 border_1,
                                 radius_hp,
+                                JustifyContent::FlexEnd,
                                 theme.shield_fill_enemy,
                                 EnemyShieldBarFill,
                                 EnemyShieldBarTrack,
