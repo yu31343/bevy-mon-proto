@@ -179,6 +179,10 @@
             category: Special,
             duration_turns: 2,
             tick_timing: Some(OwnerActionEnd),
+            stage_modifiers: [
+                (attribute: Spd, amount: -1),
+                (attribute: Def, amount: -1),
+            ],
         ),
         (
             id: "electrocuted",
