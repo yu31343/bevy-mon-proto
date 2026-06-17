@@ -181,11 +181,6 @@ pub(crate) struct PlayerBenchShieldBarTrack {
 }
 
 #[derive(Component)]
-pub(crate) struct PlayerBenchShieldBarFill {
-    pub index: usize,
-}
-
-#[derive(Component)]
 pub(crate) struct PlayerBenchShieldValueText {
     pub index: usize,
 }
@@ -217,11 +212,6 @@ pub(crate) struct EnemyBenchHpValueText {
 
 #[derive(Component)]
 pub(crate) struct EnemyBenchShieldBarTrack {
-    pub index: usize,
-}
-
-#[derive(Component)]
-pub(crate) struct EnemyBenchShieldBarFill {
     pub index: usize,
 }
 

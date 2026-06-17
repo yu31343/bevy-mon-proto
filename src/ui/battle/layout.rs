@@ -91,7 +91,6 @@ fn spawn_shield_bar(
     theme: &UiTheme,
     border_1: UiRect,
     _radius_hp: Val,
-    fill_justify: JustifyContent,
     fill: Color,
     fill_marker: impl Component,
     track_marker: impl Component,
@@ -99,13 +98,13 @@ fn spawn_shield_bar(
     parent
         .spawn((
             Node {
-                width: Val::Percent(100.0),
+                display: Display::None,
+                width: Val::Px(0.0),
                 height: Val::Px(12.0),
                 margin: UiRect::top(Val::Px(5.0)),
                 overflow: Overflow::clip(),
                 border_radius: BorderRadius::all(Val::Px(6.0)),
                 border: border_1,
-                justify_content: fill_justify,
                 ..default()
             },
             BackgroundColor(theme.shield_track),
@@ -115,7 +114,7 @@ fn spawn_shield_bar(
         .with_children(|bar| {
             bar.spawn((
                 Node {
-                    width: Val::Percent(0.0),
+                    width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
                     border_radius: BorderRadius::all(Val::Px(6.0)),
                     ..default()
@@ -306,7 +305,8 @@ fn spawn_small_bench_card(
                         .with_children(|row| {
                             row.spawn((
                                 Node {
-                                    width: Val::Px(BENCH_BAR_WIDTH),
+                                    display: Display::None,
+                                    width: Val::Px(0.0),
                                     height: Val::Px(6.0),
                                     overflow: Overflow::clip(),
                                     border_radius: BorderRadius::all(Val::Px(3.0)),
@@ -325,7 +325,6 @@ fn spawn_small_bench_card(
                                         ..default()
                                     },
                                     BackgroundColor(theme.shield_fill_player),
-                                    PlayerBenchShieldBarFill { index },
                                 ));
                             });
                             row.spawn((
@@ -436,7 +435,8 @@ fn spawn_small_bench_card(
                             ));
                             row.spawn((
                                 Node {
-                                    width: Val::Px(BENCH_BAR_WIDTH),
+                                    display: Display::None,
+                                    width: Val::Px(0.0),
                                     height: Val::Px(6.0),
                                     overflow: Overflow::clip(),
                                     border_radius: BorderRadius::all(Val::Px(3.0)),
@@ -456,7 +456,6 @@ fn spawn_small_bench_card(
                                         ..default()
                                     },
                                     BackgroundColor(theme.shield_fill_enemy),
-                                    EnemyBenchShieldBarFill { index },
                                 ));
                             });
                         });
@@ -854,19 +853,15 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    row.spawn((Node { width: Val::Px(220.0), ..default() },))
-                        .with_children(|bar_wrap| {
-                            spawn_shield_bar(
-                                bar_wrap,
-                                &theme,
-                                border_1,
-                                radius_hp,
-                                JustifyContent::FlexStart,
-                                theme.shield_fill_player,
-                                PlayerShieldBarFill,
-                                PlayerShieldBarTrack,
-                            );
-                        });
+                    spawn_shield_bar(
+                        row,
+                        &theme,
+                        border_1,
+                        radius_hp,
+                        theme.shield_fill_player,
+                        PlayerShieldBarFill,
+                        PlayerShieldBarTrack,
+                    );
                     row.spawn((
                         Text::new("0"),
                         meta_font.clone(),
@@ -1152,19 +1147,15 @@ pub(crate) fn setup_ui_system(
                         outlined_stat_text_shadow(),
                         EnemyShieldValueText,
                     ));
-                    row.spawn((Node { width: Val::Px(220.0), ..default() },))
-                        .with_children(|bar_wrap| {
-                            spawn_shield_bar(
-                                bar_wrap,
-                                &theme,
-                                border_1,
-                                radius_hp,
-                                JustifyContent::FlexEnd,
-                                theme.shield_fill_enemy,
-                                EnemyShieldBarFill,
-                                EnemyShieldBarTrack,
-                            );
-                        });
+                    spawn_shield_bar(
+                        row,
+                        &theme,
+                        border_1,
+                        radius_hp,
+                        theme.shield_fill_enemy,
+                        EnemyShieldBarFill,
+                        EnemyShieldBarTrack,
+                    );
                 });
                 panel.spawn((
                     Node {

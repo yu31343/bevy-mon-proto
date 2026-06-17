@@ -78,6 +78,14 @@ fn stat_value(_stage: i32, current: i32) -> String {
     current.to_string()
 }
 
+fn shield_value(value: i32) -> String {
+    if value > 0 {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
 fn stage_modifier_color(stage: i32) -> Color {
     if stage > 0 {
         Color::srgb(0.16, 0.46, 0.95)
@@ -302,17 +310,17 @@ pub(crate) fn update_active_panel_text_system(
         }
         if is_player_shield.is_some() {
             text.0 = if let Some((_, _, _, shield, _, _)) = player_active {
-                shield.0.max(0).to_string()
+                shield_value(shield.0)
             } else {
-                "0".to_string()
+                String::new()
             };
             continue;
         }
         if is_enemy_shield.is_some() {
             text.0 = if let Some((_, _, _, shield, _, _)) = enemy_active {
-                shield.0.max(0).to_string()
+                shield_value(shield.0)
             } else {
-                "0".to_string()
+                String::new()
             };
             continue;
         }

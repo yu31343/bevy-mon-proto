@@ -7,6 +7,43 @@ use crate::battle::{
 use super::super::components::*;
 use super::super::theme::UiTheme;
 
+const BENCH_SHIELD_BAR_WIDTH: f32 = 92.0;
+
+fn shield_pct(stats: &Stats, shield: &Shield) -> f32 {
+    if stats.max_hp > 0 {
+        ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    }
+}
+
+fn shield_value_text(value: i32) -> String {
+    if value > 0 {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn apply_bench_shield_track(node: &mut Node, visibility: &mut Visibility, pct: f32) {
+    let has_shield = pct > 0.0;
+    node.width = Val::Px(if has_shield {
+        BENCH_SHIELD_BAR_WIDTH * pct / 100.0
+    } else {
+        0.0
+    });
+    node.display = if has_shield {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    *visibility = if has_shield {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+}
+
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -34,7 +71,10 @@ pub(crate) fn update_player_roster_ui_system(
             &mut BorderColor,
         )>,
         Query<(&PlayerBenchHpBarFill, &mut Node)>,
-        Query<(&PlayerBenchShieldBarFill, &mut Node)>,
+        Query<
+            (&PlayerBenchShieldBarTrack, &mut Node, &mut Visibility),
+            Without<TeamMemberShieldBarTrack>,
+        >,
         Query<(
             &PlayerBenchCard,
             &Interaction,
@@ -42,10 +82,10 @@ pub(crate) fn update_player_roster_ui_system(
             &mut BackgroundColor,
         )>,
     )>,
-    mut visibilities: ParamSet<(
-        Query<(&TeamMemberShieldBarTrack, &mut Visibility)>,
-        Query<(&PlayerBenchShieldBarTrack, &mut Visibility)>,
-    )>,
+    mut team_member_shield_tracks: Query<
+        (&TeamMemberShieldBarTrack, &mut Visibility),
+        Without<PlayerBenchShieldBarTrack>,
+    >,
     theme: Res<UiTheme>,
 ) {
     let player_team = player_team.map(|team| team.0.clone());
@@ -132,12 +172,12 @@ pub(crate) fn update_player_roster_ui_system(
         if let Some(meta) = bench_shield {
             if let Some(entity) = get_player_entity(meta.index) {
                 if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                    text.0 = shield.0.max(0).to_string();
+                    text.0 = shield_value_text(shield.0);
                 } else {
-                    text.0 = "0".to_string();
+                    text.0 = String::new();
                 }
             } else {
-                text.0 = "0".to_string();
+                text.0 = String::new();
             }
         }
     }
@@ -158,12 +198,7 @@ pub(crate) fn update_player_roster_ui_system(
     for (meta, mut node) in &mut nodes.p1() {
         if let Some(entity) = get_controlled_entity(meta.index) {
             if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
-                let shield_pct = if stats.max_hp > 0 {
-                    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(shield_pct);
+                node.width = Val::Percent(shield_pct(stats, shield));
             }
         }
     }
@@ -181,17 +216,12 @@ pub(crate) fn update_player_roster_ui_system(
         }
     }
 
-    for (meta, mut node) in &mut nodes.p4() {
-        if let Some(entity) = get_player_entity(meta.index) {
-            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
-                let shield_pct = if stats.max_hp > 0 {
-                    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(shield_pct);
-            }
-        }
+    for (meta, mut node, mut visibility) in &mut nodes.p4() {
+        let pct = get_player_entity(meta.index)
+            .and_then(|entity| combat_query.get(entity).ok())
+            .map(|(stats, _, shield, _, _)| shield_pct(stats, shield))
+            .unwrap_or(0.0);
+        apply_bench_shield_track(&mut node, &mut visibility, pct);
     }
 
     for (meta, interaction, mut node, mut bg, mut border) in &mut nodes.p2() {
@@ -231,17 +261,12 @@ pub(crate) fn update_player_roster_ui_system(
         };
     }
 
-    for (meta, mut vis) in &mut visibilities.p0() {
-        *vis = if get_controlled_entity(meta.index).is_some() {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
-    for (meta, mut vis) in &mut visibilities.p1() {
-        *vis = if get_player_entity(meta.index).is_some() && meta.index != player_team.active_index
-        {
+    for (meta, mut vis) in &mut team_member_shield_tracks {
+        let has_shield = get_controlled_entity(meta.index)
+            .and_then(|entity| combat_query.get(entity).ok())
+            .map(|(_, _, shield, _, _)| shield.0 > 0)
+            .unwrap_or(false);
+        *vis = if has_shield {
             Visibility::Visible
         } else {
             Visibility::Hidden
@@ -273,13 +298,16 @@ pub(crate) fn update_enemy_roster_ui_system(
             &mut BorderColor,
         )>,
         Query<(&EnemyBenchHpBarFill, &mut Node)>,
-        Query<(&EnemyBenchShieldBarFill, &mut Node)>,
+        Query<
+            (&EnemyBenchShieldBarTrack, &mut Node, &mut Visibility),
+            Without<EnemyTeamMemberShieldBarTrack>,
+        >,
         Query<(&EnemyBenchCard, &mut Node)>,
     )>,
-    mut visibilities: ParamSet<(
-        Query<(&EnemyTeamMemberShieldBarTrack, &mut Visibility)>,
-        Query<(&EnemyBenchShieldBarTrack, &mut Visibility)>,
-    )>,
+    mut team_member_shield_tracks: Query<
+        (&EnemyTeamMemberShieldBarTrack, &mut Visibility),
+        Without<EnemyBenchShieldBarTrack>,
+    >,
     theme: Res<UiTheme>,
 ) {
     let Some(enemy_team) = enemy_team else {
@@ -355,12 +383,12 @@ pub(crate) fn update_enemy_roster_ui_system(
         if let Some(meta) = bench_shield {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
-                    text.0 = shield.0.max(0).to_string();
+                    text.0 = shield_value_text(shield.0);
                 } else {
-                    text.0 = "0".to_string();
+                    text.0 = String::new();
                 }
             } else {
-                text.0 = "0".to_string();
+                text.0 = String::new();
             }
         }
     }
@@ -381,12 +409,7 @@ pub(crate) fn update_enemy_roster_ui_system(
     for (meta, mut node) in &mut nodes.p1() {
         if let Some(entity) = get_entity(meta.index) {
             if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
-                let shield_pct = if stats.max_hp > 0 {
-                    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(shield_pct);
+                node.width = Val::Percent(shield_pct(stats, shield));
             }
         }
     }
@@ -404,17 +427,12 @@ pub(crate) fn update_enemy_roster_ui_system(
         }
     }
 
-    for (meta, mut node) in &mut nodes.p4() {
-        if let Some(entity) = get_entity(meta.index) {
-            if let Ok((stats, _, shield, _, _)) = combat_query.get(entity) {
-                let shield_pct = if stats.max_hp > 0 {
-                    ((shield.0.max(0) as f32 / stats.max_hp as f32) * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(shield_pct);
-            }
-        }
+    for (meta, mut node, mut visibility) in &mut nodes.p4() {
+        let pct = get_entity(meta.index)
+            .and_then(|entity| combat_query.get(entity).ok())
+            .map(|(stats, _, shield, _, _)| shield_pct(stats, shield))
+            .unwrap_or(0.0);
+        apply_bench_shield_track(&mut node, &mut visibility, pct);
     }
 
     for (meta, mut node, mut bg, mut border) in &mut nodes.p2() {
@@ -445,16 +463,12 @@ pub(crate) fn update_enemy_roster_ui_system(
         };
     }
 
-    for (meta, mut vis) in &mut visibilities.p0() {
-        *vis = if get_entity(meta.index).is_some() {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
-    for (meta, mut vis) in &mut visibilities.p1() {
-        *vis = if get_entity(meta.index).is_some() && meta.index != enemy_team.0.active_index {
+    for (meta, mut vis) in &mut team_member_shield_tracks {
+        let has_shield = get_entity(meta.index)
+            .and_then(|entity| combat_query.get(entity).ok())
+            .map(|(_, _, shield, _, _)| shield.0 > 0)
+            .unwrap_or(false);
+        *vis = if has_shield {
             Visibility::Visible
         } else {
             Visibility::Hidden

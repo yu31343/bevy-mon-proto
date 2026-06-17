@@ -2,9 +2,9 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        transfer_status_by_id, ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand,
-        InBattle, PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side,
-        SkillCount, SkillList, Stats, StatusBoard, TurnContext, UiControlSide,
+        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle,
+        PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side, SkillCount,
+        SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::{BattleDbs, BattleRules, MapBattleContext},
     game_state::{BattlePhase, GameState},
@@ -353,7 +353,10 @@ pub(crate) fn button_switch_member_system(
         let current_entity = team.combatants[team.active_index];
         let target_entity = team.combatants[target_index];
         let Ok(
-            [(mut current_stats, _, mut current_statuses), (target_stats, name, target_statuses)],
+            [
+                (mut current_stats, _, mut current_statuses),
+                (target_stats, name, target_statuses),
+            ],
         ) = combat_query.get_many_mut([current_entity, target_entity])
         else {
             continue;

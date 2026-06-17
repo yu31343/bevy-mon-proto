@@ -6,6 +6,7 @@ use super::super::{components::*, theme::UiTheme};
 
 const HP_ANIM_SECONDS: f32 = 0.38;
 const HP_CHANGE_EPSILON: f32 = 0.05;
+const ACTIVE_SHIELD_BAR_WIDTH: f32 = 220.0;
 
 #[derive(Clone, Copy, Default)]
 struct HpBarFx {
@@ -37,12 +38,8 @@ pub(crate) fn update_battle_bars_system(
     mut fills: ParamSet<(
         Query<(&mut Node, &mut BackgroundColor), With<PlayerHpBarFill>>,
         Query<(&mut Node, &mut BackgroundColor), With<EnemyHpBarFill>>,
-        Query<&mut Node, With<PlayerShieldBarFill>>,
-        Query<&mut Node, With<EnemyShieldBarFill>>,
-    )>,
-    mut shield_tracks: ParamSet<(
-        Query<&mut Visibility, With<PlayerShieldBarTrack>>,
-        Query<&mut Visibility, With<EnemyShieldBarTrack>>,
+        Query<(&mut Node, &mut Visibility), With<PlayerShieldBarTrack>>,
+        Query<(&mut Node, &mut Visibility), With<EnemyShieldBarTrack>>,
     )>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -81,19 +78,32 @@ pub(crate) fn update_battle_bars_system(
         super::super::helpers::active_shield_percent(&player_team.0, &combat_query);
     let enemy_shield_pct =
         super::super::helpers::active_shield_percent(&enemy_team.0, &combat_query);
-    if let Ok(mut node) = fills.p2().single_mut() {
-        node.width = Val::Percent(player_shield_pct);
+    if let Ok((mut node, mut visibility)) = fills.p2().single_mut() {
+        apply_shield_bar_track(&mut node, &mut visibility, player_shield_pct);
     }
-    if let Ok(mut node) = fills.p3().single_mut() {
-        node.width = Val::Percent(enemy_shield_pct);
+    if let Ok((mut node, mut visibility)) = fills.p3().single_mut() {
+        apply_shield_bar_track(&mut node, &mut visibility, enemy_shield_pct);
     }
+}
 
-    if let Ok(mut vis) = shield_tracks.p0().single_mut() {
-        *vis = Visibility::Visible;
-    }
-    if let Ok(mut vis) = shield_tracks.p1().single_mut() {
-        *vis = Visibility::Visible;
-    }
+fn apply_shield_bar_track(node: &mut Node, visibility: &mut Visibility, shield_pct: f32) {
+    let shield_pct = shield_pct.clamp(0.0, 100.0);
+    let has_shield = shield_pct > 0.0;
+    node.width = Val::Px(if has_shield {
+        ACTIVE_SHIELD_BAR_WIDTH * shield_pct / 100.0
+    } else {
+        0.0
+    });
+    node.display = if has_shield {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    *visibility = if has_shield {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
 }
 
 fn apply_hp_bar_fx(
