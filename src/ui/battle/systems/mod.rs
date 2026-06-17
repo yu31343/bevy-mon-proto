@@ -25,6 +25,5 @@ pub(crate) use text::{
 };
 pub(crate) use visuals::{
     action_dial_visual_state_system, battle_action_cooldown_visual_system,
-    button_visual_state_system, hand_full_warning_visual_system, stat_icon_tooltip_system,
-    update_discard_armed_visual_system,
+    button_visual_state_system, hand_full_warning_visual_system, update_discard_armed_visual_system,
 };

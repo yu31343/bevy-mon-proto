@@ -10,7 +10,7 @@ const ACTIVE_STAT_ROW_TOP_OFFSET: f32 = -16.0;
 const ACTIVE_INFO_MASK_TOP: f32 = 40.0; //距离屏幕顶部的距离
 const ACTIVE_INFO_MASK_SIDE: f32 = 14.0; //距离屏幕边缘的距离
 const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //蒙版宽度
-const ACTIVE_INFO_MASK_HEIGHT: f32 = 250.0; //蒙版高度
+const ACTIVE_INFO_MASK_HEIGHT: f32 = 232.0; //蒙版高度
 
 // 待机位精灵小面板：去掉黑方框，参照主精灵面板做的紧凑、敌我对称版本。
 const BENCH_CARD_WIDTH: f32 = 168.0; //单个待机面板宽度
@@ -140,12 +140,10 @@ fn outlined_stat_text_shadow() -> TextShadow {
     }
 }
 
-fn spawn_stat_icon(
+fn spawn_stat_value(
     parent: &mut ChildSpawnerCommands,
     _theme: &UiTheme,
     font: TextFont,
-    asset_server: &AssetServer,
-    icon_path: &'static str,
     label: &'static str,
     value_marker: impl Component,
     stage_markers: Option<(StatStageModifierBadge, StatStageModifierText)>,
@@ -161,14 +159,6 @@ fn spawn_stat_icon(
             ..default()
         },))
         .with_children(|root| {
-            root.spawn((
-                Node {
-                    width: Val::Px(26.0),
-                    height: Val::Px(26.0),
-                    ..default()
-                },
-                ImageNode::new(asset_server.load(icon_path)),
-            ));
             root.spawn((
                 Node {
                     min_width: Val::Px(34.0),
@@ -342,13 +332,21 @@ fn spawn_small_bench_card(
                                 PlayerBenchShieldValueText { index },
                             ));
                         });
-                    // 状态
-                    card.spawn((
-                        Text::new("状态：无"),
+                    // 状态（图标，与主面板一致；无状态时不显示）
+                    spawn_colored_debug_tokens(
+                        card,
+                        theme,
                         meta_font.clone(),
-                        TextColor(theme.text_muted),
-                        PlayerBenchAuraText { index },
-                    ));
+                        meta_font.clone(),
+                        "",
+                        Val::Percent(100.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        PlayerBenchStatusLine { index },
+                        DebugStatusToken,
+                        &[],
+                    );
                 });
         }
         Side::Enemy => {
@@ -456,13 +454,21 @@ fn spawn_small_bench_card(
                                 ));
                             });
                         });
-                    // 状态
-                    card.spawn((
-                        Text::new("状态：无"),
+                    // 状态（图标，右对齐镜像；无状态时不显示）
+                    spawn_colored_debug_tokens(
+                        card,
+                        theme,
                         meta_font.clone(),
-                        TextColor(theme.text_muted),
-                        EnemyBenchAuraText { index },
-                    ));
+                        meta_font.clone(),
+                        "",
+                        Val::Percent(100.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::RowReverse,
+                        Val::Px(4.0),
+                        EnemyBenchStatusLine { index },
+                        DebugStatusToken,
+                        &[],
+                    );
                 });
         }
     }
@@ -886,7 +892,7 @@ pub(crate) fn setup_ui_system(
                         Val::Px(4.0),
                         PlayerStatusLine,
                         DebugStatusToken,
-                        &[("无", theme.text_muted)],
+                        &[],
                     );
                 });
                 panel.spawn((
@@ -904,22 +910,18 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/hp.png",
                         "生命",
                         PlayerHpStatText,
                         None,
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/atk.png",
                         "攻击",
                         PlayerAtkText,
                         Some((
@@ -927,12 +929,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Player, stat: StatStageModifierKind::Atk },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/def.png",
                         "防御",
                         PlayerDefText,
                         Some((
@@ -940,12 +940,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Player, stat: StatStageModifierKind::Def },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/acc.png",
                         "命中",
                         PlayerAccText,
                         Some((
@@ -953,12 +951,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Player, stat: StatStageModifierKind::Acc },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/spd.png",
                         "速度",
                         PlayerSpdText,
                         Some((
@@ -1186,7 +1182,7 @@ pub(crate) fn setup_ui_system(
                         Val::Px(4.0),
                         EnemyStatusLine,
                         DebugStatusToken,
-                        &[("无", theme.text_muted)],
+                        &[],
                     );
                 });
                 panel.spawn((
@@ -1204,22 +1200,18 @@ pub(crate) fn setup_ui_system(
                     },
                 ))
                 .with_children(|row| {
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/hp.png",
                         "生命",
                         EnemyHpStatText,
                         None,
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/atk.png",
                         "攻击",
                         EnemyAtkText,
                         Some((
@@ -1227,12 +1219,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Enemy, stat: StatStageModifierKind::Atk },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/def.png",
                         "防御",
                         EnemyDefText,
                         Some((
@@ -1240,12 +1230,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Enemy, stat: StatStageModifierKind::Def },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/acc.png",
                         "命中",
                         EnemyAccText,
                         Some((
@@ -1253,12 +1241,10 @@ pub(crate) fn setup_ui_system(
                             StatStageModifierText { side: Side::Enemy, stat: StatStageModifierKind::Acc },
                         )),
                     );
-                    spawn_stat_icon(
+                    spawn_stat_value(
                         row,
                         &theme,
                         meta_font.clone(),
-                        &asset_server,
-                        "images/icons/stats/spd.png",
                         "速度",
                         EnemySpdText,
                         Some((

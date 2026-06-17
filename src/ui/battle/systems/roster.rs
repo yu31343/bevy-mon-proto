@@ -18,7 +18,6 @@ pub(crate) fn update_player_roster_ui_system(
             Option<&TeamMemberButtonText>,
             Option<&TeamMemberAuraText>,
             Option<&PlayerBenchNameText>,
-            Option<&PlayerBenchAuraText>,
             Option<&PlayerBenchHpValueText>,
             Option<&PlayerBenchShieldValueText>,
         ),
@@ -65,9 +64,7 @@ pub(crate) fn update_player_roster_ui_system(
     let get_controlled_entity = |index: usize| controlled_team.combatants.get(index).copied();
     let get_player_entity = |index: usize| player_team.combatants.get(index).copied();
 
-    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura, bench_hp, bench_shield) in
-        &mut text_q
-    {
+    for (mut text, overlay_name, overlay_aura, bench_name, bench_hp, bench_shield) in &mut text_q {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_controlled_entity(meta.index) {
                 if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
@@ -115,22 +112,6 @@ pub(crate) fn update_player_roster_ui_system(
                 }
             } else {
                 text.0 = format!("队伍{}", meta.index + 1);
-            }
-            continue;
-        }
-
-        if let Some(meta) = bench_aura {
-            if let Some(entity) = get_player_entity(meta.index) {
-                if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
-                    text.0 = format!(
-                        "状态：{}",
-                        super::super::helpers::bench_status_label(statuses)
-                    );
-                } else {
-                    text.0 = "状态：无".to_string();
-                }
-            } else {
-                text.0 = "状态：无".to_string();
             }
             continue;
         }
@@ -277,7 +258,6 @@ pub(crate) fn update_enemy_roster_ui_system(
             Option<&EnemyTeamMemberButtonText>,
             Option<&EnemyTeamMemberAuraText>,
             Option<&EnemyBenchNameText>,
-            Option<&EnemyBenchAuraText>,
             Option<&EnemyBenchHpValueText>,
             Option<&EnemyBenchShieldValueText>,
         ),
@@ -308,9 +288,7 @@ pub(crate) fn update_enemy_roster_ui_system(
 
     let get_entity = |index: usize| enemy_team.0.combatants.get(index).copied();
 
-    for (mut text, overlay_name, overlay_aura, bench_name, bench_aura, bench_hp, bench_shield) in
-        &mut text_q
-    {
+    for (mut text, overlay_name, overlay_aura, bench_name, bench_hp, bench_shield) in &mut text_q {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_entity(meta.index) {
                 if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
@@ -357,22 +335,6 @@ pub(crate) fn update_enemy_roster_ui_system(
                 }
             } else {
                 text.0 = format!("队伍{}", meta.index + 1);
-            }
-            continue;
-        }
-
-        if let Some(meta) = bench_aura {
-            if let Some(entity) = get_entity(meta.index) {
-                if let Ok((_, _, _, _, statuses)) = combat_query.get(entity) {
-                    text.0 = format!(
-                        "状态：{}",
-                        super::super::helpers::bench_status_label(statuses)
-                    );
-                } else {
-                    text.0 = "状态：无".to_string();
-                }
-            } else {
-                text.0 = "状态：无".to_string();
             }
             continue;
         }

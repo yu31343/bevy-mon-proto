@@ -3,8 +3,7 @@ use bevy::prelude::*;
 use super::super::components::{
     ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, BattleUiNotice,
     DiscardButton, EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton,
-    RetreatButton, SkillButton, StatIconButton, StatIconTooltip, SwitchCancelButton,
-    SwitchMonsterButton, TeamMemberButton,
+    RetreatButton, SkillButton, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
@@ -213,31 +212,6 @@ pub(crate) fn battle_action_cooldown_visual_system(
         }
     }
     *was_locked = true;
-}
-
-pub(crate) fn stat_icon_tooltip_system(
-    mut queries: ParamSet<(
-        Query<(&Interaction, &Children), (Changed<Interaction>, With<StatIconButton>)>,
-        Query<&mut Node, With<StatIconTooltip>>,
-    )>,
-) {
-    let mut updates = Vec::new();
-    for (interaction, children) in &queries.p0() {
-        let display = match *interaction {
-            Interaction::None => Display::None,
-            Interaction::Hovered | Interaction::Pressed => Display::Flex,
-        };
-        for child in children.iter() {
-            updates.push((child, display));
-        }
-    }
-
-    let mut tooltips = queries.p1();
-    for (child, display) in updates {
-        if let Ok(mut node) = tooltips.get_mut(child) {
-            node.display = display;
-        }
-    }
 }
 
 pub(crate) fn action_dial_visual_state_system(

@@ -397,22 +397,6 @@ pub(crate) fn is_status_line_visible(status_id: &str, category: StatusCategory) 
         && !status_id.starts_with("card_stage_")
 }
 
-/// 待机面板状态文本，与主精灵面板状态行使用同一可见性规则，避免上场/待机显示不一致。
-pub(crate) fn bench_status_label(statuses: &StatusBoard) -> String {
-    let labels = statuses
-        .entries
-        .iter()
-        .filter(|entry| is_status_line_visible(&entry.id, entry.category))
-        .map(|entry| entry.name.as_str())
-        .collect::<Vec<_>>();
-
-    if labels.is_empty() {
-        "无".to_string()
-    } else {
-        labels.join("/")
-    }
-}
-
 #[allow(dead_code)]
 pub(crate) fn aura_and_status_label(aura: &[ElementType], statuses: &StatusBoard) -> String {
     format!(
@@ -822,6 +806,7 @@ pub(crate) fn replace_debug_tokens_with_images(
     asset_server: &AssetServer,
     font: &TextFont,
     items: &[DebugTokenContent],
+    icon_size: f32,
     token_kind: impl Component + Clone,
 ) {
     if let Some(children) = children {
@@ -843,8 +828,8 @@ pub(crate) fn replace_debug_tokens_with_images(
                 DebugTokenContent::Image(path) => {
                     line.spawn((
                         Node {
-                            width: Val::Px(30.0),
-                            height: Val::Px(30.0),
+                            width: Val::Px(icon_size),
+                            height: Val::Px(icon_size),
                             flex_shrink: 0.0,
                             ..default()
                         },

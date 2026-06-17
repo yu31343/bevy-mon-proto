@@ -161,7 +161,7 @@ pub(crate) struct PlayerBenchNameText {
 }
 
 #[derive(Component)]
-pub(crate) struct PlayerBenchAuraText {
+pub(crate) struct PlayerBenchStatusLine {
     pub index: usize,
 }
 
@@ -201,7 +201,7 @@ pub(crate) struct EnemyBenchNameText {
 }
 
 #[derive(Component)]
-pub(crate) struct EnemyBenchAuraText {
+pub(crate) struct EnemyBenchStatusLine {
     pub index: usize,
 }
 
@@ -364,12 +364,6 @@ pub(crate) struct PlayerSpdText;
 
 #[derive(Component)]
 pub(crate) struct EnemySpdText;
-
-#[derive(Component)]
-pub(crate) struct StatIconButton;
-
-#[derive(Component)]
-pub(crate) struct StatIconTooltip;
 
 #[derive(Component)]
 pub(crate) struct EnemyHpStatText;

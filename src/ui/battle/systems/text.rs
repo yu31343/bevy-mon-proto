@@ -427,6 +427,8 @@ pub(crate) fn update_active_panel_tokens_system(
         ),
         Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
     >,
+    player_bench_status_lines: Query<(Entity, Option<&Children>, &PlayerBenchStatusLine)>,
+    enemy_bench_status_lines: Query<(Entity, Option<&Children>, &EnemyBenchStatusLine)>,
     mut stage_modifier_badges: Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
     mut stage_modifier_texts: Query<(&mut Text, &StatStageModifierText)>,
     player_team: Option<Res<PlayerTeam>>,
@@ -514,7 +516,7 @@ pub(crate) fn update_active_panel_tokens_system(
             None
         };
         let items = if let Some((_, _, _, _, _, statuses)) = active {
-            let labels: Vec<_> = statuses
+            statuses
                 .entries
                 .iter()
                 .filter(|entry| {
@@ -530,20 +532,9 @@ pub(crate) fn update_active_panel_tokens_system(
                         )
                     }
                 })
-                .collect();
-            if labels.is_empty() {
-                vec![super::super::helpers::DebugTokenContent::Text(
-                    "无".to_string(),
-                    theme.text_muted,
-                )]
-            } else {
-                labels
-            }
+                .collect()
         } else {
-            vec![super::super::helpers::DebugTokenContent::Text(
-                "无".to_string(),
-                theme.text_muted,
-            )]
+            Vec::new()
         };
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
@@ -552,6 +543,63 @@ pub(crate) fn update_active_panel_tokens_system(
             &asset_server,
             &info_font,
             &items,
+            30.0,
+            DebugStatusToken,
+        );
+    }
+
+    // 待机位状态图标：与主面板状态行使用同一可见性规则与图标，无状态时不显示。
+    let bench_status_items =
+        |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
+            let Some(entity) = target else {
+                return Vec::new();
+            };
+            let Ok((_, _, _, _, _, statuses)) = combat_query.get(entity) else {
+                return Vec::new();
+            };
+            statuses
+                .entries
+                .iter()
+                .filter(|entry| {
+                    super::super::helpers::is_status_line_visible(&entry.id, entry.category)
+                })
+                .map(|entry| {
+                    if let Some(path) = status_icon_path(&entry.id, &entry.name) {
+                        super::super::helpers::DebugTokenContent::Image(path)
+                    } else {
+                        super::super::helpers::DebugTokenContent::Text(
+                            entry.name.clone(),
+                            super::super::helpers::status_color(entry, &theme),
+                        )
+                    }
+                })
+                .collect()
+        };
+
+    for (entity, children, line) in &player_bench_status_lines {
+        let items = bench_status_items(player_team.0.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
+            DebugStatusToken,
+        );
+    }
+
+    for (entity, children, line) in &enemy_bench_status_lines {
+        let items = bench_status_items(enemy_team.0.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
             DebugStatusToken,
         );
     }

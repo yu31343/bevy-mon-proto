@@ -139,7 +139,6 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 .after(button_end_turn_system)
                 .before(action_dial_visual_state_system),
             action_dial_visual_state_system.run_if(in_state(GameState::Battle)),
-            stat_icon_tooltip_system.run_if(in_state(GameState::Battle)),
             update_discard_armed_visual_system
                 .run_if(in_state(GameState::Battle))
                 .after(button_visual_state_system)
