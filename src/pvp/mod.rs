@@ -31,7 +31,7 @@ use crate::{
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 4;
+const PROTOCOL_VERSION: u32 = 5;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
@@ -364,6 +364,11 @@ enum PvpBattleFeedback {
     Switched {
         side: Side,
         name: String,
+    },
+    ReactionTriggered {
+        source: Side,
+        target: Side,
+        reaction_name: String,
     },
 }
 
@@ -2208,6 +2213,15 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
             side: *side,
             name: name.clone(),
         },
+        BattleEvent::ReactionTriggered {
+            source,
+            target,
+            reaction_name,
+        } => PvpBattleFeedback::ReactionTriggered {
+            source: *source,
+            target: *target,
+            reaction_name: reaction_name.clone(),
+        },
         _ => return None,
     })
 }
@@ -2266,6 +2280,15 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
         PvpBattleFeedback::Switched { side, name } => BattleEvent::Switched {
             side: mirror_side(side),
             name,
+        },
+        PvpBattleFeedback::ReactionTriggered {
+            source,
+            target,
+            reaction_name,
+        } => BattleEvent::ReactionTriggered {
+            source: mirror_side(source),
+            target: mirror_side(target),
+            reaction_name,
         },
     }
 }

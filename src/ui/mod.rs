@@ -18,8 +18,9 @@ use crate::{
 };
 
 use battle::fx::{
-    keyboard_button_flash_system, process_battle_fx_events, spawn_button_click_flash,
-    tick_button_click_flash, tick_fx_lifetimes, tick_screen_flashes, tick_skill_flash_timer,
+    keyboard_button_flash_system, preload_reaction_icons, process_battle_fx_events,
+    spawn_button_click_flash, spawn_reaction_banner_system, tick_button_click_flash,
+    tick_fx_lifetimes, tick_reaction_banner_system, tick_screen_flashes, tick_skill_flash_timer,
 };
 
 use battle::systems::{PendingSwitchOverlayToggle, SwitchOverlayOpen};
@@ -61,6 +62,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .init_resource::<BattleHintOverlayState>()
         .init_resource::<HandFullEndTurnWarning>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
+        .add_systems(Startup, preload_reaction_icons)
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
         .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
@@ -148,6 +150,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             tick_skill_flash_timer.after(process_battle_fx_events),
             tick_screen_flashes,
             tick_fx_lifetimes,
+            spawn_reaction_banner_system,
+            tick_reaction_banner_system.after(spawn_reaction_banner_system),
             spawn_button_click_flash
                 .run_if(in_state(GameState::Battle))
                 .after(update_player_roster_ui_system),

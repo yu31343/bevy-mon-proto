@@ -7,8 +7,8 @@ use crate::battle::Side;
 const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
 const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
 const ACTIVE_STAT_ROW_TOP_OFFSET: f32 = -16.0;
-const ACTIVE_INFO_MASK_TOP: f32 = 40.0;     //距离屏幕顶部的距离
-const ACTIVE_INFO_MASK_SIDE: f32 = 14.0;    //距离屏幕边缘的距离
+const ACTIVE_INFO_MASK_TOP: f32 = 40.0; //距离屏幕顶部的距离
+const ACTIVE_INFO_MASK_SIDE: f32 = 14.0; //距离屏幕边缘的距离
 const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //蒙版宽度
 const ACTIVE_INFO_MASK_HEIGHT: f32 = 250.0; //蒙版高度
 
