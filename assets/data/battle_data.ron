@@ -796,13 +796,12 @@
             cost_ap: 4,
             effect: Sequence(effects: [
                 Attack(power: 19, lifesteal_ratio: None, ignore_shield: true),
-                Dispel(status_ids: ["stage_shift_buff"], target: Opponent),
                 Conditional(branches: [
                     (
                         condition: TargetHadNoShield,
                         effect: ModifyStages(
                             modifiers: [
-                                (attribute: Acc, amount: -1),
+                                (attribute: Atk, amount: -1),
                             ],
                             duration_turns: 2,
                             target: Opponent,
