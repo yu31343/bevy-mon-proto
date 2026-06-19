@@ -528,7 +528,7 @@
             id: BurningSoul,
             name: "燃魂强化",
             category: SelfUtility,
-            cost_ap: 2,
+            cost_ap: 3,
             effect: ModifyStages(
                 modifiers: [
                     (attribute: Atk, amount: 1),
@@ -583,9 +583,9 @@
             id: WaterScreen,
             name: "水幕屏障",
             category: SelfUtility,
-            cost_ap: 2,
+            cost_ap: 3,
             effect: Sequence(effects: [
-                Shield(amount: 10),
+                Shield(amount: 15),
                 ModifyStages(
                     modifiers: [
                         (attribute: Def, amount: 1),
