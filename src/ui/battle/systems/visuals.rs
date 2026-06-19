@@ -16,25 +16,30 @@ const DISCARD_ARMED_BORDER: Color = Color::srgba(0.90, 0.72, 0.18, 0.85);
 const HAND_FULL_BORDER: Color = Color::srgba(1.0, 0.08, 0.08, 0.95);
 const HAND_FULL_HINT_DURATION: f32 = 3.0;
 const HAND_FULL_HINT_FADE: f32 = 0.65;
-const ACTION_COOLDOWN_LOCKED_BG: Color = Color::srgba(0.045, 0.060, 0.085, 0.88);
-const ACTION_COOLDOWN_LOCKED_BORDER: Color = Color::srgba(0.20, 0.28, 0.38, 0.55);
+const ACTION_COOLDOWN_LOCKED_BG: Color = Color::srgba(0.07, 0.055, 0.035, 0.90);
+const ACTION_COOLDOWN_LOCKED_BORDER: Color = Color::srgba(0.30, 0.24, 0.14, 0.55);
 const ACTION_COOLDOWN_DIAL_HIGHLIGHT: Color = Color::srgba(0.52, 0.60, 0.68, 0.16);
 
-fn apply_regular_button_style(
+/// 战斗常规按钮（技能/结束/撤退/提示/换人）的暖色漆器底，与描金协调。
+const BTN_IDLE_BG: Color = Color::srgba(0.20, 0.15, 0.10, 0.99);
+const BTN_HOVER_BG: Color = Color::srgba(0.31, 0.24, 0.14, 0.99);
+const BTN_PRESSED_BG: Color = Color::srgba(0.13, 0.10, 0.06, 0.99);
+
+pub(crate) fn apply_regular_button_style(
     interaction: &Interaction,
     bg: &mut BackgroundColor,
     border: &mut BorderColor,
     theme: &UiTheme,
 ) {
     *bg = match *interaction {
-        Interaction::Pressed => BackgroundColor(theme.button_pressed),
-        Interaction::Hovered => BackgroundColor(theme.button_hover),
-        Interaction::None => BackgroundColor(theme.button_idle),
+        Interaction::Pressed => BackgroundColor(BTN_PRESSED_BG),
+        Interaction::Hovered => BackgroundColor(BTN_HOVER_BG),
+        Interaction::None => BackgroundColor(BTN_IDLE_BG),
     };
     *border = match *interaction {
-        Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-        Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-        Interaction::None => BorderColor::all(theme.button_border_idle),
+        Interaction::Pressed => BorderColor::all(theme.gold),
+        Interaction::Hovered => BorderColor::all(theme.gold_bright),
+        Interaction::None => BorderColor::all(theme.gold_dim),
     };
 }
 

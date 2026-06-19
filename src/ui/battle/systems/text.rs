@@ -616,6 +616,7 @@ pub(crate) fn update_active_panel_tokens_system(
 pub(crate) fn update_skill_text_system(
     battle_phase: Res<State<BattlePhase>>,
     ui_control_side: Res<crate::battle::UiControlSide>,
+    theme: Res<UiTheme>,
     mut text_q: Query<
         (
             &mut Text,
@@ -625,6 +626,7 @@ pub(crate) fn update_skill_text_system(
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
+            Option<&SkillButtonCostText>,
             Option<&EnemySkillText>,
             Option<&EnemySkillMetaText>,
             Option<&EnemySkillIconText>,
@@ -642,6 +644,7 @@ pub(crate) fn update_skill_text_system(
             Without<BattleActionText>,
         ),
     >,
+    mut type_chip_q: Query<(&SkillTileTypeChip, &mut BackgroundColor)>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     skill_query: Query<(&SkillList, &SkillCount), With<InBattle>>,
@@ -673,6 +676,7 @@ pub(crate) fn update_skill_text_system(
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
+        skill_cost_text,
         enemy_skill_text,
         enemy_skill_meta,
         enemy_skill_icon,
@@ -714,16 +718,24 @@ pub(crate) fn update_skill_text_system(
         }
         if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, control_skills) {
             if meta.index >= count {
-                text.0 = "AP消耗：--".to_string();
+                text.0 = "类型：--".to_string();
             } else {
                 let skill_id = skills[meta.index];
                 text.0 = format!(
-                    "{}\nAP消耗：{}\n{}",
+                    "{}\n{}",
                     super::super::helpers::skill_meta(skill_id, &skill_db),
-                    super::super::helpers::monster_skill_ap_cost_ui(skill_id, &skill_db),
                     super::super::helpers::skill_summary(skill_id, &skill_db)
                 );
             }
+            continue;
+        }
+        if let (Some(cost), Some((skills, count))) = (skill_cost_text, control_skills) {
+            text.0 = if cost.index >= count {
+                "—".to_string()
+            } else {
+                super::super::helpers::monster_skill_ap_cost_ui(skills[cost.index], &skill_db)
+                    .to_string()
+            };
             continue;
         }
         if let (Some(icon), Some((_skills, count))) = (skill_icon_text, control_skills) {
@@ -763,6 +775,24 @@ pub(crate) fn update_skill_text_system(
                 (icon.index + 1).to_string()
             };
         }
+    }
+
+    // 技能格元素类型色片：按 control 侧技能的元素着色（未配置/无元素用描金暗）。
+    let chip_skills = match ui_control_side.0 {
+        crate::battle::Side::Player => player_skills,
+        crate::battle::Side::Enemy => enemy_skills,
+    };
+    for (chip, mut bg) in &mut type_chip_q {
+        let color = match chip_skills {
+            Some((skills, count)) if chip.index < count => skill_db
+                .skills
+                .get(&skills[chip.index])
+                .and_then(|skill| skill.element)
+                .map(|element| super::super::helpers::element_color(element, &theme))
+                .unwrap_or(theme.gold_dim),
+            _ => theme.gold_dim,
+        };
+        *bg = BackgroundColor(color);
     }
 }
 

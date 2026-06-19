@@ -371,8 +371,12 @@ pub fn tick_skill_flash_timer(
             // 根据阵营恢复不同的样式
             match sid.side {
                 Side::Player => {
-                    *bg = BackgroundColor(theme.button_idle);
-                    *border = BorderColor::all(theme.button_border_idle);
+                    super::systems::visuals::apply_regular_button_style(
+                        &Interaction::None,
+                        &mut bg,
+                        &mut border,
+                        &theme,
+                    );
                 }
                 Side::Enemy => {
                     *bg = BackgroundColor(theme.enemy_card_bg);
@@ -443,8 +447,8 @@ pub fn tick_fx_lifetimes(
 #[derive(Component)]
 pub struct ButtonClickFlash(pub Timer);
 
-const CLICK_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.90);
-const CLICK_FLASH_BORDER: Color = Color::srgba(0.72, 0.88, 1.0, 0.70);
+const CLICK_FLASH_COLOR: Color = Color::srgba(1.0, 0.86, 0.50, 0.92);
+const CLICK_FLASH_BORDER: Color = Color::srgba(0.98, 0.85, 0.50, 0.75);
 
 /// 检测技能格与结束回合按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
 /// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
@@ -521,16 +525,12 @@ pub fn tick_button_click_flash(
                     Interaction::None => BorderColor::all(theme.card_border),
                 };
             } else {
-                *bg = match interaction {
-                    Interaction::Pressed => BackgroundColor(theme.button_pressed),
-                    Interaction::Hovered => BackgroundColor(theme.button_hover),
-                    Interaction::None => BackgroundColor(theme.button_idle),
-                };
-                *border = match interaction {
-                    Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-                    Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-                    Interaction::None => BorderColor::all(theme.button_border_idle),
-                };
+                super::systems::visuals::apply_regular_button_style(
+                    &interaction,
+                    &mut bg,
+                    &mut border,
+                    &theme,
+                );
             }
         }
     }

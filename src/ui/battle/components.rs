@@ -441,6 +441,18 @@ pub(crate) struct ActivePortraitFrame {
     pub side: Side,
 }
 
+/// 技能格的元素类型色片（按技能元素动态着色）。
+#[derive(Component)]
+pub(crate) struct SkillTileTypeChip {
+    pub index: usize,
+}
+
+/// 技能格的 AP 费用宝石数字。
+#[derive(Component)]
+pub(crate) struct SkillButtonCostText {
+    pub index: usize,
+}
+
 /// 背景暗角覆盖层。
 #[derive(Component)]
 pub(crate) struct BattleVignette;
