@@ -148,6 +148,17 @@ fn outlined_stat_text_shadow() -> TextShadow {
     }
 }
 
+fn bar_value_text_color() -> TextColor {
+    TextColor(Color::srgb(0.96, 0.98, 1.0))
+}
+
+fn bar_value_text_shadow() -> TextShadow {
+    TextShadow {
+        offset: Vec2::new(1.0, 1.0),
+        color: Color::srgba(0.0, 0.0, 0.0, 0.75),
+    }
+}
+
 fn spawn_stat_chip_compact(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -330,8 +341,8 @@ fn spawn_small_bench_card(
                                     row.spawn((
                                         Text::new("0/0"),
                                         meta_font.clone(),
-                                        TextColor(Color::BLACK),
-                                        outlined_stat_text_shadow(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
                                         PlayerBenchHpValueText { index },
                                     ));
                                 });
@@ -370,8 +381,8 @@ fn spawn_small_bench_card(
                                     row.spawn((
                                         Text::new("0"),
                                         meta_font.clone(),
-                                        TextColor(Color::BLACK),
-                                        outlined_stat_text_shadow(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
                                         PlayerBenchShieldValueText { index },
                                     ));
                                 });
@@ -464,8 +475,8 @@ fn spawn_small_bench_card(
                                     row.spawn((
                                         Text::new("0/0"),
                                         meta_font.clone(),
-                                        TextColor(Color::BLACK),
-                                        outlined_stat_text_shadow(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
                                         EnemyBenchHpValueText { index },
                                     ));
                                     row.spawn((
@@ -504,8 +515,8 @@ fn spawn_small_bench_card(
                                     row.spawn((
                                         Text::new("0"),
                                         meta_font.clone(),
-                                        TextColor(Color::BLACK),
-                                        outlined_stat_text_shadow(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
                                         EnemyBenchShieldValueText { index },
                                     ));
                                     row.spawn((
@@ -1062,8 +1073,8 @@ pub(crate) fn setup_ui_system(
                                         row.spawn((
                                             Text::new("0/0"),
                                             meta_font.clone(),
-                                            TextColor(Color::BLACK),
-                                            outlined_stat_text_shadow(),
+                                            bar_value_text_color(),
+                                            bar_value_text_shadow(),
                                             PlayerHpValueText,
                                         ));
                                         spawn_colored_debug_tokens(
@@ -1101,8 +1112,8 @@ pub(crate) fn setup_ui_system(
                                         row.spawn((
                                             Text::new("0"),
                                             meta_font.clone(),
-                                            TextColor(Color::BLACK),
-                                            outlined_stat_text_shadow(),
+                                            bar_value_text_color(),
+                                            bar_value_text_shadow(),
                                             PlayerShieldValueText,
                                         ));
                                     });
@@ -1304,8 +1315,8 @@ pub(crate) fn setup_ui_system(
                                         row.spawn((
                                             Text::new("0/0"),
                                             meta_font.clone(),
-                                            TextColor(Color::BLACK),
-                                            outlined_stat_text_shadow(),
+                                            bar_value_text_color(),
+                                            bar_value_text_shadow(),
                                             EnemyHpValueText,
                                         ));
                                         row.spawn((Node {
@@ -1337,8 +1348,8 @@ pub(crate) fn setup_ui_system(
                                         row.spawn((
                                             Text::new("0"),
                                             meta_font.clone(),
-                                            TextColor(Color::BLACK),
-                                            outlined_stat_text_shadow(),
+                                            bar_value_text_color(),
+                                            bar_value_text_shadow(),
                                             EnemyShieldValueText,
                                         ));
                                         spawn_shield_bar(
