@@ -2225,16 +2225,17 @@ pub(crate) fn setup_ui_system(
                             PlayerCardButton { index: idx },
                         ))
                         .with_children(|card| {
-                            // 发光环：可出牌时由手牌系统点亮（独立覆盖层，不争用按钮 bg/border）
+                            // 发光环：可出牌时由手牌系统点亮（独立覆盖层，不争用按钮 bg/border）。
+                            // 加粗外环并外扩，使“可出/不可出”描边差异更醒目。
                             card.spawn((
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    top: Val::Px(-3.0),
-                                    left: Val::Px(-3.0),
-                                    right: Val::Px(-3.0),
-                                    bottom: Val::Px(-3.0),
-                                    border: UiRect::all(Val::Px(2.0)),
-                                    border_radius: BorderRadius::all(Val::Px(16.0)),
+                                    top: Val::Px(-4.0),
+                                    left: Val::Px(-4.0),
+                                    right: Val::Px(-4.0),
+                                    bottom: Val::Px(-4.0),
+                                    border: UiRect::all(Val::Px(3.0)),
+                                    border_radius: BorderRadius::all(Val::Px(18.0)),
                                     ..default()
                                 },
                                 BorderColor::all(Color::NONE),

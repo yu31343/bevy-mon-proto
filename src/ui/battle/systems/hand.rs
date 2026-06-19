@@ -20,6 +20,11 @@ const HAND_CARD_STACK_HEIGHT: f32 = 34.0;
 const HAND_CARD_SELECTED_WIDTH: f32 = 142.0;
 const HAND_CARD_SELECTED_HEIGHT: f32 = 240.0;
 
+/// AP 足够时可出牌的发光描边——饱和亮金，与暗化禁用环拉开强对比。
+const CARD_PLAYABLE_GLOW: Color = Color::srgba(1.0, 0.86, 0.42, 0.98);
+/// AP 不足时不可出牌的禁用描边——冷暗灰褐，明确传达“不可用”。
+const CARD_UNPLAYABLE_GLOW: Color = Color::srgba(0.30, 0.27, 0.30, 0.82);
+
 fn hand_card_layer(index: usize) -> usize {
     index / HAND_CARDS_PER_LAYER
 }
@@ -275,7 +280,8 @@ pub(crate) fn update_player_hand_ui_system(
         };
     }
 
-    // 可出牌发光环：AP 足够时点亮描金光环（独立覆盖层，不与按钮 hover 冲突）。
+    // 可出牌发光环：AP 足够时点亮饱和亮金光环，不足时显示暗灰褐禁用环，
+    // 两种状态描边颜色与饱和度均明显不同，便于一眼区分能否出牌。
     let current_ap = match display_side {
         Side::Player => action_points.player,
         Side::Enemy => action_points.enemy,
@@ -287,9 +293,9 @@ pub(crate) fn update_player_hand_ui_system(
                 .get(&active_hand[glow.index])
                 .is_some_and(|card| current_ap >= card.cost_ap);
         *border = if lit {
-            BorderColor::all(Color::srgba(0.98, 0.85, 0.50, 0.85))
+            BorderColor::all(CARD_PLAYABLE_GLOW)
         } else {
-            BorderColor::all(Color::NONE)
+            BorderColor::all(CARD_UNPLAYABLE_GLOW)
         };
     }
 }
