@@ -74,21 +74,21 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             (
                 button_select_skill_system
                     .run_if(in_state(GameState::Battle))
-                    .run_if(crate::battle::battle_action_cooldown_ready),
+                    .run_if(crate::battle::player_action_cooldown_ready),
                 button_discard_system
                     .run_if(in_state(GameState::Battle))
-                    .run_if(crate::battle::battle_action_cooldown_ready),
+                    .run_if(crate::battle::player_action_cooldown_ready),
                 button_switch_member_system
                     .run_if(in_state(GameState::Battle))
-                    .run_if(crate::battle::battle_action_cooldown_ready),
+                    .run_if(crate::battle::player_action_cooldown_ready),
                 button_play_card_two_step_system
                     .run_if(in_state(GameState::Battle))
-                    .run_if(crate::battle::battle_action_cooldown_ready),
+                    .run_if(crate::battle::player_action_cooldown_ready),
                 button_cancel_card_selection_system.run_if(in_state(GameState::Battle)),
                 button_toggle_switch_overlay_system.run_if(in_state(GameState::Battle)),
                 close_switch_overlay_on_switch_system
                     .run_if(in_state(GameState::Battle))
-                    .run_if(crate::battle::battle_action_cooldown_ready),
+                    .run_if(crate::battle::player_action_cooldown_ready),
                 button_battle_hint_system.run_if(in_state(GameState::Battle)),
                 update_battle_hint_overlay_system
                     .run_if(in_state(GameState::Battle))
@@ -135,7 +135,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         (
             button_end_turn_system
                 .run_if(in_state(GameState::Battle))
-                .run_if(crate::battle::battle_action_cooldown_ready),
+                .run_if(crate::battle::player_action_cooldown_ready),
             button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
             hand_full_warning_visual_system

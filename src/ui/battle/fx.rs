@@ -7,7 +7,10 @@
 
 use bevy::prelude::*;
 
-use crate::battle::{BattleActionCooldown, BattleEvent, DamageType, Side, UiControlSide};
+use crate::battle::{
+    BattleActionCooldown, BattleControlMode, BattleEvent, DamageType, Side, UiControlSide,
+};
+use crate::game_state::BattlePhase;
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
@@ -454,6 +457,8 @@ const CLICK_FLASH_BORDER: Color = Color::srgba(0.98, 0.85, 0.50, 0.75);
 /// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn spawn_button_click_flash(
     cooldown: Res<BattleActionCooldown>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut commands: Commands,
     mut q: Query<
         (
@@ -478,7 +483,10 @@ pub fn spawn_button_click_flash(
         ),
     >,
 ) {
-    let locked = !cooldown.ready();
+    // 与按钮变灰逻辑保持一致：对方回合或本地玩家行动冷却中，抑制点击闪光。
+    let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
+        && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
+    let locked = opponent_turn || !cooldown.ready(Side::Player);
     for (entity, interaction, mut bg, mut border, is_skill, is_end_turn, is_team_member) in &mut q {
         if *interaction == Interaction::Pressed {
             if locked && (is_skill || is_end_turn || is_team_member) {
@@ -548,6 +556,8 @@ pub fn tick_button_click_flash(
 pub fn keyboard_button_flash_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     cooldown: Res<BattleActionCooldown>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     open: Res<SwitchOverlayOpen>,
     mut commands: Commands,
     mut queries: ParamSet<(
@@ -589,7 +599,10 @@ pub fn keyboard_button_flash_system(
         >,
     )>,
 ) {
-    let locked = !cooldown.ready();
+    // 与按钮变灰逻辑保持一致：对方回合或本地玩家行动冷却中，抑制快捷键闪光。
+    let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
+        && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
+    let locked = opponent_turn || !cooldown.ready(Side::Player);
 
     // 辅助宏：写颜色并 insert 计时器
     // 宏展开为内联代码，commands 来自外部作用域，entity 为 Copy，无借用冲突

@@ -467,26 +467,45 @@ pub struct TurnContext {
 
 pub const BATTLE_ACTION_COOLDOWN_SECONDS: f32 = 2.0;
 
+/// 战斗行动冷却，按阵营独立计时。
+///
+/// 之所以分阵营，是因为联机（PVP）模式下敌我技能的 2 秒冷却不能互相影响：
+/// 对方使用技能只应锁定对方的操作，不应让我方按钮变灰；反之亦然。
+/// 本地 UI 始终代表本地玩家（`Side::Player`），因此按钮锁定只看玩家侧计时。
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct BattleActionCooldown {
-    pub remaining: f32,
+    pub player: f32,
+    pub enemy: f32,
 }
 
 impl BattleActionCooldown {
-    pub fn ready(self) -> bool {
-        self.remaining <= 0.0
+    pub fn remaining(self, side: Side) -> f32 {
+        match side {
+            Side::Player => self.player,
+            Side::Enemy => self.enemy,
+        }
     }
 
-    pub fn start(&mut self) {
-        self.remaining = BATTLE_ACTION_COOLDOWN_SECONDS;
+    pub fn ready(self, side: Side) -> bool {
+        self.remaining(side) <= 0.0
+    }
+
+    pub fn start(&mut self, side: Side) {
+        let slot = match side {
+            Side::Player => &mut self.player,
+            Side::Enemy => &mut self.enemy,
+        };
+        *slot = BATTLE_ACTION_COOLDOWN_SECONDS;
     }
 
     pub fn reset(&mut self) {
-        self.remaining = 0.0;
+        self.player = 0.0;
+        self.enemy = 0.0;
     }
 
     pub fn tick(&mut self, delta_secs: f32) {
-        self.remaining = (self.remaining - delta_secs).max(0.0);
+        self.player = (self.player - delta_secs).max(0.0);
+        self.enemy = (self.enemy - delta_secs).max(0.0);
     }
 }
 

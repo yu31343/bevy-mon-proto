@@ -9,7 +9,7 @@ use crate::game_state::{BattlePhase, GameState};
 
 pub use components::*;
 pub use events::*;
-pub(crate) use systems::{SideEndTickParams, battle_action_cooldown_ready};
+pub(crate) use systems::{SideEndTickParams, player_action_cooldown_ready};
 
 /// 战斗插件：注册战斗资源、事件与各阶段系统。
 pub struct BattlePlugin;
@@ -59,23 +59,23 @@ impl Plugin for BattlePlugin {
                 Update,
                 systems::player_turn_input_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::PlayerTurn)))
-                    .run_if(systems::battle_action_cooldown_ready),
+                    .run_if(systems::player_action_cooldown_ready),
             )
             .add_systems(
                 Update,
                 systems::hand_discard_phase_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::Discard)))
-                    .run_if(systems::battle_action_cooldown_ready),
+                    .run_if(systems::discard_action_cooldown_ready),
             );
         app.add_systems(
             Update,
             (
                 systems::enemy_turn_ai_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn)))
-                    .run_if(systems::battle_action_cooldown_ready),
+                    .run_if(systems::enemy_action_cooldown_ready),
                 systems::enemy_turn_input_system
                     .run_if(in_state(GameState::Battle).and(in_state(BattlePhase::EnemyTurn)))
-                    .run_if(systems::battle_action_cooldown_ready),
+                    .run_if(systems::enemy_action_cooldown_ready),
                 systems::sync_ui_control_side_system.run_if(in_state(GameState::Battle)),
             ),
         );

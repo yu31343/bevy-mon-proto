@@ -5,9 +5,9 @@ use crate::{
     battle::{
         BattleActionCooldown, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent, BattleLog,
         BattleResult, BattleStateEvent, BattleStatusEvent, BattleTraceEvent, Combatant,
-        ElementAura, EnemyTeam, InBattle, PlayerTeam, ReplayEventLog, Shield, Side, Stats,
-        StatusBoard, StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
-        push_structured_battle_line,
+        ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam, ReplayEventLog, Shield,
+        Side, Stats, StatusBoard, StructuredBattleLog, TurnCount, push_battle_line,
+        push_replay_log_entry, push_structured_battle_line,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     game_state::GameState,
@@ -24,16 +24,34 @@ pub fn start_battle_action_cooldown_system(
     mut events: MessageReader<BattleEvent>,
     mut cooldown: ResMut<BattleActionCooldown>,
 ) {
-    if events
-        .read()
-        .any(|event| matches!(event, BattleEvent::SkillUsed { .. }))
-    {
-        cooldown.start();
+    // 仅启动使用技能那一侧的冷却，避免对方技能误锁我方操作（PVP）。
+    for event in events.read() {
+        if let BattleEvent::SkillUsed { side, .. } = event {
+            cooldown.start(*side);
+        }
     }
 }
 
-pub fn battle_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
-    cooldown.ready()
+/// 本地玩家侧行动冷却是否结束——用于门控玩家输入相关系统。
+pub fn player_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
+    cooldown.ready(Side::Player)
+}
+
+/// 敌方侧行动冷却是否结束——用于门控 AI / 远程意图执行系统。
+pub fn enemy_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
+    cooldown.ready(Side::Enemy)
+}
+
+/// 弃牌阶段的冷却门控：按正在弃牌的那一侧判断。
+/// 没有待弃牌资源时默认以玩家侧就绪为准。
+pub fn discard_action_cooldown_ready(
+    cooldown: Res<BattleActionCooldown>,
+    pending: Option<Res<PendingHandDiscard>>,
+) -> bool {
+    match pending.as_ref().map(|p| p.side) {
+        Some(Side::Enemy) => cooldown.ready(Side::Enemy),
+        _ => cooldown.ready(Side::Player),
+    }
 }
 
 pub fn consume_battle_events_system(
