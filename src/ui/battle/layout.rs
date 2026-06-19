@@ -1848,8 +1848,8 @@ pub(crate) fn setup_ui_system(
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(184.0),
-                    right: Val::Px(-120.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     bottom: Val::Px(120.0),
                     height: Val::Px(330.0),
                     ..default()
