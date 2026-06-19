@@ -57,30 +57,38 @@ const MONSTER_VISUAL_TUNINGS: [MonsterVisualTuning; 7] = [
     MonsterVisualTuning {
         name: "水精灵",
         player: MonsterVisualConfig {
-            facing_scale: -0.5,
+            facing_scale: -0.4,
             flip_y: true,
-            offset: Vec2::new(0.0, 0.0),
+            offset: Vec2::new(0.0, -25.0),
         },
         enemy: MonsterVisualConfig {
-            facing_scale: 0.5,
+            facing_scale: 0.4,
             flip_y: false,
-            offset: Vec2::new(0.0, 0.0),
+            offset: Vec2::new(0.0, -25.0),
         },
     },
     MonsterVisualTuning {
         name: "草精灵",
-        player: DEFAULT_PLAYER_VISUAL,
-        enemy: DEFAULT_ENEMY_VISUAL,
+        player: MonsterVisualConfig {
+            facing_scale: -0.85,
+            flip_y: true,
+            offset: Vec2::new(0.0, -65.0),
+        },
+        enemy: MonsterVisualConfig {
+            facing_scale: 0.85,
+            flip_y: false,
+            offset: Vec2::new(0.0, -65.0),
+        },
     },
     MonsterVisualTuning {
         name: "火精灵",
         player: MonsterVisualConfig {
-            facing_scale: 0.66,
+            facing_scale: 0.70,
             flip_y: false,
             offset: Vec2::new(0.0, 0.0),
         },
         enemy: MonsterVisualConfig {
-            facing_scale: -0.66,
+            facing_scale: -0.70,
             flip_y: true,
             offset: Vec2::new(0.0, 0.0),
         },
@@ -90,12 +98,12 @@ const MONSTER_VISUAL_TUNINGS: [MonsterVisualTuning; 7] = [
         player: MonsterVisualConfig {
             facing_scale: -0.7,
             flip_y: true,
-            offset: Vec2::new(0.0, 0.0),
+            offset: Vec2::new(0.0, 55.0),
         },
         enemy: MonsterVisualConfig {
             facing_scale: 0.7,
             flip_y: false,
-            offset: Vec2::new(0.0, 0.0),
+            offset: Vec2::new(0.0, 55.0),
         },
     },
     MonsterVisualTuning {
@@ -127,12 +135,12 @@ const MONSTER_VISUAL_TUNINGS: [MonsterVisualTuning; 7] = [
     MonsterVisualTuning {
         name: "风精灵",
         player: MonsterVisualConfig {
-            facing_scale: 0.66,
+            facing_scale: 0.80,
             flip_y: false,
             offset: Vec2::new(0.0, 0.0),
         },
         enemy: MonsterVisualConfig {
-            facing_scale: -0.66,
+            facing_scale: -0.80,
             flip_y: true,
             offset: Vec2::new(0.0, 0.0),
         },
