@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
+use super::roster::bench_display_order;
 use crate::{
     battle::{
         BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side,
@@ -223,7 +224,7 @@ pub(crate) fn update_portrait_images_system(
     asset_server: Res<AssetServer>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
-    combat_query: Query<&Combatant, With<InBattle>>,
+    combat_query: Query<(&Combatant, &Stats), With<InBattle>>,
     mut portraits: Query<
         (
             &mut ImageNode,
@@ -251,15 +252,30 @@ pub(crate) fn update_portrait_images_system(
         Side::Enemy => &enemy_team.0,
     };
 
+    let is_dead = |entity: Entity| {
+        combat_query
+            .get(entity)
+            .is_ok_and(|(_, stats)| stats.hp <= 0)
+    };
+    // 待机头像需与待机卡片使用相同的“存活靠前、阵亡沉底”展示顺序，
+    // 才能对应到正确的队伍成员，并正确判断阵亡头像变灰。
+    let player_order = bench_display_order(&player_team.0, is_dead);
+    let enemy_order = bench_display_order(&enemy_team.0, is_dead);
+    let bench_entity = |display_index: usize, order: &[usize], team: &Team| {
+        order
+            .get(display_index)
+            .and_then(|&i| team.combatants.get(i).copied())
+    };
+
     for (mut image, p_active, e_active, p_bench, e_bench, switch_portrait) in &mut portraits {
         let entity = if p_active.is_some() {
             player_team.0.active_combatant()
         } else if e_active.is_some() {
             enemy_team.0.active_combatant()
         } else if let Some(bench) = p_bench {
-            player_team.0.combatants.get(bench.index).copied()
+            bench_entity(bench.index, &player_order, &player_team.0)
         } else if let Some(bench) = e_bench {
-            enemy_team.0.combatants.get(bench.index).copied()
+            bench_entity(bench.index, &enemy_order, &enemy_team.0)
         } else if let Some(switch_portrait) = switch_portrait {
             controlled_team
                 .combatants
@@ -269,18 +285,24 @@ pub(crate) fn update_portrait_images_system(
             None
         };
 
-        let element = entity
-            .and_then(|entity| combat_query.get(entity).ok())
-            .map(|combatant| combatant.element);
+        let combat = entity.and_then(|entity| combat_query.get(entity).ok());
 
-        if let Some(element) = element {
-            image.image = asset_server.load(portrait_path(element));
-            image.color = Color::WHITE;
+        if let Some((combatant, stats)) = combat {
+            image.image = asset_server.load(portrait_path(combatant.element));
+            // 阵亡精灵头像整体压暗成冷灰，存活保持原色，替代“已倒下”文字。
+            image.color = if stats.hp <= 0 {
+                DEAD_PORTRAIT_TINT
+            } else {
+                Color::WHITE
+            };
         } else {
             image.color = Color::NONE;
         }
     }
 }
+
+/// 阵亡精灵头像的冷灰压暗色调，与存活头像的原色形成明显反差。
+const DEAD_PORTRAIT_TINT: Color = Color::srgba(0.42, 0.40, 0.42, 1.0);
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_active_panel_text_system(

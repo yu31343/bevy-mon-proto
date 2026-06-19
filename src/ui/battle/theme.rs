@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+/// 敌我精灵信息面板蒙版透明度：低于不透明的 HUD chrome，让战斗背景更透出。
+const INFO_PANEL_MASK_ALPHA: f32 = 0.55;
+
 #[derive(Resource, Clone)]
 pub(crate) struct UiTheme {
     pub bg_top: Color,
@@ -251,6 +254,18 @@ impl UiTheme {
         BackgroundGradient::from(LinearGradient::to_bottom(vec![
             ColorStop::percent(self.lacquer_edge, 0.0),
             ColorStop::percent(self.lacquer_panel, 100.0),
+        ]))
+    }
+
+    /// 敌我精灵信息面板的长方形蒙版底：在漆器渐变基础上整体降低透明度，
+    /// 让其背后的战斗背景更透出，比 HUD chrome 更通透。
+    pub fn info_panel_mask_bg(&self) -> BackgroundGradient {
+        // RGB 与 lacquer_edge / lacquer_panel 一致，仅 alpha 降低。
+        let edge = Color::srgba(0.34, 0.25, 0.12, INFO_PANEL_MASK_ALPHA);
+        let panel = Color::srgba(0.22, 0.155, 0.075, INFO_PANEL_MASK_ALPHA);
+        BackgroundGradient::from(LinearGradient::to_bottom(vec![
+            ColorStop::percent(edge, 0.0),
+            ColorStop::percent(panel, 100.0),
         ]))
     }
 

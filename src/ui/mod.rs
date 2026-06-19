@@ -114,6 +114,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         Update,
         update_enemy_roster_ui_system.run_if(in_state(GameState::Battle)),
     );
+    app.add_systems(
+        Update,
+        update_dead_member_name_color_system.run_if(in_state(GameState::Battle)),
+    );
 
     app.add_systems(
         Update,

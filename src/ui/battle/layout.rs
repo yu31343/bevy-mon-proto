@@ -21,6 +21,10 @@ const BENCH_BAR_WIDTH: f32 = 92.0; //血量/护盾条宽度
 pub(crate) const BENCH_BG: Color = Color::srgba(0.26, 0.18, 0.085, 0.62);
 pub(crate) const BENCH_BG_HOVER: Color = Color::srgba(0.38, 0.28, 0.13, 0.68);
 pub(crate) const BENCH_BG_PRESSED: Color = Color::srgba(0.22, 0.15, 0.07, 0.74);
+/// 阵亡待机位的暗化底色，与存活位的暖底拉开明显反差。
+pub(crate) const BENCH_BG_DEAD: Color = Color::srgba(0.08, 0.075, 0.075, 0.66);
+/// 阵亡待机位/换人项的冷灰描边，替代金色描边以传达“不可用”。
+pub(crate) const DEAD_MEMBER_BORDER: Color = Color::srgba(0.34, 0.32, 0.32, 0.70);
 
 /// AP 宝石 pip 的最大数量（与 BattleRules.max_ap 对齐；多余的 AP 仍由数字显示）。
 const AP_GEM_COUNT: usize = 12;
@@ -1250,7 +1254,7 @@ pub(crate) fn setup_ui_system(
                     row_gap: Val::Px(6.0),
                     ..default()
                 },
-                theme.lacquer_panel_bg(),
+                theme.info_panel_mask_bg(),
                 BorderColor::all(theme.gold),
                 theme.gold_frame_shadow(),
                 ActivePortraitFrame { side: Side::Player },
@@ -1530,7 +1534,7 @@ pub(crate) fn setup_ui_system(
                     row_gap: Val::Px(6.0),
                     ..default()
                 },
-                theme.lacquer_panel_bg(),
+                theme.info_panel_mask_bg(),
                 BorderColor::all(theme.gold),
                 theme.gold_frame_shadow(),
                 ActivePortraitFrame { side: Side::Enemy },
