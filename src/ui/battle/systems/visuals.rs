@@ -16,14 +16,15 @@ const DISCARD_ARMED_BORDER: Color = Color::srgba(0.90, 0.72, 0.18, 0.85);
 const HAND_FULL_BORDER: Color = Color::srgba(1.0, 0.08, 0.08, 0.95);
 const HAND_FULL_HINT_DURATION: f32 = 3.0;
 const HAND_FULL_HINT_FADE: f32 = 0.65;
-const ACTION_COOLDOWN_LOCKED_BG: Color = Color::srgba(0.07, 0.055, 0.035, 0.90);
-const ACTION_COOLDOWN_LOCKED_BORDER: Color = Color::srgba(0.30, 0.24, 0.14, 0.55);
-const ACTION_COOLDOWN_DIAL_HIGHLIGHT: Color = Color::srgba(0.52, 0.60, 0.68, 0.16);
+const ACTION_COOLDOWN_LOCKED_BG: Color = Color::srgba(0.18, 0.13, 0.065, 1.0);
+const ACTION_COOLDOWN_LOCKED_CARD_BG: Color = Color::srgba(0.52, 0.47, 0.37, 1.0);
+const ACTION_COOLDOWN_LOCKED_BORDER: Color = Color::srgba(0.34, 0.26, 0.13, 0.75);
+const ACTION_COOLDOWN_DIAL_HIGHLIGHT: Color = Color::srgba(0.52, 0.42, 0.20, 0.18);
 
 /// 战斗常规按钮（技能/结束/撤退/提示/换人）的暖色漆器底，与描金协调。
-const BTN_IDLE_BG: Color = Color::srgba(0.20, 0.15, 0.10, 0.99);
-const BTN_HOVER_BG: Color = Color::srgba(0.31, 0.24, 0.14, 0.99);
-const BTN_PRESSED_BG: Color = Color::srgba(0.13, 0.10, 0.06, 0.99);
+const BTN_IDLE_BG: Color = Color::srgba(0.34, 0.245, 0.115, 1.0);
+const BTN_HOVER_BG: Color = Color::srgba(0.45, 0.33, 0.16, 1.0);
+const BTN_PRESSED_BG: Color = Color::srgba(0.22, 0.155, 0.075, 1.0);
 
 pub(crate) fn apply_regular_button_style(
     interaction: &Interaction,
@@ -186,7 +187,12 @@ pub(crate) fn battle_action_cooldown_visual_system(
 
     for (interaction, mut bg, mut border, is_card) in &mut queries.p0() {
         if locked {
-            *bg = BackgroundColor(ACTION_COOLDOWN_LOCKED_BG);
+            // 手牌正常是羊皮纸，锁定时变暗化的灰羊皮纸；技能/按钮变暗化暖褐。
+            *bg = if is_card {
+                BackgroundColor(ACTION_COOLDOWN_LOCKED_CARD_BG)
+            } else {
+                BackgroundColor(ACTION_COOLDOWN_LOCKED_BG)
+            };
             *border = BorderColor::all(ACTION_COOLDOWN_LOCKED_BORDER);
         } else if is_card {
             apply_card_button_style(interaction, &mut bg, &mut border, &theme);

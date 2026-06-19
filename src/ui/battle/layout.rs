@@ -14,9 +14,9 @@ const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //信息卡宽度
 const BENCH_CARD_WIDTH: f32 = 168.0; //单个待机面板宽度
 const BENCH_BAR_WIDTH: f32 = 92.0; //血量/护盾条宽度
 // 半透明背景代替原本不透明的“黑方框”，敌我两侧使用同一底色保持对称。
-pub(crate) const BENCH_BG: Color = Color::srgba(0.10, 0.08, 0.05, 0.55);
-pub(crate) const BENCH_BG_HOVER: Color = Color::srgba(0.22, 0.17, 0.08, 0.62);
-pub(crate) const BENCH_BG_PRESSED: Color = Color::srgba(0.15, 0.11, 0.05, 0.70);
+pub(crate) const BENCH_BG: Color = Color::srgba(0.26, 0.18, 0.085, 0.62);
+pub(crate) const BENCH_BG_HOVER: Color = Color::srgba(0.38, 0.28, 0.13, 0.68);
+pub(crate) const BENCH_BG_PRESSED: Color = Color::srgba(0.22, 0.15, 0.07, 0.74);
 
 /// AP 宝石 pip 的最大数量（与 BattleRules.max_ap 对齐；多余的 AP 仍由数字显示）。
 const AP_GEM_COUNT: usize = 12;
@@ -559,7 +559,7 @@ fn spawn_skill_row_player(
                                     border_radius: BorderRadius::all(radius_button),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(0.20, 0.15, 0.10, 0.99)),
+                                BackgroundColor(Color::srgba(0.34, 0.245, 0.115, 1.0)),
                                 BorderColor::all(theme.gold_dim),
                                 theme.button_shadow(),
                                 SkillButton { index: idx },
@@ -1346,7 +1346,7 @@ pub(crate) fn setup_ui_system(
                     border_radius: BorderRadius::all(radius_panel),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.13, 0.10, 0.06, 0.99)),
+                theme.lacquer_panel_bg(),
                 BorderColor::all(theme.gold),
                 theme.panel_shadow(),
                 Visibility::Hidden,
@@ -1380,8 +1380,8 @@ pub(crate) fn setup_ui_system(
                                     border_radius: BorderRadius::all(radius_button),
                                     ..default()
                                 },
-                                BackgroundColor(theme.button_idle),
-                                BorderColor::all(theme.button_border_idle),
+                                BackgroundColor(Color::srgba(0.34, 0.245, 0.115, 1.0)),
+                                BorderColor::all(theme.gold_dim),
                                 theme.button_shadow(),
                                 BattleHintCloseButton,
                             ))
