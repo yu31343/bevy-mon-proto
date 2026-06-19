@@ -4,7 +4,7 @@ use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use crate::{
     battle::{
         BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side,
-        SkillCount, SkillList, Stats, StatusBoard, Team,
+        SkillCount, SkillList, Stats, StatusBoard, Team, UiControlSide,
     },
     data::{BattleDbs, BattleFormulaRules, ElementType},
     game_state::BattlePhase,
@@ -154,14 +154,20 @@ pub(crate) fn update_element_icon_system(
     asset_server: Res<AssetServer>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     combat_query: Query<(&Combatant,), With<InBattle>>,
     mut icons: Query<
         (
             &mut ImageNode,
             Option<&PlayerElementIcon>,
             Option<&EnemyElementIcon>,
+            Option<&TeamMemberElementIcon>,
         ),
-        Or<(With<PlayerElementIcon>, With<EnemyElementIcon>)>,
+        Or<(
+            With<PlayerElementIcon>,
+            With<EnemyElementIcon>,
+            With<TeamMemberElementIcon>,
+        )>,
     >,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
@@ -178,12 +184,22 @@ pub(crate) fn update_element_icon_system(
         .active_combatant()
         .and_then(|entity| combat_query.get(entity).ok())
         .map(|(combatant,)| combatant.element);
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
 
-    for (mut image, is_player, is_enemy) in &mut icons {
+    for (mut image, is_player, is_enemy, switch_icon) in &mut icons {
         let element = if is_player.is_some() {
             player_element
         } else if is_enemy.is_some() {
             enemy_element
+        } else if let Some(switch_icon) = switch_icon {
+            controlled_team
+                .combatants
+                .get(switch_icon.index)
+                .and_then(|entity| combat_query.get(*entity).ok())
+                .map(|(combatant,)| combatant.element)
         } else {
             None
         };
@@ -215,20 +231,27 @@ pub(crate) fn update_portrait_images_system(
             Option<&EnemyPortraitImage>,
             Option<&PlayerBenchPortrait>,
             Option<&EnemyBenchPortrait>,
+            Option<&TeamMemberPortrait>,
         ),
         Or<(
             With<PlayerPortraitImage>,
             With<EnemyPortraitImage>,
             With<PlayerBenchPortrait>,
             With<EnemyBenchPortrait>,
+            With<TeamMemberPortrait>,
         )>,
     >,
+    ui_control_side: Res<UiControlSide>,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;
     };
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
 
-    for (mut image, p_active, e_active, p_bench, e_bench) in &mut portraits {
+    for (mut image, p_active, e_active, p_bench, e_bench, switch_portrait) in &mut portraits {
         let entity = if p_active.is_some() {
             player_team.0.active_combatant()
         } else if e_active.is_some() {
@@ -237,6 +260,11 @@ pub(crate) fn update_portrait_images_system(
             player_team.0.combatants.get(bench.index).copied()
         } else if let Some(bench) = e_bench {
             enemy_team.0.combatants.get(bench.index).copied()
+        } else if let Some(switch_portrait) = switch_portrait {
+            controlled_team
+                .combatants
+                .get(switch_portrait.index)
+                .copied()
         } else {
             None
         };
@@ -499,32 +527,45 @@ pub(crate) fn update_active_panel_text_system(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_active_panel_tokens_system(
     mut commands: Commands,
-    aura_lines: Query<
-        (
-            Entity,
-            Option<&Children>,
-            Option<&PlayerAuraLine>,
-            Option<&EnemyAuraLine>,
-        ),
-        Or<(With<PlayerAuraLine>, With<EnemyAuraLine>)>,
-    >,
-    status_lines: Query<
-        (
-            Entity,
-            Option<&Children>,
-            Option<&PlayerStatusLine>,
-            Option<&EnemyStatusLine>,
-        ),
-        Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
-    >,
-    player_bench_aura_lines: Query<(Entity, Option<&Children>, &PlayerBenchAuraLine)>,
-    enemy_bench_aura_lines: Query<(Entity, Option<&Children>, &EnemyBenchAuraLine)>,
-    player_bench_status_lines: Query<(Entity, Option<&Children>, &PlayerBenchStatusLine)>,
-    enemy_bench_status_lines: Query<(Entity, Option<&Children>, &EnemyBenchStatusLine)>,
-    mut stage_modifier_badges: Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
-    mut stage_modifier_texts: Query<(&mut Text, &StatStageModifierText)>,
+    mut line_queries: ParamSet<(
+        Query<
+            (
+                Entity,
+                Option<&Children>,
+                Option<&PlayerAuraLine>,
+                Option<&EnemyAuraLine>,
+            ),
+            Or<(With<PlayerAuraLine>, With<EnemyAuraLine>)>,
+        >,
+        Query<
+            (
+                Entity,
+                Option<&Children>,
+                Option<&PlayerStatusLine>,
+                Option<&EnemyStatusLine>,
+            ),
+            Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
+        >,
+        Query<(Entity, Option<&Children>, &PlayerBenchAuraLine)>,
+        Query<(Entity, Option<&Children>, &EnemyBenchAuraLine)>,
+        Query<(Entity, Option<&Children>, &TeamMemberAuraLine)>,
+        Query<(Entity, Option<&Children>, &PlayerBenchStatusLine)>,
+        Query<(Entity, Option<&Children>, &EnemyBenchStatusLine)>,
+        Query<(Entity, Option<&Children>, &TeamMemberStatusLine)>,
+    )>,
+    mut stage_queries: ParamSet<(
+        Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
+        Query<(&mut Text, &StatStageModifierText)>,
+        Query<(
+            &mut Node,
+            &mut BackgroundColor,
+            &TeamMemberStatStageModifierBadge,
+        )>,
+        Query<(&mut Text, &TeamMemberStatStageModifierText)>,
+    )>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     combat_query: Query<
         (
             &Combatant,
@@ -546,6 +587,10 @@ pub(crate) fn update_active_panel_tokens_system(
 
     let player_active = active_combatant_data(&player_team.0, &combat_query);
     let enemy_active = active_combatant_data(&enemy_team.0, &combat_query);
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
     let info_font = super::super::helpers::make_text_font(13.0, ui_font.as_deref());
     let aura_icon_items =
         |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
@@ -562,7 +607,7 @@ pub(crate) fn update_active_panel_tokens_system(
                 .collect()
         };
 
-    for (entity, children, is_player_aura, is_enemy_aura) in &aura_lines {
+    for (entity, children, is_player_aura, is_enemy_aura) in &line_queries.p0() {
         let target = if is_player_aura.is_some() {
             player_team.0.active_combatant()
         } else if is_enemy_aura.is_some() {
@@ -583,7 +628,7 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
-    for (entity, children, line) in &player_bench_aura_lines {
+    for (entity, children, line) in &line_queries.p2() {
         let items = aura_icon_items(player_team.0.combatants.get(line.index).copied());
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
@@ -597,7 +642,7 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
-    for (entity, children, line) in &enemy_bench_aura_lines {
+    for (entity, children, line) in &line_queries.p3() {
         let items = aura_icon_items(enemy_team.0.combatants.get(line.index).copied());
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
@@ -611,7 +656,21 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
-    for (_, mut bg, marker) in &mut stage_modifier_badges {
+    for (entity, children, line) in &line_queries.p4() {
+        let items = aura_icon_items(controlled_team.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (_, mut bg, marker) in &mut stage_queries.p0() {
         let stage =
             stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
         *bg = if stage == 0 {
@@ -621,7 +680,7 @@ pub(crate) fn update_active_panel_tokens_system(
         };
     }
 
-    for (mut text, marker) in &mut stage_modifier_texts {
+    for (mut text, marker) in &mut stage_queries.p1() {
         let stage =
             stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
         text.0 = if stage == 0 {
@@ -631,7 +690,40 @@ pub(crate) fn update_active_panel_tokens_system(
         };
     }
 
-    for (entity, children, is_player_status, is_enemy_status) in &status_lines {
+    for (mut node, mut bg, marker) in &mut stage_queries.p2() {
+        let stage = controlled_team
+            .combatants
+            .get(marker.index)
+            .and_then(|entity| combat_query.get(*entity).ok())
+            .map(|(_, stats, _, _, _, _)| stat_stage(stats, marker.stat))
+            .unwrap_or(0);
+        node.display = if stage == 0 {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        *bg = if stage == 0 {
+            BackgroundColor(Color::NONE)
+        } else {
+            BackgroundColor(stage_modifier_color(stage))
+        };
+    }
+
+    for (mut text, marker) in &mut stage_queries.p3() {
+        let stage = controlled_team
+            .combatants
+            .get(marker.index)
+            .and_then(|entity| combat_query.get(*entity).ok())
+            .map(|(_, stats, _, _, _, _)| stat_stage(stats, marker.stat))
+            .unwrap_or(0);
+        text.0 = if stage == 0 {
+            String::new()
+        } else {
+            format!("{stage:+}")
+        };
+    }
+
+    for (entity, children, is_player_status, is_enemy_status) in &line_queries.p1() {
         let active = if is_player_status.is_some() {
             player_active
         } else if is_enemy_status.is_some() {
@@ -700,7 +792,7 @@ pub(crate) fn update_active_panel_tokens_system(
                 .collect()
         };
 
-    for (entity, children, line) in &player_bench_status_lines {
+    for (entity, children, line) in &line_queries.p5() {
         let items = bench_status_items(player_team.0.combatants.get(line.index).copied());
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
@@ -714,7 +806,7 @@ pub(crate) fn update_active_panel_tokens_system(
         );
     }
 
-    for (entity, children, line) in &enemy_bench_status_lines {
+    for (entity, children, line) in &line_queries.p6() {
         let items = bench_status_items(enemy_team.0.combatants.get(line.index).copied());
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
@@ -724,6 +816,20 @@ pub(crate) fn update_active_panel_tokens_system(
             &info_font,
             &items,
             28.0,
+            DebugStatusToken,
+        );
+    }
+
+    for (entity, children, line) in &line_queries.p7() {
+        let items = bench_status_items(controlled_team.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            30.0,
             DebugStatusToken,
         );
     }

@@ -118,11 +118,7 @@ pub(crate) fn button_visual_state_system(
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (
             Changed<Interaction>,
-            Or<(
-                With<SwitchMonsterButton>,
-                With<SwitchCancelButton>,
-                With<TeamMemberButton>,
-            )>,
+            Or<(With<SwitchMonsterButton>, With<SwitchCancelButton>)>,
             Without<ButtonClickFlash>,
             Without<SkillButton>,
             Without<EndTurnButton>,

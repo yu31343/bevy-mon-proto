@@ -159,14 +159,18 @@ fn bar_value_text_shadow() -> TextShadow {
     }
 }
 
-fn spawn_stat_chip_compact(
+fn spawn_stat_chip_compact<ValueMarker, StageBadgeMarker, StageTextMarker>(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
     font: TextFont,
     label: &'static str,
-    value_marker: impl Component,
-    stage_markers: Option<(StatStageModifierBadge, StatStageModifierText)>,
-) {
+    value_marker: ValueMarker,
+    stage_markers: Option<(StageBadgeMarker, StageTextMarker)>,
+) where
+    ValueMarker: Component,
+    StageBadgeMarker: Component,
+    StageTextMarker: Component,
+{
     // 紧凑横向属性项：描金标签 + 羊皮纸数值牌 + 升降箭头位。
     parent
         .spawn((Node {
@@ -581,6 +585,289 @@ fn spawn_small_bench_card(
                 });
         }
     }
+}
+
+fn spawn_switch_candidate_card(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    asset_server: &AssetServer,
+    border_1: UiRect,
+    radius_hp: Val,
+    meta_font: TextFont,
+    title_font: TextFont,
+    index: usize,
+) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(12.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                ..default()
+            },
+            theme.lacquer_panel_bg(),
+            BackgroundColor(Color::NONE),
+            BorderColor::all(theme.gold),
+            theme.gold_frame_shadow(),
+            TeamMemberButton { index },
+        ))
+        .with_children(|card| {
+            card.spawn((Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                ..default()
+            },))
+                .with_children(|header| {
+                    header
+                        .spawn((
+                            Node {
+                                width: Val::Px(PORTRAIT_SIZE),
+                                height: Val::Px(PORTRAIT_SIZE),
+                                flex_shrink: 0.0,
+                                position_type: PositionType::Relative,
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(12.0)),
+                                ..default()
+                            },
+                            ImageNode::new(asset_server.load("images/icons/profile/ui/water.png")),
+                            BorderColor::all(theme.gold),
+                            TeamMemberPortrait { index },
+                        ))
+                        .with_children(|portrait| {
+                            portrait.spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(3.0),
+                                    bottom: Val::Px(3.0),
+                                    width: Val::Px(PORTRAIT_BADGE_SIZE),
+                                    height: Val::Px(PORTRAIT_BADGE_SIZE),
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    border_radius: BorderRadius::all(Val::Px(
+                                        PORTRAIT_BADGE_SIZE / 2.0,
+                                    )),
+                                    ..default()
+                                },
+                                ImageNode::new(
+                                    asset_server.load("images/icons/elements/water.png"),
+                                ),
+                                BorderColor::all(theme.gold_bright),
+                                TeamMemberElementIcon { index },
+                            ));
+                        });
+
+                    header
+                        .spawn((Node {
+                            flex_grow: 1.0,
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Stretch,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        },))
+                        .with_children(|col| {
+                            col.spawn((Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(6.0),
+                                ..default()
+                            },))
+                                .with_children(|row| {
+                                    row.spawn((
+                                        Text::new("..."),
+                                        title_font.clone(),
+                                        TextColor(theme.accent_player),
+                                        theme.title_text_shadow(),
+                                        TeamMemberNameText { index },
+                                    ));
+                                });
+
+                            col.spawn((Node {
+                                width: Val::Percent(100.0),
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },))
+                                .with_children(|row| {
+                                    row.spawn((Node {
+                                        flex_grow: 1.0,
+                                        ..default()
+                                    },))
+                                        .with_children(|bar_wrap| {
+                                            spawn_hp_bar(
+                                                bar_wrap,
+                                                theme,
+                                                border_1,
+                                                radius_hp,
+                                                JustifyContent::FlexStart,
+                                                theme.hp_fill_player,
+                                                TeamMemberHpBarFill { index },
+                                            );
+                                        });
+                                    row.spawn((
+                                        Text::new("0/0"),
+                                        meta_font.clone(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
+                                        TeamMemberHpValueText { index },
+                                    ));
+                                    spawn_colored_debug_tokens(
+                                        row,
+                                        theme,
+                                        meta_font.clone(),
+                                        meta_font.clone(),
+                                        "",
+                                        Val::Auto,
+                                        FlexWrap::Wrap,
+                                        FlexDirection::Row,
+                                        Val::Px(4.0),
+                                        TeamMemberAuraLine { index },
+                                        DebugAuraToken,
+                                        &[],
+                                    );
+                                });
+
+                            col.spawn((Node {
+                                width: Val::Percent(100.0),
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },))
+                                .with_children(|row| {
+                                    spawn_shield_bar(
+                                        row,
+                                        theme,
+                                        border_1,
+                                        radius_hp,
+                                        theme.shield_fill_player,
+                                        TeamMemberShieldBarFill { index },
+                                        TeamMemberShieldBarTrack { index },
+                                    );
+                                    row.spawn((
+                                        Text::new("0"),
+                                        meta_font.clone(),
+                                        bar_value_text_color(),
+                                        bar_value_text_shadow(),
+                                        TeamMemberShieldValueText { index },
+                                    ));
+                                });
+                        });
+                });
+
+            card.spawn((Node {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(22.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(6.0),
+                row_gap: Val::Px(4.0),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },))
+                .with_children(|row| {
+                    spawn_colored_debug_tokens(
+                        row,
+                        theme,
+                        meta_font.clone(),
+                        meta_font.clone(),
+                        "",
+                        Val::Percent(100.0),
+                        FlexWrap::Wrap,
+                        FlexDirection::Row,
+                        Val::Px(4.0),
+                        TeamMemberStatusLine { index },
+                        DebugStatusToken,
+                        &[],
+                    );
+                });
+
+            card.spawn((Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(6.0),
+                row_gap: Val::Px(4.0),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },))
+                .with_children(|row| {
+                    spawn_stat_chip_compact(
+                        row,
+                        theme,
+                        meta_font.clone(),
+                        "攻",
+                        TeamMemberAtkText { index },
+                        Some((
+                            TeamMemberStatStageModifierBadge {
+                                index,
+                                stat: StatStageModifierKind::Atk,
+                            },
+                            TeamMemberStatStageModifierText {
+                                index,
+                                stat: StatStageModifierKind::Atk,
+                            },
+                        )),
+                    );
+                    spawn_stat_chip_compact(
+                        row,
+                        theme,
+                        meta_font.clone(),
+                        "防",
+                        TeamMemberDefText { index },
+                        Some((
+                            TeamMemberStatStageModifierBadge {
+                                index,
+                                stat: StatStageModifierKind::Def,
+                            },
+                            TeamMemberStatStageModifierText {
+                                index,
+                                stat: StatStageModifierKind::Def,
+                            },
+                        )),
+                    );
+                    spawn_stat_chip_compact(
+                        row,
+                        theme,
+                        meta_font.clone(),
+                        "速",
+                        TeamMemberSpdText { index },
+                        Some((
+                            TeamMemberStatStageModifierBadge {
+                                index,
+                                stat: StatStageModifierKind::Spd,
+                            },
+                            TeamMemberStatStageModifierText {
+                                index,
+                                stat: StatStageModifierKind::Spd,
+                            },
+                        )),
+                    );
+                    spawn_stat_chip_compact(
+                        row,
+                        theme,
+                        meta_font,
+                        "命",
+                        TeamMemberAccText { index },
+                        Some((
+                            TeamMemberStatStageModifierBadge {
+                                index,
+                                stat: StatStageModifierKind::Acc,
+                            },
+                            TeamMemberStatStageModifierText {
+                                index,
+                                stat: StatStageModifierKind::Acc,
+                            },
+                        )),
+                    );
+                });
+        });
 }
 
 fn spawn_colored_debug_tokens(
@@ -2135,12 +2422,13 @@ pub(crate) fn setup_ui_system(
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
+                ZIndex(1000),
                 SwitchOverlayRoot,
             ))
             .with_children(|overlay| {
                 overlay.spawn((
                     Node {
-                        width: Val::Px(600.0),
+                        width: Val::Px(1080.0),
                         padding: UiRect::all(Val::Px(20.0)),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(16.0),
@@ -2201,91 +2489,26 @@ pub(crate) fn setup_ui_system(
                         Node {
                             width: Val::Percent(100.0),
                             flex_direction: FlexDirection::Row,
-                            column_gap: Val::Px(12.0),
-                            row_gap: Val::Px(12.0),
+                            column_gap: Val::Px(16.0),
+                            row_gap: Val::Px(16.0),
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Stretch,
                             ..default()
                         },
                     ))
                     .with_children(|row| {
                         for idx in 0..3 {
-                            row.spawn((
-                                Button,
-                                Node {
-                                    flex_grow: 1.0,
-                                    min_height: Val::Px(100.0),
-                                    padding: UiRect::all(Val::Px(12.0)),
-                                    border: border_1,
-                                    border_radius: BorderRadius::all(radius_button),
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(6.0),
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BackgroundColor(theme.button_idle),
-                                BorderColor::all(theme.button_border_idle),
-                                theme.button_shadow(),
-                                TeamMemberButton { index: idx },
-                            ))
-                            .with_children(|p| {
-                                p.spawn((
-                                    Text::new(format!("{}键：队伍{}", idx + 5, idx + 1)),
-                                    body_font.clone(),
-                                    TextColor(theme.text_primary),
-                                    TeamMemberButtonText { index: idx },
-                                ));
-                                p.spawn((
-                                    Text::new("附着: 无"),
-                                    meta_font.clone(),
-                                    TextColor(theme.text_muted),
-                                    TeamMemberAuraText { index: idx },
-                                ));
-                                p.spawn((
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(10.0),
-                                        overflow: Overflow::clip(),
-                                        border_radius: BorderRadius::all(Val::Px(5.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(theme.hp_track),
-                                ))
-                                .with_children(|bar| {
-                                    bar.spawn((
-                                        Node {
-                                            width: Val::Percent(100.0),
-                                            height: Val::Percent(100.0),
-                                            border_radius: BorderRadius::all(Val::Px(5.0)),
-                                            ..default()
-                                        },
-                                        BackgroundColor(theme.hp_fill_player),
-                                        TeamMemberHpBarFill { index: idx },
-                                    ));
-                                });
-                                p.spawn((
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(7.0),
-                                        overflow: Overflow::clip(),
-                                        border_radius: BorderRadius::all(Val::Px(3.5)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(theme.shield_track),
-                                    Visibility::Hidden,
-                                    TeamMemberShieldBarTrack { index: idx },
-                                ))
-                                .with_children(|bar| {
-                                    bar.spawn((
-                                        Node {
-                                            width: Val::Percent(100.0),
-                                            height: Val::Percent(100.0),
-                                            border_radius: BorderRadius::all(Val::Px(3.5)),
-                                            ..default()
-                                        },
-                                        BackgroundColor(theme.shield_fill_player),
-                                        TeamMemberShieldBarFill { index: idx },
-                                    ));
-                                });
-                            });
+                            spawn_switch_candidate_card(
+                                row,
+                                &theme,
+                                &asset_server,
+                                border_1,
+                                radius_hp,
+                                meta_font.clone(),
+                                title_font.clone(),
+                                idx,
+                            );
                         }
                     });
                 });

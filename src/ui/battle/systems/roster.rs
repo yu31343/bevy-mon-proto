@@ -3,11 +3,13 @@ use bevy::prelude::*;
 use crate::battle::{
     ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side, Stats, StatusBoard, UiControlSide,
 };
+use crate::data::BattleFormulaRules;
 
 use super::super::components::*;
 use super::super::theme::UiTheme;
 
 const BENCH_SHIELD_BAR_WIDTH: f32 = 92.0;
+const SWITCH_SHIELD_BAR_WIDTH: f32 = 220.0;
 
 fn shield_pct(stats: &Stats, shield: &Shield) -> f32 {
     if stats.max_hp > 0 {
@@ -44,6 +46,46 @@ fn apply_bench_shield_track(node: &mut Node, visibility: &mut Visibility, pct: f
     };
 }
 
+fn apply_switch_shield_track(node: &mut Node, visibility: &mut Visibility, pct: f32) {
+    let has_shield = pct > 0.0;
+    node.width = Val::Px(if has_shield {
+        SWITCH_SHIELD_BAR_WIDTH * pct / 100.0
+    } else {
+        0.0
+    });
+    node.display = if has_shield {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    *visibility = if has_shield {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+}
+
+fn effective_stat_value(
+    stats: &Stats,
+    stat: StatStageModifierKind,
+    formula_rules: &BattleFormulaRules,
+) -> i32 {
+    match stat {
+        StatStageModifierKind::Atk => {
+            super::super::helpers::effective_atk_value(stats, formula_rules)
+        }
+        StatStageModifierKind::Def => {
+            super::super::helpers::effective_def_value(stats, formula_rules)
+        }
+        StatStageModifierKind::Acc => {
+            super::super::helpers::effective_acc_value(stats, formula_rules)
+        }
+        StatStageModifierKind::Spd => {
+            super::super::helpers::effective_spd_value(stats, formula_rules)
+        }
+    }
+}
+
 pub(crate) fn update_player_roster_ui_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
@@ -54,6 +96,13 @@ pub(crate) fn update_player_roster_ui_system(
             &mut Text,
             Option<&TeamMemberButtonText>,
             Option<&TeamMemberAuraText>,
+            Option<&TeamMemberNameText>,
+            Option<&TeamMemberHpValueText>,
+            Option<&TeamMemberShieldValueText>,
+            Option<&TeamMemberAtkText>,
+            Option<&TeamMemberDefText>,
+            Option<&TeamMemberAccText>,
+            Option<&TeamMemberSpdText>,
             Option<&PlayerBenchNameText>,
             Option<&PlayerBenchHpValueText>,
             Option<&PlayerBenchShieldValueText>,
@@ -81,12 +130,13 @@ pub(crate) fn update_player_roster_ui_system(
             &mut Node,
             &mut BackgroundColor,
         )>,
+        Query<
+            (&TeamMemberShieldBarTrack, &mut Node, &mut Visibility),
+            Without<PlayerBenchShieldBarTrack>,
+        >,
     )>,
-    mut team_member_shield_tracks: Query<
-        (&TeamMemberShieldBarTrack, &mut Visibility),
-        Without<PlayerBenchShieldBarTrack>,
-    >,
     theme: Res<UiTheme>,
+    formula_rules: Res<BattleFormulaRules>,
 ) {
     let player_team = player_team.map(|team| team.0.clone());
     let enemy_team = enemy_team.map(|team| team.0.clone());
@@ -104,7 +154,22 @@ pub(crate) fn update_player_roster_ui_system(
     let get_controlled_entity = |index: usize| controlled_team.combatants.get(index).copied();
     let get_player_entity = |index: usize| player_team.combatants.get(index).copied();
 
-    for (mut text, overlay_name, overlay_aura, bench_name, bench_hp, bench_shield) in &mut text_q {
+    for (
+        mut text,
+        overlay_name,
+        overlay_aura,
+        switch_name,
+        switch_hp,
+        switch_shield,
+        switch_atk,
+        switch_def,
+        switch_acc,
+        switch_spd,
+        bench_name,
+        bench_hp,
+        bench_shield,
+    ) in &mut text_q
+    {
         if let Some(meta) = overlay_name {
             if let Some(entity) = get_controlled_entity(meta.index) {
                 if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
@@ -133,6 +198,64 @@ pub(crate) fn update_player_roster_ui_system(
                 }
             } else {
                 text.0 = "状态: 无 | 阶段: Atk+0 Def+0 Spd+0 Acc+0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = switch_name {
+            if let Some(entity) = get_controlled_entity(meta.index) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
+                    let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
+                    text.0 = format!("{}{}", name, dead);
+                } else {
+                    text.0 = format!("队伍{}", meta.index + 1);
+                }
+            } else {
+                text.0 = format!("队伍{}", meta.index + 1);
+            }
+            continue;
+        }
+
+        if let Some(meta) = switch_hp {
+            if let Some(entity) = get_controlled_entity(meta.index) {
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = format!("{}/{}", stats.hp.max(0), stats.max_hp);
+                } else {
+                    text.0 = "0/0".to_string();
+                }
+            } else {
+                text.0 = "0/0".to_string();
+            }
+            continue;
+        }
+
+        if let Some(meta) = switch_shield {
+            if let Some(entity) = get_controlled_entity(meta.index) {
+                if let Ok((_, _, shield, _, _)) = combat_query.get(entity) {
+                    text.0 = shield_value_text(shield.0);
+                } else {
+                    text.0 = String::new();
+                }
+            } else {
+                text.0 = String::new();
+            }
+            continue;
+        }
+
+        let switch_stat = switch_atk
+            .map(|meta| (meta.index, StatStageModifierKind::Atk))
+            .or_else(|| switch_def.map(|meta| (meta.index, StatStageModifierKind::Def)))
+            .or_else(|| switch_acc.map(|meta| (meta.index, StatStageModifierKind::Acc)))
+            .or_else(|| switch_spd.map(|meta| (meta.index, StatStageModifierKind::Spd)));
+        if let Some((index, stat)) = switch_stat {
+            if let Some(entity) = get_controlled_entity(index) {
+                if let Ok((stats, _, _, _, _)) = combat_query.get(entity) {
+                    text.0 = effective_stat_value(stats, stat, &formula_rules).to_string();
+                } else {
+                    text.0 = "0".to_string();
+                }
+            } else {
+                text.0 = "0".to_string();
             }
             continue;
         }
@@ -229,14 +352,14 @@ pub(crate) fn update_player_roster_ui_system(
         };
         node.min_height = Val::Px(58.0);
         *bg = match *interaction {
-            Interaction::Hovered => BackgroundColor(theme.button_hover),
-            Interaction::Pressed => BackgroundColor(theme.button_pressed),
-            Interaction::None => BackgroundColor(theme.button_idle),
+            Interaction::Hovered => BackgroundColor(Color::srgba(1.0, 0.82, 0.35, 0.08)),
+            Interaction::Pressed => BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.18)),
+            Interaction::None => BackgroundColor(Color::NONE),
         };
         *border = match *interaction {
-            Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-            Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-            Interaction::None => BorderColor::all(theme.button_border_idle),
+            Interaction::Hovered => BorderColor::all(theme.gold_bright),
+            Interaction::Pressed => BorderColor::all(theme.gold_dim),
+            Interaction::None => BorderColor::all(theme.gold),
         };
     }
 
@@ -256,16 +379,12 @@ pub(crate) fn update_player_roster_ui_system(
         };
     }
 
-    for (meta, mut vis) in &mut team_member_shield_tracks {
-        let has_shield = get_controlled_entity(meta.index)
+    for (meta, mut node, mut visibility) in &mut nodes.p6() {
+        let pct = get_controlled_entity(meta.index)
             .and_then(|entity| combat_query.get(entity).ok())
-            .map(|(_, _, shield, _, _)| shield.0 > 0)
-            .unwrap_or(false);
-        *vis = if has_shield {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
+            .map(|(stats, _, shield, _, _)| shield_pct(stats, shield))
+            .unwrap_or(0.0);
+        apply_switch_shield_track(&mut node, &mut visibility, pct);
     }
 }
 

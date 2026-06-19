@@ -138,6 +138,31 @@ pub(crate) struct TeamMemberButton {
 }
 
 #[derive(Component)]
+pub(crate) struct TeamMemberPortrait {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberElementIcon {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberNameText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberAuraLine {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberStatusLine {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct TeamMemberButtonText {
     pub index: usize,
 }
@@ -153,6 +178,11 @@ pub(crate) struct TeamMemberHpBarFill {
 }
 
 #[derive(Component)]
+pub(crate) struct TeamMemberHpValueText {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct TeamMemberShieldBarTrack {
     pub index: usize,
 }
@@ -160,6 +190,43 @@ pub(crate) struct TeamMemberShieldBarTrack {
 #[derive(Component)]
 pub(crate) struct TeamMemberShieldBarFill {
     pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberShieldValueText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberAtkText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberDefText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberAccText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct TeamMemberSpdText {
+    pub index: usize,
+}
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct TeamMemberStatStageModifierBadge {
+    pub index: usize,
+    pub stat: StatStageModifierKind,
+}
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct TeamMemberStatStageModifierText {
+    pub index: usize,
+    pub stat: StatStageModifierKind,
 }
 
 #[derive(Component)]
