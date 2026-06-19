@@ -266,14 +266,37 @@ fn spawn_small_bench_card(
                             ..default()
                         },))
                         .with_children(|card| {
-                            // 名称（附着信息以紧凑文字附在名称后）
-                            card.spawn((
-                                Text::new("队伍"),
-                                title_font.clone(),
-                                TextColor(theme.accent_player),
-                                theme.title_text_shadow(),
-                                PlayerBenchNameText { index },
-                            ));
+                            // 名称 + 附着图标
+                            card.spawn((Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            },))
+                                .with_children(|row| {
+                                    row.spawn((
+                                        Text::new("队伍"),
+                                        title_font.clone(),
+                                        TextColor(theme.accent_player),
+                                        theme.title_text_shadow(),
+                                        PlayerBenchNameText { index },
+                                    ));
+                                    spawn_colored_debug_tokens(
+                                        row,
+                                        theme,
+                                        meta_font.clone(),
+                                        meta_font.clone(),
+                                        "",
+                                        Val::Auto,
+                                        FlexWrap::NoWrap,
+                                        FlexDirection::Row,
+                                        Val::Px(3.0),
+                                        PlayerBenchAuraLine { index },
+                                        DebugAuraToken,
+                                        &[],
+                                    );
+                                });
                             // 血量条 + 数值
                             card.spawn((Node {
                                 width: Val::Percent(100.0),
@@ -397,14 +420,38 @@ fn spawn_small_bench_card(
                             ..default()
                         },))
                         .with_children(|card| {
-                            // 名称（右对齐，镜像玩家面板）
-                            card.spawn((
-                                Text::new("队伍"),
-                                title_font.clone(),
-                                TextColor(theme.accent_enemy),
-                                theme.title_text_shadow(),
-                                EnemyBenchNameText { index },
-                            ));
+                            // 名称 + 附着图标（右对齐镜像）
+                            card.spawn((Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::FlexEnd,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            },))
+                                .with_children(|row| {
+                                    spawn_colored_debug_tokens(
+                                        row,
+                                        theme,
+                                        meta_font.clone(),
+                                        meta_font.clone(),
+                                        "",
+                                        Val::Auto,
+                                        FlexWrap::NoWrap,
+                                        FlexDirection::RowReverse,
+                                        Val::Px(3.0),
+                                        EnemyBenchAuraLine { index },
+                                        DebugAuraToken,
+                                        &[],
+                                    );
+                                    row.spawn((
+                                        Text::new("队伍"),
+                                        title_font.clone(),
+                                        TextColor(theme.accent_enemy),
+                                        theme.title_text_shadow(),
+                                        EnemyBenchNameText { index },
+                                    ));
+                                });
                             // 血量条 + 数值（数值在左、条在右，镜像玩家）
                             card.spawn((Node {
                                 width: Val::Percent(100.0),

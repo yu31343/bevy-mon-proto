@@ -139,14 +139,9 @@ pub(crate) fn update_player_roster_ui_system(
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_player_entity(meta.index) {
-                if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
-                    let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
-                    text.0 = if aura_text.is_empty() {
-                        format!("{}{}", name, dead)
-                    } else {
-                        format!("{} {}{}", name, aura_text, dead)
-                    };
+                    text.0 = format!("{}{}", name, dead);
                 } else {
                     text.0 = format!("队伍{}", meta.index + 1);
                 }
@@ -350,14 +345,9 @@ pub(crate) fn update_enemy_roster_ui_system(
 
         if let Some(meta) = bench_name {
             if let Some(entity) = get_entity(meta.index) {
-                if let Ok((stats, name, _, aura, _)) = combat_query.get(entity) {
+                if let Ok((stats, name, _, _, _)) = combat_query.get(entity) {
                     let dead = if stats.hp <= 0 { " (倒下)" } else { "" };
-                    let aura_text = super::super::helpers::compact_aura_label(&aura.elements());
-                    text.0 = if aura_text.is_empty() {
-                        format!("{}{}", name, dead)
-                    } else {
-                        format!("{} {}{}", name, aura_text, dead)
-                    };
+                    text.0 = format!("{}{}", name, dead);
                 } else {
                     text.0 = format!("队伍{}", meta.index + 1);
                 }

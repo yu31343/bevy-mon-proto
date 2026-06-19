@@ -173,6 +173,11 @@ pub(crate) struct PlayerBenchNameText {
 }
 
 #[derive(Component)]
+pub(crate) struct PlayerBenchAuraLine {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct PlayerBenchStatusLine {
     pub index: usize,
 }
@@ -204,6 +209,11 @@ pub(crate) struct EnemyBenchCard {
 
 #[derive(Component)]
 pub(crate) struct EnemyBenchNameText {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct EnemyBenchAuraLine {
     pub index: usize,
 }
 

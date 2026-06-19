@@ -34,6 +34,16 @@ fn portrait_path(element: ElementType) -> &'static str {
     }
 }
 
+fn attachment_icon_path(element: ElementType) -> Option<&'static str> {
+    match element {
+        ElementType::Fire => Some("images/icons/attachment/fire.png"),
+        ElementType::Water => Some("images/icons/attachment/water.png"),
+        ElementType::Grass => Some("images/icons/attachment/grass.png"),
+        ElementType::Thunder => Some("images/icons/attachment/thunder.png"),
+        ElementType::Light | ElementType::Dark | ElementType::Wind => None,
+    }
+}
+
 type ActiveCombatantRef<'a> = (
     &'a Combatant,
     &'a Stats,
@@ -507,6 +517,8 @@ pub(crate) fn update_active_panel_tokens_system(
         ),
         Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
     >,
+    player_bench_aura_lines: Query<(Entity, Option<&Children>, &PlayerBenchAuraLine)>,
+    enemy_bench_aura_lines: Query<(Entity, Option<&Children>, &EnemyBenchAuraLine)>,
     player_bench_status_lines: Query<(Entity, Option<&Children>, &PlayerBenchStatusLine)>,
     enemy_bench_status_lines: Query<(Entity, Option<&Children>, &EnemyBenchStatusLine)>,
     mut stage_modifier_badges: Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
@@ -535,34 +547,66 @@ pub(crate) fn update_active_panel_tokens_system(
     let player_active = active_combatant_data(&player_team.0, &combat_query);
     let enemy_active = active_combatant_data(&enemy_team.0, &combat_query);
     let info_font = super::super::helpers::make_text_font(13.0, ui_font.as_deref());
+    let aura_icon_items =
+        |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
+            let Some(entity) = target else {
+                return Vec::new();
+            };
+            let Ok((_, _, _, _, aura, _)) = combat_query.get(entity) else {
+                return Vec::new();
+            };
+            aura.elements()
+                .iter()
+                .filter_map(|element| attachment_icon_path(*element))
+                .map(super::super::helpers::DebugTokenContent::Image)
+                .collect()
+        };
 
     for (entity, children, is_player_aura, is_enemy_aura) in &aura_lines {
-        let active = if is_player_aura.is_some() {
-            player_active
+        let target = if is_player_aura.is_some() {
+            player_team.0.active_combatant()
         } else if is_enemy_aura.is_some() {
-            enemy_active
+            enemy_team.0.active_combatant()
         } else {
             None
         };
-        let items = if let Some((_, _, _, _, aura, _)) = active {
-            aura.elements()
-                .iter()
-                .map(|element| {
-                    (
-                        super::super::helpers::element_name(*element).to_string(),
-                        super::super::helpers::element_color(*element, &theme),
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        super::super::helpers::replace_debug_tokens(
+        let items = aura_icon_items(target);
+        super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
             children,
+            &asset_server,
             &info_font,
             &items,
+            28.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (entity, children, line) in &player_bench_aura_lines {
+        let items = aura_icon_items(player_team.0.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            24.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (entity, children, line) in &enemy_bench_aura_lines {
+        let items = aura_icon_items(enemy_team.0.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            24.0,
             DebugAuraToken,
         );
     }

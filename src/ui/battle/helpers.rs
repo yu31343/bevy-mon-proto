@@ -821,32 +821,6 @@ pub(crate) fn effective_acc_value(stats: &Stats, rules: &crate::data::BattleForm
         .round() as i32
 }
 
-pub(crate) fn replace_debug_tokens(
-    commands: &mut Commands,
-    line_entity: Entity,
-    children: Option<&Children>,
-    font: &TextFont,
-    items: &[(String, Color)],
-    token_kind: impl Component + Clone,
-) {
-    if let Some(children) = children {
-        for child in children.iter().skip(1) {
-            commands.entity(child).despawn();
-        }
-    }
-    commands.entity(line_entity).with_children(|line| {
-        for (idx, (text, color)) in items.iter().enumerate() {
-            let prefix = if idx == 0 { "" } else { "" };
-            line.spawn((
-                Text::new(format!("{prefix}{text}")),
-                font.clone(),
-                TextColor(*color),
-                token_kind.clone(),
-            ));
-        }
-    });
-}
-
 pub(crate) enum DebugTokenContent {
     Text(String, Color),
     Image(&'static str),
