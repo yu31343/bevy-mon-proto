@@ -24,13 +24,13 @@ fn element_icon_path(element: ElementType) -> &'static str {
 
 fn portrait_path(element: ElementType) -> &'static str {
     match element {
-        ElementType::Fire => "images/icons/profile/fire.png",
-        ElementType::Water => "images/icons/profile/water.png",
-        ElementType::Grass => "images/icons/profile/grass.png",
-        ElementType::Light => "images/icons/profile/light.png",
-        ElementType::Dark => "images/icons/profile/dark.png",
-        ElementType::Thunder => "images/icons/profile/thunder.png",
-        ElementType::Wind => "images/icons/profile/wind.png",
+        ElementType::Fire => "images/icons/profile/ui/fire.png",
+        ElementType::Water => "images/icons/profile/ui/water.png",
+        ElementType::Grass => "images/icons/profile/ui/grass.png",
+        ElementType::Light => "images/icons/profile/ui/light.png",
+        ElementType::Dark => "images/icons/profile/ui/dark.png",
+        ElementType::Thunder => "images/icons/profile/ui/thunder.png",
+        ElementType::Wind => "images/icons/profile/ui/wind.png",
     }
 }
 
@@ -145,11 +145,14 @@ pub(crate) fn update_element_icon_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<(&Combatant,), With<InBattle>>,
-    mut icons: Query<(
-        &mut ImageNode,
-        Option<&PlayerElementIcon>,
-        Option<&EnemyElementIcon>,
-    )>,
+    mut icons: Query<
+        (
+            &mut ImageNode,
+            Option<&PlayerElementIcon>,
+            Option<&EnemyElementIcon>,
+        ),
+        Or<(With<PlayerElementIcon>, With<EnemyElementIcon>)>,
+    >,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;
@@ -186,7 +189,7 @@ pub(crate) fn update_element_icon_system(
 
 /// 刷新精灵头像（上场大头像 + 待机位小头像，敌我两侧）。
 ///
-/// 头像按元素取图（`images/icons/profile/{element}.png`），逻辑与
+/// 头像按元素取图（`images/icons/profile/ui/{element}.png`），逻辑与
 /// [`update_element_icon_system`] 一致：上场取 `active_combatant()`，
 /// 待机按槽位 `combatants[index]`。无精灵（空位/查询失败）则隐藏头像。
 /// 敌方水平翻转在生成时静态设置，本系统不触碰 `flip_x`。
@@ -195,13 +198,21 @@ pub(crate) fn update_portrait_images_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     combat_query: Query<&Combatant, With<InBattle>>,
-    mut portraits: Query<(
-        &mut ImageNode,
-        Option<&PlayerPortraitImage>,
-        Option<&EnemyPortraitImage>,
-        Option<&PlayerBenchPortrait>,
-        Option<&EnemyBenchPortrait>,
-    )>,
+    mut portraits: Query<
+        (
+            &mut ImageNode,
+            Option<&PlayerPortraitImage>,
+            Option<&EnemyPortraitImage>,
+            Option<&PlayerBenchPortrait>,
+            Option<&EnemyBenchPortrait>,
+        ),
+        Or<(
+            With<PlayerPortraitImage>,
+            With<EnemyPortraitImage>,
+            With<PlayerBenchPortrait>,
+            With<EnemyBenchPortrait>,
+        )>,
+    >,
 ) {
     let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
         return;

@@ -10,12 +10,12 @@ const ACTIVE_INFO_MASK_TOP: f32 = 40.0; //距离屏幕顶部的距离
 const ACTIVE_INFO_MASK_SIDE: f32 = 14.0; //距离屏幕边缘的距离
 const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //信息卡宽度
 // 上场精灵大头像与压在其角上的元素图标尺寸。
-const PORTRAIT_SIZE: f32 = 88.0; //上场大头像边长
+const PORTRAIT_SIZE: f32 = 100.0; //上场大头像边长
 const PORTRAIT_BADGE_SIZE: f32 = 28.0; //头像角上的元素图标边长
-const BENCH_PORTRAIT_SIZE: f32 = 38.0; //待机位小头像边长（明显小于上场）
+const BENCH_PORTRAIT_SIZE: f32 = 70.0; //待机位小头像边长（明显小于上场）
 
 // 待机位精灵小面板：去掉黑方框，参照主精灵面板做的紧凑、敌我对称版本。
-const BENCH_CARD_WIDTH: f32 = 210.0; //单个待机面板宽度（含左/右侧小头像）
+const BENCH_CARD_WIDTH: f32 = 220.0; //单个待机面板宽度（含左/右侧小头像）
 const BENCH_BAR_WIDTH: f32 = 92.0; //血量/护盾条宽度
 // 半透明背景代替原本不透明的“黑方框”，敌我两侧使用同一底色保持对称。
 pub(crate) const BENCH_BG: Color = Color::srgba(0.26, 0.18, 0.085, 0.62);
@@ -252,7 +252,7 @@ fn spawn_small_bench_card(
                             border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         },
-                        ImageNode::new(asset_server.load("images/icons/profile/fire.png")),
+                        ImageNode::new(asset_server.load("images/icons/profile/ui/fire.png")),
                         BorderColor::all(theme.gold_dim),
                         PlayerBenchPortrait { index },
                     ));
@@ -515,7 +515,7 @@ fn spawn_small_bench_card(
                         },
                         ImageNode {
                             flip_x: true,
-                            ..ImageNode::new(asset_server.load("images/icons/profile/fire.png"))
+                            ..ImageNode::new(asset_server.load("images/icons/profile/ui/fire.png"))
                         },
                         BorderColor::all(theme.gold_dim),
                         EnemyBenchPortrait { index },
@@ -933,7 +933,7 @@ pub(crate) fn setup_ui_system(
                                     border_radius: BorderRadius::all(Val::Px(12.0)),
                                     ..default()
                                 },
-                                ImageNode::new(asset_server.load("images/icons/profile/water.png")),
+                                ImageNode::new(asset_server.load("images/icons/profile/ui/water.png")),
                                 BorderColor::all(theme.gold),
                                 PlayerPortraitImage,
                             ))
@@ -1320,7 +1320,7 @@ pub(crate) fn setup_ui_system(
                                 ImageNode {
                                     flip_x: true,
                                     ..ImageNode::new(
-                                        asset_server.load("images/icons/profile/fire.png"),
+                                        asset_server.load("images/icons/profile/ui/fire.png"),
                                     )
                                 },
                                 BorderColor::all(theme.gold),
