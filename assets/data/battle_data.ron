@@ -36,7 +36,7 @@
         initial_cards: 2,
         cards_per_round: 2,
         ap_per_round: 6,
-        max_ap: 12,
+        max_ap: 9,
         max_retained_hand: 4,
         discard_ap_gain: 1,
         max_shield_hp_ratio: 0.5,
