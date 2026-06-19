@@ -45,13 +45,13 @@ fn apply_card_button_style(
     theme: &UiTheme,
 ) {
     *bg = match *interaction {
-        Interaction::Pressed => BackgroundColor(theme.button_pressed),
-        Interaction::Hovered => BackgroundColor(theme.button_hover),
+        Interaction::Pressed => BackgroundColor(theme.parchment_edge),
+        Interaction::Hovered => BackgroundColor(theme.parchment_bright),
         Interaction::None => BackgroundColor(theme.card_bg),
     };
     *border = match *interaction {
-        Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-        Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+        Interaction::Pressed => BorderColor::all(theme.gold_dim),
+        Interaction::Hovered => BorderColor::all(theme.gold_bright),
         Interaction::None => BorderColor::all(theme.card_border),
     };
 }
@@ -134,7 +134,7 @@ pub(crate) fn button_visual_state_system(
         apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut card_buttons {
-        apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
+        apply_card_button_style(interaction, &mut bg, &mut border, &theme);
     }
     for (interaction, mut bg, mut border) in &mut switch_buttons {
         apply_regular_button_style(interaction, &mut bg, &mut border, &theme);

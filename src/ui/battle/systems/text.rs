@@ -778,6 +778,30 @@ pub(crate) fn update_action_points_text_system(
     }
 }
 
+/// 用 AP 宝石 pip + 数字直观展示双方行动点（七圣召唤风）。
+/// 按真实 Side 读取，PVP 镜像下两侧各自正确。
+pub(crate) fn update_ap_gems_system(
+    action_points: Res<crate::battle::ActionPoints>,
+    theme: Res<UiTheme>,
+    mut pip_q: Query<(&ApGemPip, &mut BackgroundColor)>,
+    mut count_q: Query<(&ApGemCountText, &mut Text)>,
+) {
+    let ap_for = |side: Side| match side {
+        Side::Player => action_points.player,
+        Side::Enemy => action_points.enemy,
+    };
+    for (pip, mut bg) in &mut pip_q {
+        *bg = if (pip.index as i32) < ap_for(pip.side) {
+            BackgroundColor(theme.ap_gem_full)
+        } else {
+            BackgroundColor(theme.ap_gem_empty)
+        };
+    }
+    for (count, mut text) in &mut count_q {
+        text.0 = ap_for(count.side).to_string();
+    }
+}
+
 const BATTLE_ACTION_TEXT_VISIBLE_SECONDS: f32 = 2.0;
 
 pub(crate) fn update_battle_action_text_system(

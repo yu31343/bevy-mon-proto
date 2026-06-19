@@ -687,6 +687,59 @@ pub(crate) fn element_color(element: ElementType, theme: &super::theme::UiTheme)
     }
 }
 
+/// 手牌卡按效果归类（七圣召唤风：以类别而非元素区分卡面）。
+#[derive(Clone, Copy)]
+enum CardCategory {
+    Attack,
+    Shield,
+    Buff,
+    Resource,
+    Utility,
+}
+
+fn card_category(card: &CardDef) -> CardCategory {
+    use CardEffect::*;
+    match &card.effect {
+        NextAttackBoost { .. }
+        | NextReactionFixedDamage { .. }
+        | NextWindSpreadDamage { .. }
+        | NextAuraAttackDraw { .. } => CardCategory::Attack,
+        NextShieldBoost { .. } | GainShield { .. } | GainShieldDrawIfSwitchedThisTurn { .. } => {
+            CardCategory::Shield
+        }
+        NextHealBoost { .. } | ModifyStages { .. } => CardCategory::Buff,
+        GainAp { .. }
+        | NextElementAttachmentGainAp { .. }
+        | ShieldAbsorbGainAp { .. }
+        | DiscardOtherDrawGainAp { .. }
+        | DrawAndGainApIfAliveTeam { .. }
+        | CleanseOrGainAp { .. } => CardCategory::Resource,
+        NextSkillCostDraw { .. } | DrawIfKnockedOutThisTurn { .. } => CardCategory::Utility,
+    }
+}
+
+/// 卡牌类别色带/边框颜色。
+pub(crate) fn card_category_color(card: &CardDef, theme: &super::theme::UiTheme) -> Color {
+    match card_category(card) {
+        CardCategory::Attack => theme.card_cat_attack,
+        CardCategory::Shield => theme.card_cat_shield,
+        CardCategory::Buff => theme.card_cat_buff,
+        CardCategory::Resource => theme.card_cat_resource,
+        CardCategory::Utility => theme.card_cat_utility,
+    }
+}
+
+/// 卡牌类别短标签（显示在卡面顶部色带）。
+pub(crate) fn card_category_label(card: &CardDef) -> &'static str {
+    match card_category(card) {
+        CardCategory::Attack => "进攻",
+        CardCategory::Shield => "护盾",
+        CardCategory::Buff => "增益",
+        CardCategory::Resource => "资源",
+        CardCategory::Utility => "战术",
+    }
+}
+
 pub(crate) fn status_color(
     entry: &crate::battle::StatusInstance,
     theme: &super::theme::UiTheme,

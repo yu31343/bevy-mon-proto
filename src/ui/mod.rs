@@ -19,8 +19,9 @@ use crate::{
 
 use battle::fx::{
     keyboard_button_flash_system, preload_reaction_icons, process_battle_fx_events,
-    spawn_button_click_flash, spawn_reaction_banner_system, tick_button_click_flash,
-    tick_fx_lifetimes, tick_reaction_banner_system, tick_screen_flashes, tick_skill_flash_timer,
+    spawn_button_click_flash, spawn_reaction_banner_system, tick_active_frame_pulse_system,
+    tick_button_click_flash, tick_fx_lifetimes, tick_reaction_banner_system, tick_screen_flashes,
+    tick_skill_flash_timer,
 };
 
 use battle::systems::{PendingSwitchOverlayToggle, SwitchOverlayOpen};
@@ -122,6 +123,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             update_element_icon_system,
             update_active_panel_tokens_system,
             update_skill_text_system,
+            update_ap_gems_system,
+            tick_active_frame_pulse_system,
         )
             .run_if(in_state(GameState::Battle)),
     );

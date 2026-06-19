@@ -7,13 +7,14 @@
 
 use bevy::prelude::*;
 
-use crate::battle::{BattleActionCooldown, BattleEvent, DamageType, Side};
+use crate::battle::{BattleActionCooldown, BattleEvent, DamageType, Side, UiControlSide};
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
-        ActionDialButton, BattleUiCleanupPending, BattleUiRoot, DiscardButton, EndTurnButton,
-        SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+        ActionDialButton, ActivePortraitFrame, BattleUiCleanupPending, BattleUiRoot, DiscardButton,
+        EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton,
+        TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
@@ -498,24 +499,39 @@ pub fn tick_button_click_flash(
         &mut BackgroundColor,
         &mut BorderColor,
         Option<&Interaction>,
+        Has<super::components::PlayerCardButton>,
     )>,
     theme: Res<UiTheme>,
 ) {
-    for (entity, mut flash, mut bg, mut border, interaction) in &mut q {
+    for (entity, mut flash, mut bg, mut border, interaction, is_card) in &mut q {
         flash.0.tick(time.delta());
         if flash.0.just_finished() {
             commands.entity(entity).remove::<ButtonClickFlash>();
             let interaction = interaction.copied().unwrap_or(Interaction::None);
-            *bg = match interaction {
-                Interaction::Pressed => BackgroundColor(theme.button_pressed),
-                Interaction::Hovered => BackgroundColor(theme.button_hover),
-                Interaction::None => BackgroundColor(theme.button_idle),
-            };
-            *border = match interaction {
-                Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-                Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-                Interaction::None => BorderColor::all(theme.button_border_idle),
-            };
+            if is_card {
+                // 手牌卡恢复为羊皮纸 + 描金，避免闪光结束后闪回深蓝。
+                *bg = match interaction {
+                    Interaction::Pressed => BackgroundColor(theme.parchment_edge),
+                    Interaction::Hovered => BackgroundColor(theme.parchment_bright),
+                    Interaction::None => BackgroundColor(theme.card_bg),
+                };
+                *border = match interaction {
+                    Interaction::Pressed => BorderColor::all(theme.gold_dim),
+                    Interaction::Hovered => BorderColor::all(theme.gold_bright),
+                    Interaction::None => BorderColor::all(theme.card_border),
+                };
+            } else {
+                *bg = match interaction {
+                    Interaction::Pressed => BackgroundColor(theme.button_pressed),
+                    Interaction::Hovered => BackgroundColor(theme.button_hover),
+                    Interaction::None => BackgroundColor(theme.button_idle),
+                };
+                *border = match interaction {
+                    Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
+                    Interaction::Hovered => BorderColor::all(theme.button_border_hover),
+                    Interaction::None => BorderColor::all(theme.button_border_idle),
+                };
+            }
         }
     }
 }
@@ -674,9 +690,38 @@ pub fn keyboard_button_flash_system(
     }
 }
 
+/// 在 sRGB 空间对两色做线性插值（UI 脉冲/呼吸用）。
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let a = a.to_srgba();
+    let b = b.to_srgba();
+    Color::srgba(
+        a.red + (b.red - a.red) * t,
+        a.green + (b.green - a.green) * t,
+        a.blue + (b.blue - a.blue) * t,
+        a.alpha + (b.alpha - a.alpha) * t,
+    )
+}
+
+/// 当前行动方主精灵信息框的描金外框做轻微脉冲，直观提示"该谁行动"。
+/// 仅改写 `ActivePortraitFrame` 自身的 BorderColor（独立节点，不与按钮系统冲突）。
+pub fn tick_active_frame_pulse_system(
+    time: Res<Time>,
+    theme: Res<UiTheme>,
+    ui_control_side: Res<UiControlSide>,
+    mut q: Query<(&ActivePortraitFrame, &mut BorderColor)>,
+) {
+    let pulse = 0.5 + 0.5 * (time.elapsed_secs() * 3.0).sin();
+    for (frame, mut border) in &mut q {
+        *border = if frame.side == ui_control_side.0 {
+            BorderColor::all(lerp_color(theme.gold, theme.gold_bright, pulse))
+        } else {
+            BorderColor::all(theme.gold_dim)
+        };
+    }
+}
+
 // ============================================================================
 // 元素反应中央横幅特效
-//
 // 触发元素反应时，在屏幕中央弹出一张"反应图标 + 反应名"横幅，带缩放弹出与淡入/
 // 淡出动画。图标复用 `assets/images/icons/reactions/` 下的反应图标。
 // ============================================================================

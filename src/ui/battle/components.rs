@@ -401,3 +401,46 @@ pub(crate) struct DebugAuraToken;
 
 #[derive(Component, Clone, Copy)]
 pub(crate) struct DebugStatusToken;
+
+// === 七圣召唤风重构新增 marker ===
+
+/// AP 宝石 pip（每侧 0..=max_ap 个）。
+#[derive(Component)]
+pub(crate) struct ApGemPip {
+    pub side: Side,
+    pub index: usize,
+}
+
+/// AP 数字标签（每侧一个）。
+#[derive(Component)]
+pub(crate) struct ApGemCountText {
+    pub side: Side,
+}
+
+/// 手牌卡面顶部类别色带。
+#[derive(Component)]
+pub(crate) struct CardCategoryBand {
+    pub index: usize,
+}
+
+/// 手牌卡面类别名文字。
+#[derive(Component)]
+pub(crate) struct CardCategoryLabel {
+    pub index: usize,
+}
+
+/// 手牌发光覆盖层（独立子节点，不争用按钮 bg/border）。
+#[derive(Component)]
+pub(crate) struct CardGlow {
+    pub index: usize,
+}
+
+/// 主精灵信息框的描金外框（当前行动方脉冲）。
+#[derive(Component)]
+pub(crate) struct ActivePortraitFrame {
+    pub side: Side,
+}
+
+/// 背景暗角覆盖层。
+#[derive(Component)]
+pub(crate) struct BattleVignette;

@@ -18,7 +18,7 @@ pub(crate) use hand::update_player_hand_ui_system;
 pub(crate) use roster::{update_enemy_roster_ui_system, update_player_roster_ui_system};
 pub(crate) use text::{
     update_action_points_text_system, update_active_panel_text_system,
-    update_active_panel_tokens_system, update_battle_action_text_system,
+    update_active_panel_tokens_system, update_ap_gems_system, update_battle_action_text_system,
     update_element_icon_system, update_phase_text_system, update_result_ui_system,
     update_skill_text_system,
 };

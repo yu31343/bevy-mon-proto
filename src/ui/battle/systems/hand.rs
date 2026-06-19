@@ -1,12 +1,16 @@
 use bevy::prelude::*;
 
 use crate::{
-    battle::{BattleControlMode, Hand, PendingHandDiscard, SelectedCards, Side, UiControlSide},
+    battle::{
+        ActionPoints, BattleControlMode, Hand, PendingHandDiscard, SelectedCards, Side,
+        UiControlSide,
+    },
     data::BattleDbs,
     game_state::BattlePhase,
 };
 
 use super::super::components::*;
+use super::super::theme::UiTheme;
 
 const HAND_CARDS_PER_LAYER: usize = 6;
 const HAND_CARD_WIDTH: f32 = 130.0;
@@ -44,6 +48,8 @@ pub(crate) fn update_player_hand_ui_system(
     selected: Res<SelectedCards>,
     ui_control_side: Res<UiControlSide>,
     battle_mode: Res<BattleControlMode>,
+    action_points: Res<ActionPoints>,
+    theme: Res<UiTheme>,
     pending_discard: Option<Res<PendingHandDiscard>>,
     mut card_text_q: Query<
         (
@@ -53,6 +59,7 @@ pub(crate) fn update_player_hand_ui_system(
             Option<&PlayerCardNameText>,
             Option<&PlayerCardCostText>,
             Option<&PlayerCardDescText>,
+            Option<&CardCategoryLabel>,
         ),
         Without<ResultText>,
     >,
@@ -62,6 +69,8 @@ pub(crate) fn update_player_hand_ui_system(
         Query<(&PlayerCardCostText, &mut Visibility)>,
     )>,
     mut card_nodes: Query<(&PlayerCardButton, &mut Node, &mut ZIndex)>,
+    mut card_band_q: Query<(&CardCategoryBand, &mut BackgroundColor)>,
+    mut card_glow_q: Query<(&CardGlow, &mut BorderColor)>,
 ) {
     let display_side = if *battle_phase.get() == BattlePhase::Discard
         && pending_discard
@@ -133,7 +142,7 @@ pub(crate) fn update_player_hand_ui_system(
         });
     }
 
-    for (mut text, is_hint, hotkey, name, cost, desc) in &mut card_text_q {
+    for (mut text, is_hint, hotkey, name, cost, desc, cat) in &mut card_text_q {
         if is_hint.is_some() {
             let side_label = match display_side {
                 Side::Player => "我方",
@@ -171,6 +180,7 @@ pub(crate) fn update_player_hand_ui_system(
             .or_else(|| name.map(|m| m.index))
             .or_else(|| cost.map(|m| m.index))
             .or_else(|| desc.map(|m| m.index))
+            .or_else(|| cat.map(|m| m.index))
         else {
             continue;
         };
@@ -179,10 +189,10 @@ pub(crate) fn update_player_hand_ui_system(
             if name.is_some() {
                 text.0 = "—".to_string();
             } else if cost.is_some() {
-                text.0 = "AP—".to_string();
+                text.0 = "—".to_string();
             } else if hotkey.is_some() {
                 text.0 = super::super::helpers::card_hotkey_label(idx).to_string();
-            } else if desc.is_some() {
+            } else if desc.is_some() || cat.is_some() {
                 text.0.clear();
             }
             continue;
@@ -198,9 +208,11 @@ pub(crate) fn update_player_hand_ui_system(
         } else if name.is_some() {
             text.0 = card.name.to_string();
         } else if cost.is_some() {
-            text.0 = format!("AP{}", card.cost_ap);
+            text.0 = card.cost_ap.to_string();
         } else if desc.is_some() {
             text.0 = super::super::helpers::card_description(card);
+        } else if cat.is_some() {
+            text.0 = super::super::helpers::card_category_label(card).to_string();
         }
     }
 
@@ -229,6 +241,38 @@ pub(crate) fn update_player_hand_ui_system(
             Visibility::Visible
         } else {
             Visibility::Hidden
+        };
+    }
+
+    // 类别色带：按卡牌效果类别着色（空槽透明）。
+    for (band, mut bg) in &mut card_band_q {
+        *bg = if band.index < active_hand.len() {
+            dbs.cards
+                .get(&active_hand[band.index])
+                .map(|card| {
+                    BackgroundColor(super::super::helpers::card_category_color(card, &theme))
+                })
+                .unwrap_or(BackgroundColor(Color::NONE))
+        } else {
+            BackgroundColor(Color::NONE)
+        };
+    }
+
+    // 可出牌发光环：AP 足够时点亮描金光环（独立覆盖层，不与按钮 hover 冲突）。
+    let current_ap = match display_side {
+        Side::Player => action_points.player,
+        Side::Enemy => action_points.enemy,
+    };
+    for (glow, mut border) in &mut card_glow_q {
+        let lit = glow.index < active_hand.len()
+            && dbs
+                .cards
+                .get(&active_hand[glow.index])
+                .is_some_and(|card| current_ap >= card.cost_ap);
+        *border = if lit {
+            BorderColor::all(Color::srgba(0.98, 0.85, 0.50, 0.85))
+        } else {
+            BorderColor::all(Color::NONE)
         };
     }
 }

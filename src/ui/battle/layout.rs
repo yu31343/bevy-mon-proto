@@ -16,9 +16,12 @@ const ACTIVE_INFO_MASK_HEIGHT: f32 = 232.0; //蒙版高度
 const BENCH_CARD_WIDTH: f32 = 168.0; //单个待机面板宽度
 const BENCH_BAR_WIDTH: f32 = 92.0; //血量/护盾条宽度
 // 半透明背景代替原本不透明的“黑方框”，敌我两侧使用同一底色保持对称。
-pub(crate) const BENCH_BG: Color = Color::srgba(0.05, 0.07, 0.11, 0.42);
-pub(crate) const BENCH_BG_HOVER: Color = Color::srgba(0.20, 0.32, 0.48, 0.55);
-pub(crate) const BENCH_BG_PRESSED: Color = Color::srgba(0.16, 0.26, 0.40, 0.66);
+pub(crate) const BENCH_BG: Color = Color::srgba(0.05, 0.08, 0.10, 0.55);
+pub(crate) const BENCH_BG_HOVER: Color = Color::srgba(0.22, 0.17, 0.08, 0.62);
+pub(crate) const BENCH_BG_PRESSED: Color = Color::srgba(0.15, 0.11, 0.05, 0.70);
+
+/// AP 宝石 pip 的最大数量（与 BattleRules.max_ap 对齐；多余的 AP 仍由数字显示）。
+const AP_GEM_COUNT: usize = 12;
 
 pub(crate) fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
@@ -145,7 +148,7 @@ fn outlined_stat_text_shadow() -> TextShadow {
 
 fn spawn_stat_value(
     parent: &mut ChildSpawnerCommands,
-    _theme: &UiTheme,
+    theme: &UiTheme,
     font: TextFont,
     label: &'static str,
     value_marker: impl Component,
@@ -162,6 +165,7 @@ fn spawn_stat_value(
             ..default()
         },))
         .with_children(|root| {
+            // 标签：描金小牌
             root.spawn((
                 Node {
                     min_width: Val::Px(34.0),
@@ -169,14 +173,21 @@ fn spawn_stat_value(
                     padding: UiRect::axes(Val::Px(5.0), Val::Px(1.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
                     border_radius: BorderRadius::all(Val::Px(5.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.95, 0.68, 0.10)),
+                theme.gold_gradient(),
+                BorderColor::all(theme.gold_bright),
             ))
             .with_children(|badge| {
-                badge.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+                badge.spawn((
+                    Text::new(label),
+                    font.clone(),
+                    TextColor(theme.ink_secondary),
+                ));
             });
+            // 数值：羊皮纸小牌 + 墨字
             root.spawn((
                 Node {
                     min_width: Val::Px(34.0),
@@ -184,16 +195,18 @@ fn spawn_stat_value(
                     padding: UiRect::axes(Val::Px(5.0), Val::Px(1.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
                     border_radius: BorderRadius::all(Val::Px(5.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.95, 0.68, 0.10)),
+                theme.parchment_panel(),
+                BorderColor::all(theme.gold_dim),
             ))
             .with_children(|badge| {
                 badge.spawn((
                     Text::new("0"),
                     font.clone(),
-                    TextColor(Color::WHITE),
+                    TextColor(theme.ink_primary),
                     value_marker,
                 ));
             });
@@ -615,6 +628,64 @@ fn spawn_skill_row_player(
         });
 }
 
+fn spawn_ap_gem_group(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    label_font: TextFont,
+    count_font: TextFont,
+    side: Side,
+) {
+    let (label, accent) = match side {
+        Side::Player => ("我方", theme.accent_player),
+        Side::Enemy => ("敌方", theme.accent_enemy),
+    };
+    parent
+        .spawn((Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            ..default()
+        },))
+        .with_children(|group| {
+            group.spawn((
+                Text::new(label),
+                label_font,
+                TextColor(accent),
+                theme.title_text_shadow(),
+            ));
+            group
+                .spawn((Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(3.0),
+                    ..default()
+                },))
+                .with_children(|pips| {
+                    for index in 0..AP_GEM_COUNT {
+                        pips.spawn((
+                            Node {
+                                width: Val::Px(11.0),
+                                height: Val::Px(11.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(6.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme.ap_gem_empty),
+                            BorderColor::all(theme.gold_dim),
+                            ApGemPip { side, index },
+                        ));
+                    }
+                });
+            group.spawn((
+                Text::new("0"),
+                count_font,
+                TextColor(theme.gold_bright),
+                theme.title_text_shadow(),
+                ApGemCountText { side },
+            ));
+        });
+}
+
 pub(crate) fn setup_ui_system(
     mut commands: Commands,
     theme: Res<UiTheme>,
@@ -645,6 +716,7 @@ pub(crate) fn setup_ui_system(
     let result_font = super::helpers::make_text_font(40.0, ui_font.as_deref());
     let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let small_font = super::helpers::make_text_font(11.0, ui_font.as_deref());
+    let card_desc_font = super::helpers::make_text_font(13.5, ui_font.as_deref());
     let skill_header_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
     let skill_body_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let skill_meta_font = super::helpers::make_text_font(12.0, ui_font.as_deref());
@@ -672,6 +744,26 @@ pub(crate) fn setup_ui_system(
             BattleUiRoot,
         ))
         .with_children(|root| {
+            // === Background vignette / scrim (顶部与底部压暗，提升文字对比与仪式感) ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                    ColorStop::percent(Color::srgba(0.02, 0.02, 0.04, 0.58), 0.0),
+                    ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.0), 24.0),
+                    ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.0), 64.0),
+                    ColorStop::percent(Color::srgba(0.02, 0.02, 0.04, 0.66), 100.0),
+                ])),
+                ZIndex(0),
+                BattleVignette,
+            ));
+
             // === Top Bar ===
             root.spawn((
                 Node {
@@ -687,8 +779,8 @@ pub(crate) fn setup_ui_system(
                     border: UiRect::bottom(Val::Px(1.0)),
                     ..default()
                 },
-                theme.top_bar_background(),
-                BorderColor::all(theme.border_top_bar),
+                theme.lacquer_panel_bg(),
+                BorderColor::all(theme.gold),
                 theme.panel_shadow(),
             ))
             .with_children(|bar| {
@@ -699,13 +791,20 @@ pub(crate) fn setup_ui_system(
                     theme.title_text_shadow(),
                     BattlePhaseText,
                 ));
-                bar.spawn((
-                    Text::new("AP：Player 0 / Enemy 0"),
+                spawn_ap_gem_group(
+                    bar,
+                    &theme,
                     body_font.clone(),
-                    TextColor(theme.text_primary),
-                    theme.title_text_shadow(),
-                    ActionPointsText,
-                ));
+                    meta_font.clone(),
+                    Side::Player,
+                );
+                spawn_ap_gem_group(
+                    bar,
+                    &theme,
+                    body_font.clone(),
+                    meta_font.clone(),
+                    Side::Enemy,
+                );
             });
 
             // === Player Info: Top-Left ===
@@ -716,10 +815,14 @@ pub(crate) fn setup_ui_system(
                     left: Val::Px(ACTIVE_INFO_MASK_SIDE),
                     width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
                     height: Val::Px(ACTIVE_INFO_MASK_HEIGHT),
-                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.12, 0.05, 0.08, 0.76)), //玩家信息蒙版颜色
+                theme.lacquer_panel_bg(),
+                BorderColor::all(theme.gold),
+                theme.gold_frame_shadow(),
+                ActivePortraitFrame { side: Side::Player },
             ));
 
             root.spawn((
@@ -999,10 +1102,14 @@ pub(crate) fn setup_ui_system(
                     right: Val::Px(ACTIVE_INFO_MASK_SIDE),
                     width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
                     height: Val::Px(ACTIVE_INFO_MASK_HEIGHT),
-                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.02, 0.05, 0.08, 0.76)), //敌方信息蒙版颜色
+                theme.lacquer_panel_bg(),
+                BorderColor::all(theme.gold),
+                theme.gold_frame_shadow(),
+                ActivePortraitFrame { side: Side::Enemy },
             ));
 
             root.spawn((
@@ -1326,7 +1433,7 @@ pub(crate) fn setup_ui_system(
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.05, 0.08, 0.12, 0.94)),
-                BorderColor::all(theme.border_panel),
+                BorderColor::all(theme.gold),
                 theme.panel_shadow(),
                 Visibility::Hidden,
                 ZIndex(75),
@@ -1435,9 +1542,9 @@ pub(crate) fn setup_ui_system(
                     overflow: Overflow::clip(),
                     ..default()
                 },
-                BackgroundColor(theme.button_idle),
-                BorderColor::all(theme.button_border_idle),
-                theme.panel_shadow(),
+                theme.lacquer_panel_bg(),
+                BorderColor::all(theme.gold),
+                theme.gold_frame_shadow(),
                 ZIndex(60),
             ))
             .with_children(|dial| {
@@ -1450,7 +1557,7 @@ pub(crate) fn setup_ui_system(
                         height: Val::Percent(100.0),
                         ..default()
                     },
-                    BackgroundColor(theme.button_border_idle),
+                    BackgroundColor(theme.gold_divider),
                 ));
                 dial.spawn((
                     Node {
@@ -1461,7 +1568,7 @@ pub(crate) fn setup_ui_system(
                         height: Val::Px(2.0),
                         ..default()
                     },
-                    BackgroundColor(theme.button_border_idle),
+                    BackgroundColor(theme.gold_divider),
                 ));
 
                 dial.spawn((
@@ -1686,11 +1793,11 @@ pub(crate) fn setup_ui_system(
                                 position_type: PositionType::Absolute,
                                 width: Val::Px(130.0),
                                 height: Val::Px(180.0),
-                                padding: UiRect::px(10.0, 10.0, 12.0, 10.0),
-                                border: border_1,
+                                padding: UiRect::px(8.0, 8.0, 8.0, 8.0),
+                                border: UiRect::all(Val::Px(2.0)),
                                 border_radius: BorderRadius::all(radius_card),
                                 flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(4.0),
+                                row_gap: Val::Px(5.0),
                                 ..default()
                             },
                             BackgroundColor(theme.card_bg),
@@ -1700,30 +1807,102 @@ pub(crate) fn setup_ui_system(
                             PlayerCardButton { index: idx },
                         ))
                         .with_children(|card| {
+                            // 发光环：可出牌时由手牌系统点亮（独立覆盖层，不争用按钮 bg/border）
                             card.spawn((
                                 Node {
-                                    width: Val::Px(24.0),
-                                    height: Val::Px(24.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(-3.0),
+                                    left: Val::Px(-3.0),
+                                    right: Val::Px(-3.0),
+                                    bottom: Val::Px(-3.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(16.0)),
                                     ..default()
                                 },
-                                ImageNode::solid_color(Color::srgba(0.18, 0.32, 0.48, 0.85)),
-                                PlayerCardHotkeyBadge { index: idx },
-                            ))
-                            .with_children(|hotkey_box| {
-                                hotkey_box.spawn((
-                                    Text::new(super::helpers::card_hotkey_label(idx)),
-                                    icon_font.clone(),
-                                    TextColor(theme.accent_player),
-                                    PlayerCardHotkeyText { index: idx },
-                                ));
-                            });
+                                BorderColor::all(Color::NONE),
+                                CardGlow { index: idx },
+                            ));
+                            // 顶行：费用宝石 + 类别色带 + 快捷键
+                            card.spawn((Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            },))
+                                .with_children(|top| {
+                                    top.spawn((
+                                        Node {
+                                            width: Val::Px(26.0),
+                                            height: Val::Px(26.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            border_radius: BorderRadius::all(Val::Px(13.0)),
+                                            ..default()
+                                        },
+                                        theme.gold_gradient(),
+                                        BorderColor::all(theme.gold_bright),
+                                    ))
+                                    .with_children(|gem| {
+                                        gem.spawn((
+                                            Text::new("—"),
+                                            body_font.clone(),
+                                            TextColor(theme.ink_primary),
+                                            PlayerCardCostText { index: idx },
+                                        ));
+                                    });
+                                    top.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            min_width: Val::Px(0.0),
+                                            height: Val::Px(20.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border_radius: BorderRadius::all(Val::Px(6.0)),
+                                            overflow: Overflow::clip(),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.card_cat_resource),
+                                        CardCategoryBand { index: idx },
+                                    ))
+                                    .with_children(|band| {
+                                        band.spawn((
+                                            Text::new(""),
+                                            small_font.clone(),
+                                            TextColor(Color::WHITE),
+                                            TextShadow {
+                                                offset: Vec2::new(1.0, 1.0),
+                                                color: Color::srgba(0.0, 0.0, 0.0, 0.50),
+                                            },
+                                            CardCategoryLabel { index: idx },
+                                        ));
+                                    });
+                                    top.spawn((
+                                        Node {
+                                            width: Val::Px(22.0),
+                                            height: Val::Px(22.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border_radius: BorderRadius::all(Val::Px(5.0)),
+                                            ..default()
+                                        },
+                                        ImageNode::solid_color(Color::srgba(0.10, 0.12, 0.16, 0.92)),
+                                        PlayerCardHotkeyBadge { index: idx },
+                                    ))
+                                    .with_children(|hotkey_box| {
+                                        hotkey_box.spawn((
+                                            Text::new(super::helpers::card_hotkey_label(idx)),
+                                            icon_font.clone(),
+                                            TextColor(theme.gold_bright),
+                                            PlayerCardHotkeyText { index: idx },
+                                        ));
+                                    });
+                                });
                             card.spawn((
                                 Text::new("—"),
                                 body_font.clone(),
-                                TextColor(theme.text_primary),
+                                TextColor(theme.ink_primary),
                                 PlayerCardNameText { index: idx },
                             ));
                             card.spawn((
@@ -1732,18 +1911,12 @@ pub(crate) fn setup_ui_system(
                                     height: Val::Px(1.0),
                                     ..default()
                                 },
-                                BackgroundColor(theme.divider),
-                            ));
-                            card.spawn((
-                                Text::new("AP—"),
-                                meta_font.clone(),
-                                TextColor(theme.text_secondary),
-                                PlayerCardCostText { index: idx },
+                                BackgroundColor(theme.gold_divider),
                             ));
                             card.spawn((
                                 Text::new(""),
-                                small_font.clone(),
-                                TextColor(theme.text_muted),
+                                card_desc_font.clone(),
+                                TextColor(theme.ink_secondary),
                                 Visibility::Hidden,
                                 PlayerCardDescText { index: idx },
                             ));
@@ -1775,13 +1948,13 @@ pub(crate) fn setup_ui_system(
                             padding: UiRect::all(Val::Px(10.0)),
                             flex_direction: FlexDirection::Column,
                             row_gap: Val::Px(6.0),
-                            border: border_1,
+                            border: UiRect::all(Val::Px(2.0)),
                             border_radius: BorderRadius::all(radius_panel),
                             ..default()
                         },
-                        BackgroundColor(theme.panel),
-                        BorderColor::all(theme.border_panel),
-                        theme.panel_shadow(),
+                        theme.lacquer_panel_bg(),
+                        BorderColor::all(theme.gold),
+                        theme.gold_frame_shadow(),
                     ))
                     .with_children(|skill_section| {
                         skill_section
@@ -1840,13 +2013,13 @@ pub(crate) fn setup_ui_system(
                         padding: UiRect::all(Val::Px(20.0)),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(16.0),
-                        border: border_1,
+                        border: UiRect::all(Val::Px(2.0)),
                         border_radius: BorderRadius::all(radius_panel),
                         ..default()
                     },
-                    BackgroundColor(theme.panel),
-                    BorderColor::all(theme.border_panel),
-                    theme.panel_shadow(),
+                    theme.lacquer_panel_bg(),
+                    BorderColor::all(theme.gold),
+                    theme.gold_frame_shadow(),
                 ))
                 .with_children(|panel| {
                     panel.spawn((
