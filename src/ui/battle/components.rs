@@ -28,6 +28,18 @@ pub(crate) struct PlayerElementIcon;
 #[derive(Component)]
 pub(crate) struct EnemyElementIcon;
 #[derive(Component)]
+pub(crate) struct PlayerPortraitImage;
+#[derive(Component)]
+pub(crate) struct EnemyPortraitImage;
+#[derive(Component)]
+pub(crate) struct PlayerBenchPortrait {
+    pub index: usize,
+}
+#[derive(Component)]
+pub(crate) struct EnemyBenchPortrait {
+    pub index: usize,
+}
+#[derive(Component)]
 pub(crate) struct ResultText;
 #[derive(Component)]
 pub(crate) struct BattlePhaseText;

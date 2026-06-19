@@ -121,6 +121,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             update_phase_text_system,
             update_active_panel_text_system,
             update_element_icon_system,
+            update_portrait_images_system,
             update_active_panel_tokens_system,
             update_skill_text_system,
             update_ap_gems_system,

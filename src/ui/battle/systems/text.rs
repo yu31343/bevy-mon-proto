@@ -22,6 +22,18 @@ fn element_icon_path(element: ElementType) -> &'static str {
     }
 }
 
+fn portrait_path(element: ElementType) -> &'static str {
+    match element {
+        ElementType::Fire => "images/icons/profile/fire.png",
+        ElementType::Water => "images/icons/profile/water.png",
+        ElementType::Grass => "images/icons/profile/grass.png",
+        ElementType::Light => "images/icons/profile/light.png",
+        ElementType::Dark => "images/icons/profile/dark.png",
+        ElementType::Thunder => "images/icons/profile/thunder.png",
+        ElementType::Wind => "images/icons/profile/wind.png",
+    }
+}
+
 type ActiveCombatantRef<'a> = (
     &'a Combatant,
     &'a Stats,
@@ -165,6 +177,55 @@ pub(crate) fn update_element_icon_system(
 
         if let Some(element) = element {
             image.image = asset_server.load(element_icon_path(element));
+            image.color = Color::WHITE;
+        } else {
+            image.color = Color::NONE;
+        }
+    }
+}
+
+/// 刷新精灵头像（上场大头像 + 待机位小头像，敌我两侧）。
+///
+/// 头像按元素取图（`images/icons/profile/{element}.png`），逻辑与
+/// [`update_element_icon_system`] 一致：上场取 `active_combatant()`，
+/// 待机按槽位 `combatants[index]`。无精灵（空位/查询失败）则隐藏头像。
+/// 敌方水平翻转在生成时静态设置，本系统不触碰 `flip_x`。
+pub(crate) fn update_portrait_images_system(
+    asset_server: Res<AssetServer>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<&Combatant, With<InBattle>>,
+    mut portraits: Query<(
+        &mut ImageNode,
+        Option<&PlayerPortraitImage>,
+        Option<&EnemyPortraitImage>,
+        Option<&PlayerBenchPortrait>,
+        Option<&EnemyBenchPortrait>,
+    )>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+
+    for (mut image, p_active, e_active, p_bench, e_bench) in &mut portraits {
+        let entity = if p_active.is_some() {
+            player_team.0.active_combatant()
+        } else if e_active.is_some() {
+            enemy_team.0.active_combatant()
+        } else if let Some(bench) = p_bench {
+            player_team.0.combatants.get(bench.index).copied()
+        } else if let Some(bench) = e_bench {
+            enemy_team.0.combatants.get(bench.index).copied()
+        } else {
+            None
+        };
+
+        let element = entity
+            .and_then(|entity| combat_query.get(entity).ok())
+            .map(|combatant| combatant.element);
+
+        if let Some(element) = element {
+            image.image = asset_server.load(portrait_path(element));
             image.color = Color::WHITE;
         } else {
             image.color = Color::NONE;
