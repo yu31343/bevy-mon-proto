@@ -10,9 +10,9 @@ const ACTIVE_INFO_MASK_TOP: f32 = 40.0; //距离屏幕顶部的距离
 const ACTIVE_INFO_MASK_SIDE: f32 = 14.0; //距离屏幕边缘的距离
 const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //信息卡宽度
 // 上场精灵大头像与压在其角上的元素图标尺寸。
-const PORTRAIT_SIZE: f32 = 100.0; //上场大头像边长
+const PORTRAIT_SIZE: f32 = 105.0; //上场大头像边长
 const PORTRAIT_BADGE_SIZE: f32 = 28.0; //头像角上的元素图标边长
-const BENCH_PORTRAIT_SIZE: f32 = 70.0; //待机位小头像边长（明显小于上场）
+const BENCH_PORTRAIT_SIZE: f32 = 80.0; //待机位小头像边长（明显小于上场）
 
 // 待机位精灵小面板：去掉黑方框，参照主精灵面板做的紧凑、敌我对称版本。
 const BENCH_CARD_WIDTH: f32 = 220.0; //单个待机面板宽度（含左/右侧小头像）
@@ -1849,7 +1849,7 @@ pub(crate) fn setup_ui_system(
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(184.0),
-                    right: Val::Px(16.0),
+                    right: Val::Px(-120.0),
                     bottom: Val::Px(120.0),
                     height: Val::Px(330.0),
                     ..default()

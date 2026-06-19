@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 
 use crate::{
     battle::{
@@ -19,6 +19,9 @@ const HAND_CARD_FULL_HEIGHT: f32 = 180.0;
 const HAND_CARD_STACK_HEIGHT: f32 = 34.0;
 const HAND_CARD_SELECTED_WIDTH: f32 = 142.0;
 const HAND_CARD_SELECTED_HEIGHT: f32 = 240.0;
+const HAND_CONTAINER_LEFT: f32 = 184.0;
+const HAND_CONTAINER_RIGHT: f32 = -120.0;
+const HAND_FALLBACK_CONTAINER_WIDTH: f32 = 1376.0;
 
 fn hand_card_layer(index: usize) -> usize {
     index / HAND_CARDS_PER_LAYER
@@ -28,8 +31,25 @@ fn hand_card_column(index: usize) -> usize {
     index % HAND_CARDS_PER_LAYER
 }
 
-fn hand_card_left(index: usize) -> f32 {
-    hand_card_column(index) as f32 * (HAND_CARD_WIDTH + HAND_CARD_GAP)
+fn hand_layer_card_count(hand_len: usize, layer: usize) -> usize {
+    hand_len
+        .saturating_sub(layer * HAND_CARDS_PER_LAYER)
+        .min(HAND_CARDS_PER_LAYER)
+}
+
+fn hand_row_width(card_count: usize) -> f32 {
+    if card_count == 0 {
+        0.0
+    } else {
+        card_count as f32 * HAND_CARD_WIDTH + (card_count - 1) as f32 * HAND_CARD_GAP
+    }
+}
+
+fn hand_card_left(index: usize, hand_len: usize, container_width: f32) -> f32 {
+    let layer = hand_card_layer(index);
+    let row_width = hand_row_width(hand_layer_card_count(hand_len, layer));
+    let row_offset = ((container_width - row_width) * 0.5).max(0.0);
+    row_offset + hand_card_column(index) as f32 * (HAND_CARD_WIDTH + HAND_CARD_GAP)
 }
 
 fn hand_card_bottom(index: usize) -> f32 {
@@ -69,6 +89,7 @@ pub(crate) fn update_player_hand_ui_system(
         Query<(&PlayerCardCostText, &mut Visibility)>,
     )>,
     mut card_nodes: Query<(&PlayerCardButton, &mut Node, &mut ZIndex)>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut card_band_q: Query<(&CardCategoryBand, &mut BackgroundColor)>,
     mut card_glow_q: Query<(&CardGlow, &mut BorderColor)>,
 ) {
@@ -93,6 +114,11 @@ pub(crate) fn update_player_hand_ui_system(
         Side::Player => selected.player,
         Side::Enemy => selected.enemy,
     };
+    let hand_container_width = windows
+        .single()
+        .map(|window| window.width() - HAND_CONTAINER_LEFT - HAND_CONTAINER_RIGHT)
+        .map(|width| width.max(0.0))
+        .unwrap_or(HAND_FALLBACK_CONTAINER_WIDTH);
 
     for (meta, mut node, mut z_index) in &mut card_nodes {
         let has_card = meta.index < active_hand.len();
@@ -107,7 +133,11 @@ pub(crate) fn update_player_hand_ui_system(
 
         let is_selected = active_selected.index == Some(meta.index);
         let is_stacked = hand_card_layer(meta.index) > 0;
-        node.left = Val::Px(hand_card_left(meta.index));
+        node.left = Val::Px(hand_card_left(
+            meta.index,
+            active_hand.len(),
+            hand_container_width,
+        ));
         node.bottom = Val::Px(if is_selected {
             58.0
         } else {
