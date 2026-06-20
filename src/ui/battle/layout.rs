@@ -1163,6 +1163,7 @@ pub(crate) fn setup_ui_system(
     let result_font = super::helpers::make_text_font(40.0, ui_font.as_deref());
     let icon_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let small_font = super::helpers::make_text_font(11.0, ui_font.as_deref());
+    let latency_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
     let card_desc_font = super::helpers::make_text_font(13.5, ui_font.as_deref());
     let skill_header_font = super::helpers::make_text_font(17.0, ui_font.as_deref());
     let skill_body_font = super::helpers::make_text_font(14.0, ui_font.as_deref());
@@ -1283,6 +1284,56 @@ pub(crate) fn setup_ui_system(
                         BattleTurnOrderText,
                     ));
                 });
+            });
+
+            // === 联机延迟指示器（顶栏右上角，仅 PVP 显示）===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(7.0),
+                    right: Val::Px(16.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.32)),
+                ZIndex(20),
+                Visibility::Hidden,
+                LatencyIndicatorRoot,
+            ))
+            .with_children(|indicator| {
+                // 三条由矮到高的信号竖线，底部对齐。
+                indicator
+                    .spawn((Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::FlexEnd,
+                        column_gap: Val::Px(2.0),
+                        height: Val::Px(16.0),
+                        ..default()
+                    },))
+                    .with_children(|bars| {
+                        for (index, height) in [(0u8, 6.0), (1, 11.0), (2, 16.0)] {
+                            bars.spawn((
+                                Node {
+                                    width: Val::Px(4.0),
+                                    height: Val::Px(height),
+                                    border_radius: BorderRadius::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(LATENCY_BAR_INACTIVE),
+                                LatencyBar { index },
+                            ));
+                        }
+                    });
+                indicator.spawn((
+                    Text::new("-- ms"),
+                    latency_font.clone(),
+                    TextColor(theme.text_secondary),
+                    LatencyText,
+                ));
             });
 
             // === Player Info: Top-Left (单一描金信息卡) ===

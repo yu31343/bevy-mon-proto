@@ -150,7 +150,10 @@ pub(super) fn despawn_stale_monster_visuals(
     mut commands: Commands,
     visuals: Query<
         (Entity, &MonsterVisual),
-        (Without<BattleUiCleanupPending>, Without<PendingSpineUiDespawn>),
+        (
+            Without<BattleUiCleanupPending>,
+            Without<PendingSpineUiDespawn>,
+        ),
     >,
     combatants: Query<(), (With<Combatant>, With<InBattle>)>,
 ) {

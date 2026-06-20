@@ -133,6 +133,8 @@ pub struct PvpConnection {
     pub seq: u32,
     pub protocol_ready: bool,
     pub remote_data_hash: Option<String>,
+    /// 最近一次心跳测得的往返延迟（毫秒）；未连接或尚无读数时为 None。
+    pub latency_ms: Option<u32>,
 }
 
 impl Default for PvpConnection {
@@ -146,6 +148,7 @@ impl Default for PvpConnection {
             seq: 0,
             protocol_ready: false,
             remote_data_hash: None,
+            latency_ms: None,
         }
     }
 }
@@ -290,6 +293,7 @@ enum NetEvent {
     RelayWaitingPeer(String),
     Connected,
     Message(PvpMessage),
+    Latency(u32),
     Failed(String),
     Disconnected(String),
 }
@@ -851,8 +855,13 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
     let _ = stream.set_nodelay(true);
     let _ = event_tx.send(NetEvent::Connected);
     let mut last_rx = Instant::now();
-    let mut last_ping = Instant::now();
+    // 让首个心跳 Ping 立即发出，以便尽快得到一次延迟读数。
+    let mut last_ping = Instant::now()
+        .checked_sub(HEARTBEAT_INTERVAL)
+        .unwrap_or_else(Instant::now);
     let mut nonce = 0_u64;
+    // 记录最近一次发出的 Ping（nonce 与发送时刻），用于在收到对应 Pong 时计算 RTT。
+    let mut pending_ping: Option<(u64, Instant)> = None;
     let mut read_buffer = Vec::new();
 
     loop {
@@ -883,7 +892,16 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
                         PvpMessage::Ping { nonce } => {
                             let _ = write_message(&mut stream, &PvpMessage::Pong { nonce });
                         }
-                        PvpMessage::Pong { .. } => {}
+                        PvpMessage::Pong { nonce } => {
+                            if let Some((sent_nonce, sent_at)) = pending_ping {
+                                if sent_nonce == nonce {
+                                    let ms = sent_at.elapsed().as_millis().min(u128::from(u32::MAX))
+                                        as u32;
+                                    let _ = event_tx.send(NetEvent::Latency(ms));
+                                    pending_ping = None;
+                                }
+                            }
+                        }
                         other => {
                             let _ = event_tx.send(NetEvent::Message(other));
                         }
@@ -903,6 +921,7 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
                 return;
             }
             last_ping = Instant::now();
+            pending_ping = Some((nonce, last_ping));
         }
         if last_rx.elapsed() >= HEARTBEAT_TIMEOUT {
             let _ = event_tx.send(NetEvent::Disconnected("连接超时".to_string()));
@@ -1079,6 +1098,7 @@ fn reset_pvp_state_on_lobby(
     connection.stop();
     connection.status = PvpStatus::Idle;
     connection.seq = 0;
+    connection.latency_ms = None;
     connection.local_ip = local_lan_ip();
     reset_lobby_input(&mut input);
     reset_session_state(&mut team_state, &mut incoming_intents);
@@ -1870,6 +1890,7 @@ fn pvp_poll_network_system(
             }
             NetEvent::Connected => {
                 connection.status = PvpStatus::Connected;
+                connection.latency_ms = None;
                 input.info = "已连接，正在握手。".to_string();
                 console_log(ConsoleLogCategory::Pvp, "[connect] 已连接，开始协议握手");
                 if let (Some(dbs), Some(monsters), Some(rules), Some(formulas), Some(deck)) = (
@@ -2042,15 +2063,20 @@ fn pvp_poll_network_system(
                 }
                 PvpMessage::Ping { .. } | PvpMessage::Pong { .. } => {}
             },
+            NetEvent::Latency(ms) => {
+                connection.latency_ms = Some(ms);
+            }
             NetEvent::Failed(reason) => {
                 console_log(ConsoleLogCategory::Pvp, format!("[error] {reason}"));
                 input.info = reason.clone();
+                connection.latency_ms = None;
                 connection.status = PvpStatus::Failed(reason);
             }
             NetEvent::Disconnected(reason) => {
                 if !matches!(connection.status, PvpStatus::Disconnected(_)) {
                     console_log(ConsoleLogCategory::Pvp, format!("[disconnect] {reason}"));
                     input.info = reason.clone();
+                    connection.latency_ms = None;
                     connection.status = PvpStatus::Disconnected(reason);
                 }
             }

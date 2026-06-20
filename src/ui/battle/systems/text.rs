@@ -1304,3 +1304,62 @@ fn clean_result_message(message: &str) -> String {
         .trim()
         .to_string()
 }
+
+/// 更新顶栏右上角的联机延迟指示器：非 PVP 或未连接时隐藏；连接后根据最近一次
+/// 心跳测得的延迟显示信号条格数（1~3）、配色与具体毫秒数。
+pub(crate) fn update_latency_indicator_system(
+    battle_mode: Res<BattleControlMode>,
+    connection: Option<Res<pvp::PvpConnection>>,
+    theme: Res<UiTheme>,
+    mut root_q: Query<&mut Visibility, With<LatencyIndicatorRoot>>,
+    mut bars_q: Query<(&LatencyBar, &mut BackgroundColor)>,
+    mut text_q: Query<(&mut Text, &mut TextColor), With<LatencyText>>,
+) {
+    let connected = connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_connected());
+    let visible = *battle_mode == BattleControlMode::PlayerVsRemote && connected;
+
+    for mut visibility in &mut root_q {
+        *visibility = if visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !visible {
+        return;
+    }
+
+    let latency = connection
+        .as_ref()
+        .and_then(|connection| connection.latency_ms);
+    let (active_bars, signal_color) = match latency {
+        Some(ms) if ms <= LATENCY_GOOD_MAX_MS => (3u8, LATENCY_GOOD),
+        Some(ms) if ms <= LATENCY_MEDIUM_MAX_MS => (2, LATENCY_MEDIUM),
+        Some(_) => (1, LATENCY_POOR),
+        None => (0, LATENCY_UNKNOWN),
+    };
+
+    for (bar, mut background) in &mut bars_q {
+        background.0 = if bar.index < active_bars {
+            signal_color
+        } else {
+            LATENCY_BAR_INACTIVE
+        };
+    }
+
+    let label = match latency {
+        Some(ms) => format!("{ms} ms"),
+        None => "-- ms".to_string(),
+    };
+    let label_color = if latency.is_some() {
+        signal_color
+    } else {
+        theme.text_muted
+    };
+    for (mut text, mut color) in &mut text_q {
+        text.0 = label.clone();
+        color.0 = label_color;
+    }
+}

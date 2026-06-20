@@ -205,6 +205,11 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     );
     app.add_systems(
         Update,
+        update_latency_indicator_system
+            .run_if(in_state(GameState::Battle).or(in_state(GameState::Result))),
+    );
+    app.add_systems(
+        Update,
         button_result_action_system.run_if(in_state(GameState::Result)),
     )
     .add_systems(OnExit(GameState::Result), hide_result_ui_system);

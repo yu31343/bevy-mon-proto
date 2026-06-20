@@ -42,6 +42,30 @@ pub(crate) struct EnemyBenchPortrait {
 #[derive(Component)]
 pub(crate) struct ResultText;
 
+/// 联机延迟指示器根节点（右上角信号条，仅 PVP 显示）。
+#[derive(Component)]
+pub(crate) struct LatencyIndicatorRoot;
+
+/// 信号竖线之一；`index` 0/1/2 表示由矮到高的三条。
+#[derive(Component)]
+pub(crate) struct LatencyBar {
+    pub index: u8,
+}
+
+/// 延迟数值文本（如 “42 ms”）。
+#[derive(Component)]
+pub(crate) struct LatencyText;
+
+/// 信号条与延迟文本的配色（数值越低信号越好）。
+pub(crate) const LATENCY_BAR_INACTIVE: Color = Color::srgba(1.0, 1.0, 1.0, 0.18);
+pub(crate) const LATENCY_GOOD: Color = Color::srgb(0.33, 0.80, 0.42);
+pub(crate) const LATENCY_MEDIUM: Color = Color::srgb(0.95, 0.77, 0.25);
+pub(crate) const LATENCY_POOR: Color = Color::srgb(0.92, 0.42, 0.28);
+pub(crate) const LATENCY_UNKNOWN: Color = Color::srgb(0.6, 0.6, 0.6);
+/// 延迟分级阈值（毫秒，含上界）：≤GOOD 三格、≤MEDIUM 两格、其余一格。
+pub(crate) const LATENCY_GOOD_MAX_MS: u32 = 80;
+pub(crate) const LATENCY_MEDIUM_MAX_MS: u32 = 150;
+
 #[derive(Component)]
 pub(crate) struct ResultPopupRoot;
 
