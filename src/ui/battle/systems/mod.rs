@@ -16,7 +16,10 @@ pub(crate) use buttons::{
     close_switch_overlay_on_switch_system, update_battle_hint_overlay_system,
     update_retreat_confirm_overlay_system,
 };
-pub(crate) use hand::update_player_hand_ui_system;
+pub(crate) use hand::{
+    HandDrawAnimTracker, animate_hand_card_draw_system, reset_hand_draw_anim_tracker,
+    update_player_hand_ui_system,
+};
 pub(crate) use roster::{
     update_dead_member_name_color_system, update_enemy_roster_ui_system,
     update_player_roster_ui_system,

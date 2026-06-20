@@ -299,3 +299,155 @@ pub(crate) fn update_player_hand_ui_system(
         };
     }
 }
+
+// ============================================================================
+// 手牌进入动画（摸牌 / 技能牌抽牌等所有获牌渠道）
+//
+// 参考常见卡牌游戏：新牌从右下角"牌堆"方向飞入对应卡槽，并带缩放放大 +
+// 回弹过冲（ease-out-back），多张同时入手时按先后错峰，形成依次插入卡槽的发牌感。
+//
+// 实现要点：手牌槽是 18 个固定 `PlayerCardButton`，其 `Node` 位置每帧由
+// `update_player_hand_ui_system` 改写；本动画只改写各卡的 `UiTransform`
+// （平移 / 缩放 / 旋转的相对偏移），与布局系统互不争用。所有抽牌渠道最终都把
+// 卡牌 push 到 `hand.player` / `hand.enemy` 末尾，因此"展示侧手牌长度增长"即为
+// 新牌进入信号——对新增的末尾槽位逐一挂上动画即可覆盖全部获牌渠道。
+// ============================================================================
+
+/// 单张卡入手动画总时长（秒）。
+const CARD_DRAW_ANIM_DURATION: f32 = 0.30;
+/// 同批多张牌之间的错峰间隔（秒），形成依次发牌感。
+const CARD_DRAW_ANIM_STAGGER: f32 = 0.07;
+/// 起始相对偏移（像素）：正 x 向右、正 y 向下，模拟从右下角牌堆飞入卡槽。
+const CARD_DRAW_ANIM_START_X: f32 = 300.0;
+const CARD_DRAW_ANIM_START_Y: f32 = 170.0;
+/// 起始缩放（飞入时偏小，落位放大到 1.0）。
+const CARD_DRAW_ANIM_START_SCALE: f32 = 0.55;
+/// 起始旋转弧度（轻微倾斜，落位回正），约 7°。
+const CARD_DRAW_ANIM_START_ROT: f32 = 0.12;
+
+/// 追踪上一帧"展示侧手牌"的阵营与长度，用于检测新增的末尾卡槽。
+#[derive(Resource, Default)]
+pub(crate) struct HandDrawAnimTracker {
+    last_side: Option<Side>,
+    last_len: usize,
+}
+
+/// 挂在正在播放入手动画的 `PlayerCardButton` 上的动画状态。
+#[derive(Component)]
+pub(crate) struct CardDrawAnim {
+    elapsed: f32,
+    delay: f32,
+    duration: f32,
+}
+
+impl CardDrawAnim {
+    /// `order` 为该牌在本批新牌中的序号，用于错峰起播。
+    fn new(order: usize) -> Self {
+        Self {
+            elapsed: 0.0,
+            delay: order as f32 * CARD_DRAW_ANIM_STAGGER,
+            duration: CARD_DRAW_ANIM_DURATION,
+        }
+    }
+}
+
+/// ease-out-back：末段轻微过冲再回落，赋予"啪地嵌入卡槽"的手感。t∈[0,1]，f(0)=0，f(1)=1。
+fn ease_out_back(t: f32) -> f32 {
+    const C1: f32 = 1.70158;
+    const C3: f32 = C1 + 1.0;
+    let p = t - 1.0;
+    1.0 + C3 * p * p * p + C1 * p * p
+}
+
+/// 按进度 `t`（0=牌堆起点，1=落位）写入卡牌的相对位移 / 缩放 / 旋转。
+fn apply_card_draw_pose(transform: &mut UiTransform, t: f32) {
+    let e = ease_out_back(t);
+    let remain = 1.0 - e;
+    transform.translation = Val2::px(
+        CARD_DRAW_ANIM_START_X * remain,
+        CARD_DRAW_ANIM_START_Y * remain,
+    );
+    transform.scale =
+        Vec2::splat(CARD_DRAW_ANIM_START_SCALE + (1.0 - CARD_DRAW_ANIM_START_SCALE) * e);
+    transform.rotation = Rot2::radians(CARD_DRAW_ANIM_START_ROT * remain);
+}
+
+/// 进入战斗时重置追踪基线，使开局起手牌也能播放飞入动画。
+pub(crate) fn reset_hand_draw_anim_tracker(mut tracker: ResMut<HandDrawAnimTracker>) {
+    *tracker = HandDrawAnimTracker::default();
+}
+
+/// 检测展示侧手牌新增的末尾卡槽并为其启动入手动画，同时推进进行中的动画。
+///
+/// 展示侧判定与 `update_player_hand_ui_system` 保持一致（弃牌阶段镜像处理），
+/// 这样仅对本地玩家"看得见正在进入自己手牌"的卡播放动画；切换展示侧只更新基线、
+/// 不触发整手动画。
+pub(crate) fn animate_hand_card_draw_system(
+    time: Res<Time>,
+    battle_phase: Res<State<BattlePhase>>,
+    hand: Res<Hand>,
+    ui_control_side: Res<UiControlSide>,
+    battle_mode: Res<BattleControlMode>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    mut tracker: ResMut<HandDrawAnimTracker>,
+    mut commands: Commands,
+    mut cards: Query<(
+        Entity,
+        &PlayerCardButton,
+        &mut UiTransform,
+        Option<&mut CardDrawAnim>,
+    )>,
+) {
+    let display_side = if *battle_phase.get() == BattlePhase::Discard
+        && pending_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy)
+        && matches!(
+            *battle_mode,
+            BattleControlMode::PlayerVsAi | BattleControlMode::PlayerVsRemote
+        ) {
+        Side::Player
+    } else {
+        ui_control_side.0
+    };
+
+    let hand_len = match display_side {
+        Side::Player => hand.player.len(),
+        Side::Enemy => hand.enemy.len(),
+    };
+
+    // 仅当展示侧未变（或首次观测）且手牌变长时，末尾新增的槽位才是新摸到的牌。
+    let same_or_first = tracker.last_side == Some(display_side) || tracker.last_side.is_none();
+    let new_range =
+        (same_or_first && hand_len > tracker.last_len).then(|| tracker.last_len..hand_len);
+    tracker.last_side = Some(display_side);
+    tracker.last_len = hand_len;
+
+    let dt = time.delta_secs();
+    for (entity, btn, mut transform, anim) in &mut cards {
+        // 新摸到的牌：设为起点姿态并挂上动画，下一帧起推进。
+        if let Some(range) = &new_range {
+            if range.contains(&btn.index) {
+                apply_card_draw_pose(&mut transform, 0.0);
+                commands
+                    .entity(entity)
+                    .insert(CardDrawAnim::new(btn.index - range.start));
+                continue;
+            }
+        }
+
+        let Some(mut anim) = anim else {
+            continue;
+        };
+        anim.elapsed += dt;
+        let local = anim.elapsed - anim.delay;
+        if local <= 0.0 {
+            apply_card_draw_pose(&mut transform, 0.0);
+        } else if local >= anim.duration {
+            *transform = UiTransform::IDENTITY;
+            commands.entity(entity).remove::<CardDrawAnim>();
+        } else {
+            apply_card_draw_pose(&mut transform, local / anim.duration);
+        }
+    }
+}

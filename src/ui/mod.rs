@@ -62,9 +62,11 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .init_resource::<RetreatConfirmState>()
         .init_resource::<BattleHintOverlayState>()
         .init_resource::<HandFullEndTurnWarning>()
+        .init_resource::<HandDrawAnimTracker>()
         .add_systems(Startup, (spawn_camera, load_cjk_font_system).chain())
         .add_systems(Startup, preload_reaction_icons)
         .add_systems(OnEnter(GameState::Battle), setup_ui_system)
+        .add_systems(OnEnter(GameState::Battle), reset_hand_draw_anim_tracker)
         .add_systems(OnEnter(GameState::TeamSelection), cleanup_battle_ui_system)
         .add_systems(OnEnter(GameState::Lobby), cleanup_battle_ui_system)
         .add_systems(OnEnter(GameState::Map), cleanup_battle_ui_system)
@@ -105,6 +107,10 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
     app.add_systems(
         Update,
         update_player_hand_ui_system.run_if(in_state(GameState::Battle)),
+    );
+    app.add_systems(
+        Update,
+        animate_hand_card_draw_system.run_if(in_state(GameState::Battle)),
     );
     app.add_systems(
         Update,
