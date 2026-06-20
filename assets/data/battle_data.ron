@@ -585,7 +585,7 @@
             category: SelfUtility,
             cost_ap: 3,
             effect: Sequence(effects: [
-                Shield(amount: 15),
+                Shield(amount: 10),
                 ModifyStages(
                     modifiers: [
                         (attribute: Def, amount: 1),
@@ -755,7 +755,7 @@
             id: GaleEvasion,
             name: "疾风闪避",
             category: SelfUtility,
-            cost_ap: 3,
+            cost_ap: 2,
             effect: ApplyStatus(status_id: "wind_evade"),
             element: None,
         ),
@@ -817,7 +817,7 @@
             category: AllyUtility,
             cost_ap: 3,
             effect: Sequence(effects: [
-                Shield(amount: 15),
+                Shield(amount: 10),
                 ModifyStages(
                     modifiers: [
                         (attribute: Def, amount: 1),
@@ -990,13 +990,13 @@
             id: NextShieldBoost,
             name: "坚如磐石",
             cost_ap: 2,
-            effect: NextShieldBoost(amount: 15),
+            effect: NextShieldBoost(amount: 10),
         ),
         (
             id: EmergencyShield,
             name: "应急护幕",
             cost_ap: 2,
-            effect: GainShield(amount: 15),
+            effect: GainShield(amount: 10),
         ),
         (
             id: GuardCounter,
