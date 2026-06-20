@@ -80,6 +80,44 @@ fn send_pvp_intent(
     true
 }
 
+fn predict_local_card_discard(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap += 1;
+    }
+}
+
+fn predict_local_card_use(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+    cost_ap: i32,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap -= cost_ap;
+    }
+}
+
+fn predict_local_skill_use(
+    action_points: &mut ActionPoints,
+    skill_uses_q: &mut Query<&mut SkillUses, With<InBattle>>,
+    entity: Entity,
+    slot: usize,
+    cost_ap: i32,
+) {
+    action_points.player -= cost_ap;
+    if let Ok(mut uses) = skill_uses_q.get_mut(entity) {
+        if let Some(remaining) = uses.0.get_mut(slot) {
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
+}
+
 fn finalize_player_turn(
     p_entity: Entity,
     player_team: &crate::battle::PlayerTeam,
@@ -276,6 +314,15 @@ pub fn player_turn_input_system(
                         pvp_pending_intent,
                         pvp::BattleIntent::Switch { target_index },
                     ) {
+                        transfer_status_by_id(
+                            &mut current_statuses,
+                            &mut current_stats,
+                            target_statuses.into_inner(),
+                            target_stats.into_inner(),
+                            "nature_regen",
+                        );
+                        action_points.player -= 1;
+                        player_team.0.active_index = target_index;
                         return;
                     }
                     transfer_status_by_id(
@@ -358,6 +405,7 @@ pub fn player_turn_input_system(
             pvp_pending_intent,
             pvp::BattleIntent::UseSkill { slot },
         ) {
+            predict_local_skill_use(action_points, &mut skill_uses_q, p_entity, slot, cost);
             turn_ctx.player_action = None;
             return;
         }
@@ -739,6 +787,7 @@ pub fn player_turn_input_system(
                 pvp_pending_intent,
                 pvp::BattleIntent::DiscardCard { card_index: idx },
             ) {
+                predict_local_card_discard(&mut hand.player, &mut action_points.player, idx);
                 selected.player.index = None;
                 selected.player.discard_armed = false;
                 return;
@@ -849,6 +898,7 @@ pub fn player_turn_input_system(
                 card_index: target_index,
             },
         ) {
+            predict_local_card_discard(&mut hand.player, &mut action_points.player, target_index);
             selected.player.index = None;
             selected.player.discard_armed = false;
             return;
@@ -920,6 +970,7 @@ pub fn player_turn_input_system(
                     pvp_pending_intent,
                     pvp::BattleIntent::DiscardCard { card_index: idx },
                 ) {
+                    predict_local_card_discard(&mut hand.player, &mut action_points.player, idx);
                     selected.player.index = None;
                     selected.player.discard_armed = false;
                     return;
@@ -974,6 +1025,12 @@ pub fn player_turn_input_system(
                     pvp_pending_intent,
                     pvp::BattleIntent::UseCard { card_index: idx },
                 ) {
+                    predict_local_card_use(
+                        &mut hand.player,
+                        &mut action_points.player,
+                        idx,
+                        card.cost_ap,
+                    );
                     selected.player.index = None;
                     selected.player.discard_armed = false;
                     return;
@@ -1077,6 +1134,7 @@ pub fn player_turn_input_system(
         pvp_pending_intent,
         pvp::BattleIntent::UseSkill { slot: skill_slot },
     ) {
+        predict_local_skill_use(action_points, &mut skill_uses_q, p_entity, skill_slot, cost);
         return;
     }
     action_points.player -= cost;

@@ -123,6 +123,29 @@ fn send_client_intent(
     true
 }
 
+fn predict_local_card_discard(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap += 1;
+    }
+}
+
+fn predict_local_card_use(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+    cost_ap: i32,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap -= cost_ap;
+    }
+}
+
 pub(crate) fn button_toggle_switch_overlay_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     game_state: Res<State<GameState>>,
@@ -390,6 +413,15 @@ pub(crate) fn button_switch_member_system(
                 pvp::BattleIntent::Switch { target_index },
             )
         {
+            transfer_status_by_id(
+                &mut current_statuses,
+                &mut current_stats,
+                target_statuses.into_inner(),
+                target_stats.into_inner(),
+                "nature_regen",
+            );
+            *ap -= 1;
+            team.active_index = target_index;
             return;
         }
         transfer_status_by_id(
@@ -529,6 +561,7 @@ pub(crate) fn button_play_card_two_step_system(
                         &mut pvp_pending_intent,
                         pvp::BattleIntent::DiscardCard { card_index: idx },
                     ) {
+                        predict_local_card_discard(cards, ap, idx);
                         turn_ctx.player_action = None;
                         selected_state.index = None;
                         selected_state.discard_armed = false;
@@ -557,6 +590,7 @@ pub(crate) fn button_play_card_two_step_system(
                         &mut pvp_pending_intent,
                         pvp::BattleIntent::DiscardCard { card_index: idx },
                     ) {
+                        predict_local_card_discard(cards, ap, idx);
                         turn_ctx.player_action = None;
                         selected_state.index = None;
                         selected_state.discard_armed = false;
@@ -585,6 +619,7 @@ pub(crate) fn button_play_card_two_step_system(
                         &mut pvp_pending_intent,
                         pvp::BattleIntent::DiscardCard { card_index: idx },
                     ) {
+                        predict_local_card_discard(cards, ap, idx);
                         turn_ctx.player_action = None;
                         selected_state.index = None;
                         selected_state.discard_armed = false;
@@ -625,6 +660,7 @@ pub(crate) fn button_play_card_two_step_system(
                     &mut pvp_pending_intent,
                     pvp::BattleIntent::UseCard { card_index: idx },
                 ) {
+                    predict_local_card_use(cards, ap, idx, card.cost_ap);
                     turn_ctx.player_action = None;
                     selected_state.index = None;
                     selected_state.discard_armed = false;
@@ -794,6 +830,7 @@ pub(crate) fn button_discard_system(
                         card_index: target_index,
                     },
                 ) {
+                    predict_local_card_discard(cards, ap, target_index);
                     turn_ctx.player_action = None;
                     selected_state.index = None;
                     selected_state.discard_armed = false;

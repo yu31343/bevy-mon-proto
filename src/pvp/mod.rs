@@ -37,6 +37,7 @@ const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
+const NETWORK_IDLE_SLEEP: Duration = Duration::from_millis(1);
 const PVP_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 
 pub struct PvpPlugin;
@@ -869,7 +870,9 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
     let mut read_buffer = Vec::new();
 
     loop {
+        let mut did_work = false;
         while let Ok(command) = command_rx.try_recv() {
+            did_work = true;
             match command {
                 NetCommand::Send(message) => {
                     if let Err(err) = write_message(&mut stream, &message) {
@@ -889,6 +892,7 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
         match read_messages(&mut stream, &mut read_buffer) {
             Ok((messages, received_bytes)) => {
                 if received_bytes {
+                    did_work = true;
                     last_rx = Instant::now();
                 }
                 for message in messages {
@@ -926,12 +930,17 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
             }
             last_ping = Instant::now();
             pending_ping = Some((nonce, last_ping));
+            did_work = true;
         }
         if last_rx.elapsed() >= HEARTBEAT_TIMEOUT {
             let _ = event_tx.send(NetEvent::Disconnected("连接超时".to_string()));
             return;
         }
-        thread::sleep(Duration::from_millis(16));
+        if did_work {
+            thread::yield_now();
+        } else {
+            thread::sleep(NETWORK_IDLE_SLEEP);
+        }
     }
 }
 
