@@ -142,6 +142,25 @@ pub(super) fn spawn_monster_ui_visuals(
     }
 }
 
+/// 战斗重开时，上一局的怪物动画实体（仅带 `InBattle`，不带 `Combatant`）不会被
+/// `init_battle_system` 清理；若其死亡动画尚未播完（`dying` 仍为真），
+/// `sync_active_visibility_and_facing` 会继续显示它，导致残留到下一局界面。
+/// 这里在拥有者实体已被销毁（重开时旧战斗实体被 despawn）后回收对应动画节点。
+pub(super) fn despawn_stale_monster_visuals(
+    mut commands: Commands,
+    visuals: Query<
+        (Entity, &MonsterVisual),
+        (Without<BattleUiCleanupPending>, Without<PendingSpineUiDespawn>),
+    >,
+    combatants: Query<(), (With<Combatant>, With<InBattle>)>,
+) {
+    for (entity, visual) in &visuals {
+        if combatants.get(visual.owner).is_err() {
+            commands.entity(entity).insert(PendingSpineUiDespawn);
+        }
+    }
+}
+
 pub(super) fn sync_active_visibility_and_facing(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,

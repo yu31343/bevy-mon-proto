@@ -15,7 +15,11 @@ impl Plugin for SpineAnimPlugin {
             .add_systems(Startup, systems::load_monster_skeletons)
             .add_systems(
                 Update,
-                systems::spawn_monster_ui_visuals.run_if(in_state(GameState::Battle)),
+                (
+                    systems::spawn_monster_ui_visuals,
+                    systems::despawn_stale_monster_visuals,
+                )
+                    .run_if(in_state(GameState::Battle)),
             )
             .add_systems(
                 Update,
