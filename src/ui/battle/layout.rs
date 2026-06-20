@@ -1146,7 +1146,7 @@ pub(crate) fn setup_ui_system(
         return;
     }
     if let Some(mut retreat_confirm) = retreat_confirm {
-        retreat_confirm.armed = false;
+        retreat_confirm.open = false;
     }
     if let Some(mut hint_overlay_state) = hint_overlay_state {
         hint_overlay_state.open = false;
@@ -1956,6 +1956,117 @@ pub(crate) fn setup_ui_system(
                     },
                     BattleHintText,
                 ));
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(20.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.48)),
+                Visibility::Hidden,
+                ZIndex(120),
+                RetreatConfirmOverlayRoot,
+            ))
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Px(420.0),
+                            padding: UiRect::all(Val::Px(22.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(18.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(radius_panel),
+                            ..default()
+                        },
+                        theme.lacquer_panel_bg(),
+                        BorderColor::all(theme.gold),
+                        theme.panel_shadow(),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("确认撤退？"),
+                            title_font.clone(),
+                            TextColor(theme.text_primary),
+                            theme.title_text_shadow(),
+                        ));
+                        panel.spawn((
+                            Text::new("撤退会结束当前战斗并返回。"),
+                            meta_font.clone(),
+                            TextColor(theme.text_muted),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.45),
+                            },
+                        ));
+                        panel
+                            .spawn((Node {
+                                width: Val::Percent(100.0),
+                                justify_content: JustifyContent::FlexEnd,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(12.0),
+                                ..default()
+                            },))
+                            .with_children(|buttons| {
+                                buttons
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(92.0),
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: border_1,
+                                            border_radius: BorderRadius::all(radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.34, 0.245, 0.115, 1.0)),
+                                        BorderColor::all(theme.gold_dim),
+                                        theme.button_shadow(),
+                                        RetreatConfirmCancelButton,
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn((
+                                            Text::new("取消"),
+                                            body_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                                buttons
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(92.0),
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: border_1,
+                                            border_radius: BorderRadius::all(radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.46, 0.16, 0.12, 1.0)),
+                                        BorderColor::all(Color::srgba(0.92, 0.42, 0.32, 0.85)),
+                                        theme.button_shadow(),
+                                        RetreatConfirmProceedButton,
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn((
+                                            Text::new("确认"),
+                                            body_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                            });
+                    });
             });
 
             // === Center Turn Banner ===

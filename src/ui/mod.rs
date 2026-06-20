@@ -118,6 +118,19 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         Update,
         update_dead_member_name_color_system.run_if(in_state(GameState::Battle)),
     );
+    app.add_systems(
+        Update,
+        (
+            button_retreat_system.run_if(in_state(GameState::Battle)),
+            button_retreat_confirm_system
+                .run_if(in_state(GameState::Battle))
+                .after(button_retreat_system),
+            update_retreat_confirm_overlay_system
+                .run_if(in_state(GameState::Battle))
+                .after(button_retreat_system)
+                .after(button_retreat_confirm_system),
+        ),
+    );
 
     app.add_systems(
         Update,
@@ -140,7 +153,6 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             button_end_turn_system
                 .run_if(in_state(GameState::Battle))
                 .run_if(crate::battle::player_action_cooldown_ready),
-            button_retreat_system.run_if(in_state(GameState::Battle)),
             button_visual_state_system.run_if(in_state(GameState::Battle)),
             hand_full_warning_visual_system
                 .run_if(in_state(GameState::Battle))

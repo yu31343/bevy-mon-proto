@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use super::super::components::{
     ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, BattleUiNotice,
     DiscardButton, EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton,
-    RetreatButton, SkillButton, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+    RetreatButton, RetreatConfirmCancelButton, RetreatConfirmProceedButton, SkillButton,
+    SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
@@ -88,6 +89,8 @@ pub(crate) fn button_visual_state_system(
                 With<EndTurnButton>,
                 With<DiscardButton>,
                 With<RetreatButton>,
+                With<RetreatConfirmCancelButton>,
+                With<RetreatConfirmProceedButton>,
                 With<BattleHintButton>,
                 With<BattleHintCloseButton>,
             )>,

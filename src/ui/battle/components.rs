@@ -118,6 +118,15 @@ pub(crate) struct RetreatButton;
 pub(crate) struct RetreatButtonText;
 
 #[derive(Component)]
+pub(crate) struct RetreatConfirmOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct RetreatConfirmCancelButton;
+
+#[derive(Component)]
+pub(crate) struct RetreatConfirmProceedButton;
+
+#[derive(Component)]
 pub(crate) struct SwitchMonsterButton;
 
 #[derive(Component)]

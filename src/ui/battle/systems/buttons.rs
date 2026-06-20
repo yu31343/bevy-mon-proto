@@ -19,7 +19,7 @@ pub(crate) struct SwitchOverlayOpen(pub bool);
 
 #[derive(Resource, Default)]
 pub(crate) struct RetreatConfirmState {
-    pub armed: bool,
+    pub open: bool,
 }
 
 #[derive(Resource, Default)]
@@ -947,11 +947,37 @@ pub(crate) fn update_battle_hint_overlay_system(
 
 pub(crate) fn button_retreat_system(
     mut interaction_query: Query<
-        (&Interaction, &RetreatButton),
-        (Changed<Interaction>, With<Button>),
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<RetreatButton>),
     >,
     mut retreat_confirm: ResMut<RetreatConfirmState>,
-    mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
+) {
+    for interaction in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            retreat_confirm.open = true;
+            break;
+        }
+    }
+}
+
+pub(crate) fn button_retreat_confirm_system(
+    mut cancel_query: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<RetreatConfirmCancelButton>,
+        ),
+    >,
+    mut proceed_query: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<RetreatConfirmProceedButton>,
+        ),
+    >,
+    mut retreat_confirm: ResMut<RetreatConfirmState>,
     battle_mode: Res<BattleControlMode>,
     mut map_battle_context: ResMut<MapBattleContext>,
     mut current_map: ResMut<CurrentMap>,
@@ -959,20 +985,16 @@ pub(crate) fn button_retreat_system(
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
-    for (interaction, _) in &mut interaction_query {
+    for interaction in &mut cancel_query {
         if *interaction == Interaction::Pressed {
-            let Ok(mut retreat_text) = retreat_button_text_q.single_mut() else {
-                return;
-            };
+            retreat_confirm.open = false;
+            return;
+        }
+    }
 
-            if !retreat_confirm.armed {
-                retreat_confirm.armed = true;
-                retreat_text.0 = "确认撤退".to_string();
-                return;
-            }
-
-            retreat_confirm.armed = false;
-            retreat_text.0 = "撤退".to_string();
+    for interaction in &mut proceed_query {
+        if *interaction == Interaction::Pressed {
+            retreat_confirm.open = false;
             let return_map = if *battle_mode == BattleControlMode::PlayerVsRemote {
                 if let Some(connection) = pvp_connection.as_ref() {
                     pvp::surrender(connection);
@@ -990,7 +1012,24 @@ pub(crate) fn button_retreat_system(
             } else {
                 next_game_state.set(GameState::Lobby);
             }
-            break;
+            return;
         }
+    }
+}
+
+pub(crate) fn update_retreat_confirm_overlay_system(
+    state: Res<RetreatConfirmState>,
+    mut root_q: Query<&mut Visibility, With<RetreatConfirmOverlayRoot>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    for mut visibility in &mut root_q {
+        *visibility = if state.open {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
