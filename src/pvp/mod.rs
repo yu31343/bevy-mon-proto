@@ -2659,6 +2659,19 @@ fn pvp_apply_host_snapshot_system(
         runtime.incoming_feedbacks.0.clear();
         return;
     }
+    if let Some(pending_seq) = runtime.pending_local_intent.0
+        && snapshot.acknowledged_intent_seq < pending_seq
+    {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-skip] waiting ack_seq={} current_ack={} round={} phase={:?}",
+                pending_seq, snapshot.acknowledged_intent_seq, snapshot.turn, snapshot.phase
+            ),
+        );
+        runtime.incoming_feedbacks.0.clear();
+        return;
+    }
     console_log(
         ConsoleLogCategory::PvpDetail,
         format!(
