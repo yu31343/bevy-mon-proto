@@ -518,6 +518,24 @@ pub struct BattleResult {
     pub export_status: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BattleResultAction {
+    Return,
+    RestartSameTeams,
+    Rematch,
+    AcceptRematch,
+    RejectRematch,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct PendingBattleResultAction(pub Option<BattleResultAction>);
+
+#[derive(Resource, Debug, Default)]
+pub struct BattleResultNotice {
+    pub text: String,
+    pub remaining: f32,
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct PendingKoResolution {
     pub timer: Timer,

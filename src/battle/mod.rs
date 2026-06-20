@@ -23,6 +23,8 @@ impl Plugin for BattlePlugin {
             .init_resource::<ReplayEventLog>()
             .init_resource::<ActionTrace>()
             .init_resource::<BattleResult>()
+            .init_resource::<PendingBattleResultAction>()
+            .init_resource::<BattleResultNotice>()
             .init_resource::<PendingKoResolution>()
             .init_resource::<TurnCount>()
             .init_resource::<ActionPoints>()

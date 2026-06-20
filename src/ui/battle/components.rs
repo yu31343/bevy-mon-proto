@@ -41,6 +41,37 @@ pub(crate) struct EnemyBenchPortrait {
 }
 #[derive(Component)]
 pub(crate) struct ResultText;
+
+#[derive(Component)]
+pub(crate) struct ResultPopupRoot;
+
+#[derive(Component)]
+pub(crate) struct ResultTitleText;
+
+#[derive(Component)]
+pub(crate) struct ResultNoticeRoot;
+
+#[derive(Component)]
+pub(crate) struct ResultNoticeText;
+
+#[derive(Component)]
+pub(crate) struct ResultReturnButton;
+
+#[derive(Component)]
+pub(crate) struct ResultRestartButton;
+
+#[derive(Component)]
+pub(crate) struct ResultRematchButton;
+
+#[derive(Component)]
+pub(crate) struct ResultInvitePromptRoot;
+
+#[derive(Component)]
+pub(crate) struct ResultInviteAcceptButton;
+
+#[derive(Component)]
+pub(crate) struct ResultInviteRejectButton;
+
 #[derive(Component)]
 pub(crate) struct BattlePhaseText;
 

@@ -2,9 +2,10 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle,
-        PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, SelectedCards, Side, SkillCount,
-        SkillList, Stats, StatusBoard, TurnContext, UiControlSide, transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResultAction, EnemyTeam, Hand,
+        InBattle, PendingBattleResultAction, PendingHandDiscard, PendingTacticalDiscard,
+        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
+        UiControlSide, transfer_status_by_id,
     },
     data::{BattleDbs, BattleRules, MapBattleContext},
     game_state::{BattlePhase, GameState},
@@ -1031,5 +1032,76 @@ pub(crate) fn update_retreat_confirm_overlay_system(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+pub(crate) fn button_result_action_system(
+    mut return_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<ResultReturnButton>),
+    >,
+    mut restart_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultRestartButton>,
+        ),
+    >,
+    mut rematch_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultRematchButton>,
+        ),
+    >,
+    mut accept_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultInviteAcceptButton>,
+        ),
+    >,
+    mut reject_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultInviteRejectButton>,
+        ),
+    >,
+    mut pending_action: ResMut<PendingBattleResultAction>,
+) {
+    for interaction in &mut return_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::Return);
+            return;
+        }
+    }
+    for interaction in &mut restart_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::RestartSameTeams);
+            return;
+        }
+    }
+    for interaction in &mut rematch_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::Rematch);
+            return;
+        }
+    }
+    for interaction in &mut accept_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::AcceptRematch);
+            return;
+        }
+    }
+    for interaction in &mut reject_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::RejectRematch);
+            return;
+        }
     }
 }

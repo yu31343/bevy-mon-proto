@@ -15,11 +15,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleShuffleSeed, DamageType,
-        ElementAura, EnemyTeam, Hand, InBattle, PendingBoosts, PendingHandDiscard,
-        PendingKoResolution, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side,
-        Stats, StatusBoard, StatusInstance, TurnAction, TurnContext, TurnCount,
-        new_battle_shuffle_seed, recalculate_stage_modifiers, transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleResultAction,
+        BattleResultNotice, BattleShuffleSeed, DamageType, ElementAura, EnemyTeam, Hand, InBattle,
+        PendingBattleResultAction, PendingBoosts, PendingHandDiscard, PendingKoResolution,
+        PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard,
+        StatusInstance, TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{
@@ -45,6 +46,7 @@ impl Plugin for PvpPlugin {
         app.init_resource::<PvpConnection>()
             .init_resource::<PvpLobbyInput>()
             .init_resource::<PvpTeamState>()
+            .init_resource::<PvpRematchState>()
             .init_resource::<PvpIncomingIntents>()
             .init_resource::<PvpIncomingSnapshots>()
             .init_resource::<PvpIncomingFeedbacks>()
@@ -91,6 +93,10 @@ impl Plugin for PvpPlugin {
             .add_systems(Update, pvp_send_host_snapshot_system)
             .add_systems(Update, pvp_apply_host_snapshot_system)
             .add_systems(Update, pvp_handle_battle_disconnect_system)
+            .add_systems(
+                Update,
+                pvp_result_rematch_system.run_if(in_state(GameState::Result)),
+            )
             .add_systems(OnEnter(GameState::Lobby), reset_pvp_state_on_lobby)
             .add_systems(OnEnter(GameState::PvpLobby), reset_pvp_lobby_ui_state)
             .add_systems(OnExit(GameState::PvpLobby), cleanup_pvp_lobby_ui)
@@ -185,6 +191,14 @@ pub struct PvpTeamState {
     pub remote_indices: Option<Vec<usize>>,
     pub battle_started: bool,
     pub battle_seed: Option<u64>,
+    pub session_id: u64,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct PvpRematchState {
+    pub incoming_request: bool,
+    pub outgoing_request: bool,
+    pub accepted: bool,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -291,9 +305,11 @@ enum PvpMessage {
         reason: Option<String>,
     },
     TeamSelected {
+        session_id: u64,
         monster_indices: Vec<usize>,
     },
     BattleReady {
+        session_id: u64,
         seed: u64,
     },
     BattleSnapshot(Box<PvpBattleSnapshot>),
@@ -302,6 +318,9 @@ enum PvpMessage {
         seq: u32,
         intent: BattleIntent,
     },
+    RematchRequest,
+    RematchAccepted,
+    RematchRejected,
     Surrender,
     Leave {
         reason: String,
@@ -380,6 +399,8 @@ struct PvpPendingDiscardSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct PvpBattleSnapshot {
+    session_id: u64,
+    battle_seed: u64,
     turn: u32,
     phase: BattlePhase,
     first_side: Side,
@@ -520,6 +541,7 @@ pub fn submit_local_team(
 ) {
     team_state.local_indices = Some(indices.clone());
     connection.send(PvpMessage::TeamSelected {
+        session_id: team_state.session_id,
         monster_indices: indices,
     });
 }
@@ -550,6 +572,18 @@ pub fn send_local_intent(
 
 pub fn surrender(connection: &PvpConnection) {
     connection.send(PvpMessage::Surrender);
+}
+
+fn request_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchRequest);
+}
+
+fn accept_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchAccepted);
+}
+
+fn reject_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchRejected);
 }
 
 pub fn data_hash(
@@ -1034,6 +1068,7 @@ fn reset_pvp_state_on_lobby(
     mut connection: ResMut<PvpConnection>,
     mut input: ResMut<PvpLobbyInput>,
     mut team_state: ResMut<PvpTeamState>,
+    mut rematch_state: ResMut<PvpRematchState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
     mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
@@ -1047,6 +1082,7 @@ fn reset_pvp_state_on_lobby(
     connection.local_ip = local_lan_ip();
     reset_lobby_input(&mut input);
     reset_session_state(&mut team_state, &mut incoming_intents);
+    *rematch_state = PvpRematchState::default();
     incoming_snapshots.0.clear();
     incoming_feedbacks.0.clear();
     *pending_local_intent = PvpPendingLocalIntent::default();
@@ -1786,10 +1822,13 @@ fn normalize_room_code(room_code: &str) -> String {
 fn pvp_poll_network_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
+    mut rematch_state: ResMut<PvpRematchState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
     mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
     mut input: ResMut<PvpLobbyInput>,
+    game_state: Res<State<GameState>>,
+    mut result_notice: ResMut<BattleResultNotice>,
     dbs: Option<Res<BattleDbs>>,
     monsters: Option<Res<MonsterPool>>,
     rules: Option<Res<BattleRules>>,
@@ -1918,11 +1957,34 @@ fn pvp_poll_network_system(
                         connection.status = PvpStatus::Failed(input.info.clone());
                     }
                 }
-                PvpMessage::TeamSelected { monster_indices } => {
-                    team_state.remote_indices = Some(monster_indices);
+                PvpMessage::TeamSelected {
+                    session_id,
+                    monster_indices,
+                } => {
+                    if session_id == team_state.session_id {
+                        team_state.remote_indices = Some(monster_indices);
+                    } else {
+                        console_log(
+                            ConsoleLogCategory::PvpDetail,
+                            format!(
+                                "[team-ignore] stale session_id={} current={}",
+                                session_id, team_state.session_id
+                            ),
+                        );
+                    }
                 }
-                PvpMessage::BattleReady { seed } => {
-                    team_state.battle_seed = Some(seed);
+                PvpMessage::BattleReady { session_id, seed } => {
+                    if session_id == team_state.session_id {
+                        team_state.battle_seed = Some(seed);
+                    } else {
+                        console_log(
+                            ConsoleLogCategory::PvpDetail,
+                            format!(
+                                "[ready-ignore] stale session_id={} current={}",
+                                session_id, team_state.session_id
+                            ),
+                        );
+                    }
                 }
                 PvpMessage::BattleSnapshot(snapshot) => {
                     console_log(
@@ -1949,6 +2011,25 @@ fn pvp_poll_network_system(
                         format!("[intent-recv] seq={} intent={:?}", seq, intent),
                     );
                     incoming_intents.0.push((seq, intent))
+                }
+                PvpMessage::RematchRequest => {
+                    if *game_state.get() == GameState::Result && connection.is_connected() {
+                        rematch_state.incoming_request = true;
+                        console_log(ConsoleLogCategory::Pvp, "[rematch] 收到再来一局邀请");
+                    }
+                }
+                PvpMessage::RematchAccepted => {
+                    rematch_state.accepted = true;
+                    rematch_state.incoming_request = false;
+                    rematch_state.outgoing_request = false;
+                    console_log(ConsoleLogCategory::Pvp, "[rematch] 对方接受再来一局");
+                }
+                PvpMessage::RematchRejected => {
+                    rematch_state.incoming_request = false;
+                    rematch_state.outgoing_request = false;
+                    result_notice.text = "对方拒绝了你的邀请".to_string();
+                    result_notice.remaining = 2.5;
+                    console_log(ConsoleLogCategory::Pvp, "[rematch] 对方拒绝再来一局");
                 }
                 PvpMessage::Surrender => {
                     let reason = "对方已撤退/战斗中止".to_string();
@@ -1992,7 +2073,12 @@ fn pvp_apply_remote_team_system(
     mut commands: Commands,
     mut team_state: ResMut<PvpTeamState>,
     connection: Res<PvpConnection>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
+    mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
+    mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
     mut snapshot_sync: ResMut<PvpSnapshotSync>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if team_state.battle_started || !connection.protocol_ready {
@@ -2016,8 +2102,15 @@ fn pvp_apply_remote_team_system(
         player_indices: local_indices,
         enemy_indices: remote_indices,
     });
+    incoming_snapshots.0.clear();
+    incoming_feedbacks.0.clear();
+    *pending_local_intent = PvpPendingLocalIntent::default();
+    *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
     snapshot_sync.reset();
     team_state.battle_started = true;
+    // 重置战斗阶段到 Init，确保 init_battle_system 会重新初始化战斗实体与状态。
+    // 否则上一局结束时遗留的 BattlePhase（如 DeathResolve）会让再来一局直接回到上一局结算界面。
+    next_phase.set(BattlePhase::Init);
     next_state.set(GameState::Battle);
 }
 
@@ -2028,7 +2121,10 @@ fn pvp_battle_seed(connection: &PvpConnection, team_state: &mut PvpTeamState) ->
                 .battle_seed
                 .unwrap_or_else(new_battle_shuffle_seed);
             team_state.battle_seed = Some(seed);
-            connection.send(PvpMessage::BattleReady { seed });
+            connection.send(PvpMessage::BattleReady {
+                session_id: team_state.session_id,
+                seed,
+            });
             Some(seed)
         }
         Some(PvpRole::Client) => team_state.battle_seed,
@@ -2318,6 +2414,8 @@ struct PvpSendSnapshotResources<'w> {
     action_points: Res<'w, ActionPoints>,
     battle_result: Res<'w, BattleResult>,
     pending_discard: Option<Res<'w, PendingHandDiscard>>,
+    shuffle_seed: Option<Res<'w, BattleShuffleSeed>>,
+    team_state: Res<'w, PvpTeamState>,
 }
 
 fn pvp_send_host_snapshot_system(
@@ -2356,6 +2454,12 @@ fn pvp_send_host_snapshot_system(
     let mirrored_result = (!runtime.battle_result.message.is_empty())
         .then(|| mirror_result_message(&runtime.battle_result.message));
     let snapshot = PvpBattleSnapshot {
+        session_id: runtime.team_state.session_id,
+        battle_seed: runtime
+            .shuffle_seed
+            .as_ref()
+            .map(|seed| seed.0)
+            .unwrap_or(0),
         turn: runtime.turn_count.0,
         phase: *runtime.battle_phase.get(),
         first_side: runtime.round_order.first,
@@ -2439,6 +2543,9 @@ fn pvp_apply_host_snapshot_system(
     mut commands: Commands,
     mut runtime: PvpApplySnapshotResources,
     connection: Res<PvpConnection>,
+    game_state: Res<State<GameState>>,
+    team_state: Res<PvpTeamState>,
+    shuffle_seed: Option<Res<BattleShuffleSeed>>,
     battle_mode: Res<BattleControlMode>,
     battle_phase: Res<State<BattlePhase>>,
     mut stats_query: Query<&mut Stats, With<InBattle>>,
@@ -2447,7 +2554,9 @@ fn pvp_apply_host_snapshot_system(
     mut status_query: Query<&mut StatusBoard, With<InBattle>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if *battle_mode != BattleControlMode::PlayerVsRemote || connection.role != Some(PvpRole::Client)
+    if *game_state.get() != GameState::Battle
+        || *battle_mode != BattleControlMode::PlayerVsRemote
+        || connection.role != Some(PvpRole::Client)
     {
         runtime.incoming.0.clear();
         runtime.incoming_feedbacks.0.clear();
@@ -2457,6 +2566,32 @@ fn pvp_apply_host_snapshot_system(
         return;
     };
     runtime.incoming.0.clear();
+    if snapshot.session_id != team_state.session_id {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-ignore] stale session_id={} current={}",
+                snapshot.session_id, team_state.session_id
+            ),
+        );
+        runtime.incoming_feedbacks.0.clear();
+        return;
+    }
+    if shuffle_seed
+        .as_ref()
+        .is_some_and(|seed| snapshot.battle_seed != seed.0)
+    {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-ignore] stale battle_seed={} current={}",
+                snapshot.battle_seed,
+                shuffle_seed.as_ref().map(|seed| seed.0).unwrap_or(0)
+            ),
+        );
+        runtime.incoming_feedbacks.0.clear();
+        return;
+    }
     console_log(
         ConsoleLogCategory::PvpDetail,
         format!(
@@ -2817,4 +2952,122 @@ fn pvp_handle_battle_disconnect_system(
     connection.stop();
     connection.status = PvpStatus::Idle;
     next_state.set(GameState::Result);
+}
+
+fn pvp_result_rematch_system(
+    mut pending_action: ResMut<PendingBattleResultAction>,
+    mut rematch_state: ResMut<PvpRematchState>,
+    connection: Res<PvpConnection>,
+    battle_mode: Res<BattleControlMode>,
+    mut team_state: ResMut<PvpTeamState>,
+    mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
+    mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
+    mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
+    mut selection_state: ResMut<crate::team_selection::SelectionState>,
+    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
+    mut battle_result: ResMut<BattleResult>,
+    mut result_notice: ResMut<BattleResultNotice>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if *battle_mode != BattleControlMode::PlayerVsRemote {
+        return;
+    }
+
+    if rematch_state.accepted {
+        rematch_state.accepted = false;
+        enter_pvp_rematch_selection(
+            &mut team_state,
+            &mut incoming_intents,
+            &mut incoming_snapshots,
+            &mut incoming_feedbacks,
+            &mut pending_local_intent,
+            &mut last_remote_intent_seq,
+            &mut snapshot_sync,
+            &mut selection_state,
+            &mut entry_mode,
+            &mut battle_result,
+            &mut next_state,
+        );
+        return;
+    }
+
+    let Some(action) = pending_action.0 else {
+        return;
+    };
+    match action {
+        BattleResultAction::Rematch => {
+            if connection.is_connected() {
+                request_rematch(&connection);
+                rematch_state.outgoing_request = true;
+                result_notice.text = "已邀请对方再来一局".to_string();
+                result_notice.remaining = 2.0;
+            } else {
+                rematch_state.outgoing_request = false;
+                result_notice.text = "对方已离开房间，无法再来一局。".to_string();
+                result_notice.remaining = 2.5;
+            }
+            pending_action.0 = None;
+        }
+        BattleResultAction::AcceptRematch => {
+            if connection.is_connected() {
+                accept_rematch(&connection);
+            }
+            rematch_state.incoming_request = false;
+            pending_action.0 = None;
+            enter_pvp_rematch_selection(
+                &mut team_state,
+                &mut incoming_intents,
+                &mut incoming_snapshots,
+                &mut incoming_feedbacks,
+                &mut pending_local_intent,
+                &mut last_remote_intent_seq,
+                &mut snapshot_sync,
+                &mut selection_state,
+                &mut entry_mode,
+                &mut battle_result,
+                &mut next_state,
+            );
+        }
+        BattleResultAction::RejectRematch => {
+            if connection.is_connected() {
+                reject_rematch(&connection);
+            }
+            rematch_state.incoming_request = false;
+            result_notice.text = "已拒绝对方邀请".to_string();
+            result_notice.remaining = 2.0;
+            pending_action.0 = None;
+        }
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_pvp_rematch_selection(
+    team_state: &mut PvpTeamState,
+    incoming_intents: &mut PvpIncomingIntents,
+    incoming_snapshots: &mut PvpIncomingSnapshots,
+    incoming_feedbacks: &mut PvpIncomingFeedbacks,
+    pending_local_intent: &mut PvpPendingLocalIntent,
+    last_remote_intent_seq: &mut PvpLastRemoteIntentSeq,
+    snapshot_sync: &mut PvpSnapshotSync,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    battle_result: &mut BattleResult,
+    next_state: &mut NextState<GameState>,
+) {
+    *team_state = PvpTeamState::default();
+    incoming_intents.0.clear();
+    incoming_snapshots.0.clear();
+    incoming_feedbacks.0.clear();
+    *pending_local_intent = PvpPendingLocalIntent::default();
+    *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
+    snapshot_sync.reset();
+    selection_state.reset();
+    *entry_mode = crate::team_selection::SelectionEntryMode::Pvp;
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    next_state.set(GameState::TeamSelection);
 }

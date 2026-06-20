@@ -3,16 +3,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
+        ActionTrace, BattleControlMode, BattleEvent, BattleLog, BattleResult, BattleResultAction,
+        BattleResultNotice, Combatant, ElementAura, InBattle, PendingBattleResultAction,
         PendingKoResolution, ReplayEventLog, RoundOrder, Shield, Side, Stats, StructuredBattleLog,
         TurnContext, TurnCount, battle_phase_for_side, note_action_phase, note_structured_phase,
         push_battle_line, push_named_action_trace, transfer_status_by_id,
     },
+    data::TeamSelections,
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::{abort_battle, process_round_end_status_durations};
@@ -462,54 +465,209 @@ fn export_logs(
     write_export_logs(&export_dir, battle_result, replay_log, action_trace)
 }
 
+#[derive(SystemParam)]
+pub struct ResultRuntime<'w> {
+    selection_state: ResMut<'w, crate::team_selection::SelectionState>,
+    entry_mode: ResMut<'w, crate::team_selection::SelectionEntryMode>,
+    map_battle_context: ResMut<'w, crate::data::MapBattleContext>,
+    current_map: ResMut<'w, crate::map::components::CurrentMap>,
+    team_selections: Option<ResMut<'w, TeamSelections>>,
+    replay_log: Res<'w, ReplayEventLog>,
+    action_trace: Res<'w, ActionTrace>,
+    battle_mode: ResMut<'w, BattleControlMode>,
+    ui_control_side: ResMut<'w, crate::battle::UiControlSide>,
+    selected_cards: ResMut<'w, crate::battle::SelectedCards>,
+    battle_result: ResMut<'w, BattleResult>,
+    result_notice: ResMut<'w, BattleResultNotice>,
+    pending_action: ResMut<'w, PendingBattleResultAction>,
+    pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+    next_phase: ResMut<'w, NextState<BattlePhase>>,
+    next_game_state: ResMut<'w, NextState<GameState>>,
+}
+
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut selection_state: ResMut<crate::team_selection::SelectionState>,
-    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
-    mut map_battle_context: ResMut<crate::data::MapBattleContext>,
-    mut current_map: ResMut<crate::map::components::CurrentMap>,
-    team_selections: Option<ResMut<crate::data::TeamSelections>>,
-    replay_log: Res<ReplayEventLog>,
-    action_trace: Res<ActionTrace>,
-    mut battle_mode: ResMut<crate::battle::BattleControlMode>,
-    mut ui_control_side: ResMut<crate::battle::UiControlSide>,
-    mut selected_cards: ResMut<crate::battle::SelectedCards>,
-    mut battle_result: ResMut<BattleResult>,
-    mut next_phase: ResMut<NextState<BattlePhase>>,
-    mut next_game_state: ResMut<NextState<GameState>>,
+    time: Res<Time>,
+    mut runtime: ResultRuntime,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyL) {
-        battle_result.export_status = Some(
-            match export_logs(&battle_result, &replay_log, &action_trace) {
-                Ok(message) => message,
-                Err(message) => format!("导出失败：{message}"),
-            },
-        );
+    if runtime.result_notice.remaining > 0.0 {
+        runtime.result_notice.remaining =
+            (runtime.result_notice.remaining - time.delta_secs()).max(0.0);
+        if runtime.result_notice.remaining == 0.0 {
+            runtime.result_notice.text.clear();
+        }
     }
 
-    if keyboard.just_pressed(KeyCode::KeyR) {
-        let return_map = map_battle_context.return_map.take();
-        map_battle_context.enemy_monster_index = None;
-        battle_result.message.clear();
-        battle_result.export_status = None;
-        selection_state.reset();
-        *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
-        *battle_mode = crate::battle::BattleControlMode::PlayerVsAi;
-        ui_control_side.0 = Side::Player;
-        *selected_cards = crate::battle::SelectedCards::default();
-        if let Some(mut team_selections) = team_selections {
-            team_selections.player_indices.clear();
-            team_selections.enemy_indices.clear();
+    if keyboard.just_pressed(KeyCode::KeyL) {
+        match export_logs(
+            &runtime.battle_result,
+            &runtime.replay_log,
+            &runtime.action_trace,
+        ) {
+            Ok(_) => {
+                runtime.result_notice.text = "导出成功".to_string();
+                runtime.result_notice.remaining = 2.0;
+            }
+            Err(message) => {
+                runtime.result_notice.text = format!("导出失败：{message}");
+                runtime.result_notice.remaining = 2.5;
+            }
         }
+    }
 
-        next_phase.set(BattlePhase::Init);
+    let keyboard_action = keyboard
+        .just_pressed(KeyCode::KeyR)
+        .then_some(BattleResultAction::Return);
+    let action = keyboard_action.or(runtime.pending_action.0);
+    let Some(action) = action else {
+        return;
+    };
+
+    let is_pvp = *runtime.battle_mode == BattleControlMode::PlayerVsRemote;
+    match action {
+        BattleResultAction::Return => {
+            runtime.pending_action.0 = None;
+            return_from_result(
+                is_pvp,
+                &mut runtime.selection_state,
+                &mut runtime.entry_mode,
+                &mut runtime.map_battle_context,
+                &mut runtime.current_map,
+                runtime.team_selections.as_deref_mut(),
+                &mut runtime.battle_mode,
+                &mut runtime.ui_control_side,
+                &mut runtime.selected_cards,
+                &mut runtime.battle_result,
+                runtime.pvp_connection.as_deref_mut(),
+                &mut runtime.next_phase,
+                &mut runtime.next_game_state,
+            );
+        }
+        BattleResultAction::RestartSameTeams if !is_pvp => {
+            runtime.pending_action.0 = None;
+            runtime.battle_result.message.clear();
+            runtime.battle_result.export_status = None;
+            runtime.result_notice.text.clear();
+            runtime.result_notice.remaining = 0.0;
+            *runtime.selected_cards = crate::battle::SelectedCards::default();
+            runtime.next_phase.set(BattlePhase::Init);
+            runtime.next_game_state.set(GameState::Battle);
+        }
+        BattleResultAction::Rematch if !is_pvp => {
+            runtime.pending_action.0 = None;
+            let previous_battle_mode = *runtime.battle_mode;
+            rematch_from_result(
+                previous_battle_mode,
+                &mut runtime.selection_state,
+                &mut runtime.entry_mode,
+                &mut runtime.map_battle_context,
+                runtime.team_selections.as_deref_mut(),
+                &mut runtime.battle_mode,
+                &mut runtime.ui_control_side,
+                &mut runtime.selected_cards,
+                &mut runtime.battle_result,
+                &mut runtime.result_notice,
+                &mut runtime.next_phase,
+                &mut runtime.next_game_state,
+            );
+        }
+        BattleResultAction::RestartSameTeams => {
+            runtime.pending_action.0 = None;
+        }
+        BattleResultAction::Rematch
+        | BattleResultAction::AcceptRematch
+        | BattleResultAction::RejectRematch => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn return_from_result(
+    is_pvp: bool,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    map_battle_context: &mut crate::data::MapBattleContext,
+    current_map: &mut crate::map::components::CurrentMap,
+    team_selections: Option<&mut TeamSelections>,
+    battle_mode: &mut BattleControlMode,
+    ui_control_side: &mut crate::battle::UiControlSide,
+    selected_cards: &mut crate::battle::SelectedCards,
+    battle_result: &mut BattleResult,
+    pvp_connection: Option<&mut pvp::PvpConnection>,
+    next_phase: &mut NextState<BattlePhase>,
+    next_game_state: &mut NextState<GameState>,
+) {
+    let return_map = map_battle_context.return_map.take();
+    map_battle_context.enemy_monster_index = None;
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    selection_state.reset();
+    *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+    *battle_mode = BattleControlMode::PlayerVsAi;
+    ui_control_side.0 = Side::Player;
+    *selected_cards = crate::battle::SelectedCards::default();
+    if let Some(team_selections) = team_selections {
+        team_selections.player_indices.clear();
+        team_selections.enemy_indices.clear();
+    }
+
+    if is_pvp {
+        if let Some(connection) = pvp_connection {
+            connection.stop_with_leave(Some("对方已退出结算界面。".to_string()));
+            connection.status = pvp::PvpStatus::Idle;
+        }
+    }
+
+    next_phase.set(BattlePhase::Init);
+    if !is_pvp {
         if let Some(map) = return_map {
             *current_map = map;
             next_game_state.set(GameState::Map);
-        } else {
-            next_game_state.set(GameState::Lobby);
+            return;
         }
     }
+    next_game_state.set(GameState::Lobby);
+}
+
+fn rematch_from_result(
+    previous_battle_mode: BattleControlMode,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    map_battle_context: &mut crate::data::MapBattleContext,
+    team_selections: Option<&mut TeamSelections>,
+    battle_mode: &mut BattleControlMode,
+    ui_control_side: &mut crate::battle::UiControlSide,
+    selected_cards: &mut crate::battle::SelectedCards,
+    battle_result: &mut BattleResult,
+    result_notice: &mut BattleResultNotice,
+    next_phase: &mut NextState<BattlePhase>,
+    next_game_state: &mut NextState<GameState>,
+) {
+    selection_state.reset();
+    match previous_battle_mode {
+        BattleControlMode::DebugPlayerControlsBoth => {
+            *entry_mode = crate::team_selection::SelectionEntryMode::Debug;
+            *battle_mode = BattleControlMode::DebugPlayerControlsBoth;
+        }
+        _ => {
+            *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+            *battle_mode = BattleControlMode::PlayerVsAi;
+        }
+    }
+    ui_control_side.0 = Side::Player;
+    *selected_cards = crate::battle::SelectedCards::default();
+    if let Some(team_selections) = team_selections {
+        if map_battle_context.return_map.is_some() {
+            map_battle_context.enemy_monster_index = team_selections.enemy_indices.first().copied();
+        }
+        team_selections.player_indices.clear();
+        team_selections.enemy_indices.clear();
+    }
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    result_notice.text.clear();
+    result_notice.remaining = 0.0;
+    next_phase.set(BattlePhase::Init);
+    next_game_state.set(GameState::TeamSelection);
 }
 
 #[cfg(test)]

@@ -2675,25 +2675,262 @@ pub(crate) fn setup_ui_system(
                 });
             });
 
-            // === Central: Result Text ===
+            // === Central: Result Popup ===
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(0.0),
-                    top: Val::Percent(42.0),
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
                     width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(20.0)),
                     ..default()
                 },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.40)),
+                Visibility::Hidden,
+                ZIndex(130),
+                ResultPopupRoot,
             ))
-            .with_children(|res_node| {
-                res_node.spawn((
-                    Text::new(""),
-                    result_font,
-                    TextColor(Color::srgb(1.0, 0.82, 0.35)),
-                    theme.result_text_shadow(),
-                    ResultText,
-                ));
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Px(520.0),
+                            padding: UiRect::all(Val::Px(24.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(18.0),
+                            border: border_1,
+                            border_radius: BorderRadius::all(radius_panel),
+                            ..default()
+                        },
+                        theme.lacquer_panel_bg(),
+                        BorderColor::all(theme.gold),
+                        theme.panel_shadow(),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new(""),
+                            result_font.clone(),
+                            TextColor(Color::srgb(1.0, 0.82, 0.35)),
+                            theme.result_text_shadow(),
+                            TextLayout::new_with_justify(Justify::Center),
+                            ResultTitleText,
+                        ));
+                        panel.spawn((
+                            Text::new(""),
+                            meta_font.clone(),
+                            TextColor(theme.text_primary),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.45),
+                            },
+                            TextLayout::new_with_justify(Justify::Center),
+                            ResultText,
+                        ));
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: border_1,
+                                    border_radius: BorderRadius::all(radius_button),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.10, 0.20, 0.18, 0.86)),
+                                BorderColor::all(Color::srgba(0.45, 0.86, 0.66, 0.65)),
+                                Visibility::Hidden,
+                                ResultNoticeRoot,
+                            ))
+                            .with_children(|notice| {
+                                notice.spawn((
+                                    Text::new(""),
+                                    body_font.clone(),
+                                    TextColor(theme.text_primary),
+                                    ResultNoticeText,
+                                ));
+                            });
+                        panel
+                            .spawn((Node {
+                                width: Val::Percent(100.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(12.0),
+                                row_gap: Val::Px(10.0),
+                                flex_wrap: FlexWrap::Wrap,
+                                ..default()
+                            },))
+                            .with_children(|buttons| {
+                                buttons
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(104.0),
+                                            min_height: Val::Px(38.0),
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: border_1,
+                                            border_radius: BorderRadius::all(radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.button_idle),
+                                        BorderColor::all(theme.button_border_idle),
+                                        theme.button_shadow(),
+                                        ResultReturnButton,
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn((
+                                            Text::new("返回"),
+                                            body_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                                buttons
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(104.0),
+                                            min_height: Val::Px(38.0),
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: border_1,
+                                            border_radius: BorderRadius::all(radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.button_idle),
+                                        BorderColor::all(theme.button_border_idle),
+                                        theme.button_shadow(),
+                                        ResultRestartButton,
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn((
+                                            Text::new("重新开始"),
+                                            body_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                                buttons
+                                    .spawn((
+                                        Button,
+                                        Node {
+                                            min_width: Val::Px(104.0),
+                                            min_height: Val::Px(38.0),
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: border_1,
+                                            border_radius: BorderRadius::all(radius_button),
+                                            ..default()
+                                        },
+                                        BackgroundColor(theme.button_idle),
+                                        BorderColor::all(theme.button_border_idle),
+                                        theme.button_shadow(),
+                                        ResultRematchButton,
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn((
+                                            Text::new("再来一局"),
+                                            body_font.clone(),
+                                            TextColor(theme.text_primary),
+                                        ));
+                                    });
+                            });
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::all(Val::Px(14.0)),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(12.0),
+                                    border: border_1,
+                                    border_radius: BorderRadius::all(radius_button),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.08, 0.08, 0.10, 0.92)),
+                                BorderColor::all(theme.gold_dim),
+                                Visibility::Hidden,
+                                ResultInvitePromptRoot,
+                            ))
+                            .with_children(|prompt| {
+                                prompt.spawn((
+                                    Text::new("对方邀请你再来一局游戏，是否确认"),
+                                    body_font.clone(),
+                                    TextColor(theme.text_primary),
+                                    TextLayout::new_with_justify(Justify::Center),
+                                ));
+                                prompt
+                                    .spawn((Node {
+                                        width: Val::Percent(100.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(12.0),
+                                        ..default()
+                                    },))
+                                    .with_children(|prompt_buttons| {
+                                        prompt_buttons
+                                            .spawn((
+                                                Button,
+                                                Node {
+                                                    min_width: Val::Px(92.0),
+                                                    min_height: Val::Px(36.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(14.0),
+                                                        Val::Px(7.0),
+                                                    ),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: border_1,
+                                                    border_radius: BorderRadius::all(radius_button),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(theme.button_idle),
+                                                BorderColor::all(theme.button_border_idle),
+                                                theme.button_shadow(),
+                                                ResultInviteRejectButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("取消"),
+                                                    body_font.clone(),
+                                                    TextColor(theme.text_primary),
+                                                ));
+                                            });
+                                        prompt_buttons
+                                            .spawn((
+                                                Button,
+                                                Node {
+                                                    min_width: Val::Px(92.0),
+                                                    min_height: Val::Px(36.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(14.0),
+                                                        Val::Px(7.0),
+                                                    ),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: border_1,
+                                                    border_radius: BorderRadius::all(radius_button),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(theme.button_idle),
+                                                BorderColor::all(theme.button_border_idle),
+                                                theme.button_shadow(),
+                                                ResultInviteAcceptButton,
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn((
+                                                    Text::new("确认"),
+                                                    body_font.clone(),
+                                                    TextColor(theme.text_primary),
+                                                ));
+                                            });
+                                    });
+                            });
+                    });
             });
         });
 }

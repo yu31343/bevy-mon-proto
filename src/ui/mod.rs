@@ -153,7 +153,8 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             button_end_turn_system
                 .run_if(in_state(GameState::Battle))
                 .run_if(crate::battle::player_action_cooldown_ready),
-            button_visual_state_system.run_if(in_state(GameState::Battle)),
+            button_visual_state_system
+                .run_if(in_state(GameState::Battle).or(in_state(GameState::Result))),
             hand_full_warning_visual_system
                 .run_if(in_state(GameState::Battle))
                 .after(button_end_turn_system)
@@ -202,6 +203,11 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         Update,
         update_result_ui_system.run_if(in_state(GameState::Result)),
     );
+    app.add_systems(
+        Update,
+        button_result_action_system.run_if(in_state(GameState::Result)),
+    )
+    .add_systems(OnExit(GameState::Result), hide_result_ui_system);
 }
 
 fn cleanup_battle_ui_system(

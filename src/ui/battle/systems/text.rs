@@ -4,12 +4,13 @@ use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use super::roster::bench_display_order;
 use crate::{
     battle::{
-        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam,
-        RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StatusBoard, Team, TurnCount,
-        UiControlSide,
+        BattleControlMode, BattleEvent, BattleResultNotice, Combatant, ElementAura, EnemyTeam,
+        InBattle, PendingHandDiscard, PlayerTeam, RoundOrder, Shield, Side, SkillCount, SkillList,
+        Stats, StatusBoard, Team, TurnCount, UiControlSide,
     },
     data::{BattleDbs, BattleFormulaRules, ElementType},
     game_state::BattlePhase,
+    pvp,
 };
 
 fn element_icon_path(element: ElementType) -> &'static str {
@@ -1191,20 +1192,115 @@ pub(crate) fn update_battle_action_text_system(
 }
 
 pub(crate) fn update_result_ui_system(
-    mut result_text_q: Query<&mut Text, With<ResultText>>,
+    mut root_q: Query<&mut Visibility, With<ResultPopupRoot>>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<ResultTitleText>>,
+        Query<&mut Text, With<ResultText>>,
+        Query<&mut Text, With<ResultNoticeText>>,
+    )>,
+    mut notice_root_q: Query<&mut Visibility, (With<ResultNoticeRoot>, Without<ResultPopupRoot>)>,
+    mut restart_button_q: Query<&mut Node, With<ResultRestartButton>>,
+    mut prompt_q: Query<
+        &mut Visibility,
+        (
+            With<ResultInvitePromptRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+        ),
+    >,
     battle_result: Res<crate::battle::BattleResult>,
+    battle_mode: Res<BattleControlMode>,
+    notice: Res<BattleResultNotice>,
+    pvp_rematch: Option<Res<pvp::PvpRematchState>>,
 ) {
-    if let Ok(mut result_text) = result_text_q.single_mut() {
-        if battle_result.message.is_empty() {
-            result_text.0.clear();
-            return;
-        }
-
-        let mut lines = vec![battle_result.message.clone()];
-        if let Some(status) = &battle_result.export_status {
-            lines.push(status.clone());
-        }
-        lines.push("按 L 导出 replay/action log。".to_string());
-        result_text.0 = lines.join("\n");
+    let visible = !battle_result.message.is_empty();
+    for mut root in &mut root_q {
+        *root = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
+    if !visible {
+        return;
+    }
+
+    let is_pvp = *battle_mode == BattleControlMode::PlayerVsRemote;
+    for mut title in &mut text_queries.p0() {
+        title.0 = result_title(&battle_result.message).to_string();
+    }
+    for mut result_text in &mut text_queries.p1() {
+        result_text.0 = clean_result_message(&battle_result.message);
+    }
+    for mut node in &mut restart_button_q {
+        node.display = if is_pvp { Display::None } else { Display::Flex };
+    }
+
+    let notice_visible = notice.remaining > 0.0 && !notice.text.is_empty();
+    for mut visibility in &mut notice_root_q {
+        *visibility = if notice_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if notice_visible {
+        for mut text in &mut text_queries.p2() {
+            text.0 = notice.text.clone();
+        }
+    }
+
+    let invite_visible = pvp_rematch
+        .as_ref()
+        .is_some_and(|state| state.incoming_request);
+    for mut visibility in &mut prompt_q {
+        *visibility = if invite_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+pub(crate) fn hide_result_ui_system(
+    mut root_q: Query<&mut Visibility, With<ResultPopupRoot>>,
+    mut prompt_q: Query<
+        &mut Visibility,
+        (
+            With<ResultInvitePromptRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+        ),
+    >,
+    mut notice_root_q: Query<&mut Visibility, (With<ResultNoticeRoot>, Without<ResultPopupRoot>)>,
+) {
+    for mut visibility in &mut root_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut prompt_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut notice_root_q {
+        *visibility = Visibility::Hidden;
+    }
+}
+
+fn result_title(message: &str) -> &'static str {
+    if message.contains("胜利") {
+        "成功"
+    } else if message.contains("失败") || message.contains("中断") || message.contains("撤退")
+    {
+        "失败"
+    } else {
+        "结果"
+    }
+}
+
+fn clean_result_message(message: &str) -> String {
+    message
+        .replace("按 R 返回大厅。", "")
+        .replace("按 R 返回。", "")
+        .replace("按 R 重新开始。", "")
+        .trim()
+        .to_string()
 }
