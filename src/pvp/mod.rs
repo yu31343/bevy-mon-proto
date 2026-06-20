@@ -1640,13 +1640,19 @@ fn pvp_address_text_box_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut last_input_screen: Local<Option<PvpLobbyScreen>>,
 ) -> Result {
     if !matches!(
         input.screen,
         PvpLobbyScreen::JoinAddress | PvpLobbyScreen::RelayHostRoom | PvpLobbyScreen::RelayJoinRoom
     ) {
+        *last_input_screen = None;
         return Ok(());
     }
+    let screen = input.screen;
+    let should_request_initial_focus = *last_input_screen != Some(screen);
+    *last_input_screen = Some(screen);
+
     let ctx = contexts.ctx_mut()?;
     register_egui_cjk_font(ctx, &mut input);
     egui::Area::new(egui::Id::new("pvp_address_text_box"))
@@ -1665,7 +1671,7 @@ fn pvp_address_text_box_system(
             );
             ui.set_style(style);
             ui.set_width(360.0);
-            let enter_pressed = match input.screen {
+            let enter_pressed = match screen {
                 PvpLobbyScreen::JoinAddress => {
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut input.address)
@@ -1673,7 +1679,9 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    response.request_focus();
+                    if should_request_initial_focus {
+                        response.request_focus();
+                    }
                     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
                 PvpLobbyScreen::RelayHostRoom => {
@@ -1683,7 +1691,9 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    response.request_focus();
+                    if should_request_initial_focus {
+                        response.request_focus();
+                    }
                     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
                 PvpLobbyScreen::RelayJoinRoom => {
@@ -1700,7 +1710,7 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    if input.room_code.is_empty() {
+                    if should_request_initial_focus && input.room_code.is_empty() {
                         room_response.request_focus();
                     }
                     (address_response.lost_focus() || room_response.lost_focus())
