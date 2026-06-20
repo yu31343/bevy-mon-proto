@@ -418,6 +418,8 @@ struct PvpBattleSnapshot {
     enemy_auras: Vec<[Option<crate::data::ElementType>; 2]>,
     player_statuses: Vec<Vec<StatusInstance>>,
     enemy_statuses: Vec<Vec<StatusInstance>>,
+    player_skill_uses: Vec<[u8; 4]>,
+    enemy_skill_uses: Vec<[u8; 4]>,
     player_ap: i32,
     enemy_ap: i32,
     player_hand: Vec<CardId>,
@@ -643,7 +645,7 @@ pub fn data_hash(
 
 fn rules_hash_part(rules: &BattleRules) -> String {
     format!(
-        "rules:{}:{}:{}:{}:{}:{}:{}:{}",
+        "rules:{}:{}:{}:{}:{}:{}:{}:{}:{}",
         rules.max_team_size,
         rules.initial_cards,
         rules.cards_per_round,
@@ -651,7 +653,8 @@ fn rules_hash_part(rules: &BattleRules) -> String {
         rules.max_ap,
         rules.max_retained_hand,
         rules.discard_ap_gain,
-        rules.max_shield_hp_ratio
+        rules.max_shield_hp_ratio,
+        rules.default_skill_uses_per_turn
     )
 }
 
@@ -669,14 +672,15 @@ fn formulas_hash_part(formulas: &BattleFormulaRules) -> String {
 
 fn skill_hash_part(skill: &SkillDef) -> String {
     format!(
-        "skill:{:?}:{}:{:?}:{}:{:?}:{:?}:{:?}",
+        "skill:{:?}:{}:{:?}:{}:{:?}:{:?}:{:?}:{:?}",
         skill.id,
         skill.name,
         skill.category,
         skill.cost_ap,
         skill.effect,
         skill.element,
-        skill.base_accuracy
+        skill.base_accuracy,
+        skill.uses_per_turn
     )
 }
 
@@ -2209,6 +2213,28 @@ fn apply_team_hp(
     }
 }
 
+fn team_skill_uses(
+    team: &crate::battle::Team,
+    query: &Query<&crate::battle::SkillUses, With<InBattle>>,
+) -> Vec<[u8; 4]> {
+    team.combatants
+        .iter()
+        .map(|&entity| query.get(entity).map(|uses| uses.0).unwrap_or([0; 4]))
+        .collect()
+}
+
+fn apply_team_skill_uses(
+    team: &crate::battle::Team,
+    uses_values: &[[u8; 4]],
+    query: &mut Query<&mut crate::battle::SkillUses, With<InBattle>>,
+) {
+    for (&entity, uses) in team.combatants.iter().zip(uses_values.iter().copied()) {
+        if let Ok(mut skill_uses) = query.get_mut(entity) {
+            skill_uses.0 = uses;
+        }
+    }
+}
+
 fn apply_team_shields(
     team: &crate::battle::Team,
     shield_values: &[i32],
@@ -2452,6 +2478,7 @@ fn pvp_send_host_snapshot_system(
     shield_query: Query<&Shield, With<InBattle>>,
     aura_query: Query<&ElementAura, With<InBattle>>,
     status_query: Query<&StatusBoard, With<InBattle>>,
+    skill_uses_query: Query<&crate::battle::SkillUses, With<InBattle>>,
 ) {
     if *battle_mode != BattleControlMode::PlayerVsRemote
         || connection.role != Some(PvpRole::Host)
@@ -2475,6 +2502,8 @@ fn pvp_send_host_snapshot_system(
     let enemy_auras = team_auras(&enemy_team.0, &aura_query);
     let player_statuses = team_statuses(&player_team.0, &status_query);
     let enemy_statuses = team_statuses(&enemy_team.0, &status_query);
+    let player_skill_uses = team_skill_uses(&player_team.0, &skill_uses_query);
+    let enemy_skill_uses = team_skill_uses(&enemy_team.0, &skill_uses_query);
     let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
     let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
     let mirrored_result = (!runtime.battle_result.message.is_empty())
@@ -2499,6 +2528,8 @@ fn pvp_send_host_snapshot_system(
         enemy_auras: player_auras,
         player_statuses: enemy_statuses,
         enemy_statuses: player_statuses,
+        player_skill_uses: enemy_skill_uses,
+        enemy_skill_uses: player_skill_uses,
         player_ap: runtime.action_points.enemy,
         enemy_ap: runtime.action_points.player,
         player_hand: runtime.hand.enemy.clone(),
@@ -2578,6 +2609,7 @@ fn pvp_apply_host_snapshot_system(
     mut shield_query: Query<&mut Shield, With<InBattle>>,
     mut aura_query: Query<&mut ElementAura, With<InBattle>>,
     mut status_query: Query<&mut StatusBoard, With<InBattle>>,
+    mut skill_uses_query: Query<&mut crate::battle::SkillUses, With<InBattle>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
     if *game_state.get() != GameState::Battle
@@ -2686,6 +2718,11 @@ fn pvp_apply_host_snapshot_system(
             &mut stats_query,
             &mut status_query,
         );
+        apply_team_skill_uses(
+            &player_team.0,
+            &snapshot.player_skill_uses,
+            &mut skill_uses_query,
+        );
     }
     if let Some(enemy_team) = runtime.enemy_team.as_mut() {
         enemy_team.0.active_index = snapshot
@@ -2705,6 +2742,11 @@ fn pvp_apply_host_snapshot_system(
             &snapshot.enemy_statuses,
             &mut stats_query,
             &mut status_query,
+        );
+        apply_team_skill_uses(
+            &enemy_team.0,
+            &snapshot.enemy_skill_uses,
+            &mut skill_uses_query,
         );
     }
 

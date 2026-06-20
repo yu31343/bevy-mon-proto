@@ -3,9 +3,10 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Hand,
-        PendingBoosts, PendingHandDiscard, PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards,
-        Side, Stats, StructuredBattleLog, TurnContext, TurnCount, UiControlSide, note_round_phase,
-        opposite_side, push_named_action_trace,
+        InBattle, PendingBoosts, PendingHandDiscard, PlayerTeam, PvpTurnOrder, RoundOrder,
+        SelectedCards, Side, SkillCount, SkillList, SkillUses, Stats, StructuredBattleLog,
+        TurnContext, TurnCount, UiControlSide, note_round_phase, opposite_side,
+        push_named_action_trace,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
@@ -48,6 +49,7 @@ pub(crate) struct RoundStartResources<'w> {
 pub fn round_start_system(
     card_deck: Res<CardDeck>,
     query: Query<&Stats>,
+    mut skill_uses_q: Query<(&SkillList, &SkillCount, &mut SkillUses), With<InBattle>>,
     battle_mode: Res<BattleControlMode>,
     pvp_turn_order: Option<Res<PvpTurnOrder>>,
     mut runtime: RoundStartResources,
@@ -128,6 +130,12 @@ pub fn round_start_system(
     super::clear_round_scoped_card_effects(pending_boosts);
     **card_memory = CardTurnMemory::default();
     **selected = SelectedCards::default();
+
+    // 每个行动回合刷新所有参战精灵（含替补）的技能释放次数。每方每回合各行动一次，
+    // 故在 RoundStart 统一重置等价于「行动回合结束后刷新」，且按精灵单独计数、互不共享。
+    for (skills, count, mut uses) in &mut skill_uses_q {
+        *uses = SkillUses::full(skills, *count, dbs, rules);
+    }
 
     let Some(player_entity) = player_team.0.active_combatant() else {
         return;

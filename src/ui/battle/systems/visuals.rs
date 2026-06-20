@@ -5,7 +5,7 @@ use super::super::components::{
     DiscardButton, EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton,
     ResultInviteAcceptButton, ResultInviteRejectButton, ResultRematchButton, ResultRestartButton,
     ResultReturnButton, RetreatButton, RetreatConfirmCancelButton, RetreatConfirmProceedButton,
-    SkillButton, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+    SkillButton, SkillButtonExhausted, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
@@ -71,6 +71,7 @@ pub(crate) fn button_visual_state_system(
         (
             Changed<Interaction>,
             With<SkillButton>,
+            Without<SkillButtonExhausted>,
             Without<crate::ui::battle::fx::SkillFlashTimer>,
             Without<ButtonClickFlash>,
             Without<EndTurnButton>,

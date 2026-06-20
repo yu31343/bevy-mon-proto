@@ -42,6 +42,8 @@ pub(crate) struct EnemyAiContext {
     pub(crate) target_element: crate::data::ElementType,
     pub(crate) target_attached_auras: [Option<crate::data::ElementType>; 2],
     pub(crate) target_status_ids: Vec<String>,
+    /// 敌方当前精灵各技能槽本回合剩余释放次数（slot 0..3，与 SkillList 对齐）。
+    pub(crate) skill_uses_remaining: [u8; 4],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1822,6 +1824,8 @@ fn threat_target_context(
         target_element: target.element,
         target_attached_auras: target.attached_auras,
         target_status_ids: target.status_ids.clone(),
+        // 威胁评估假设技能均可用，不受本回合释放次数限制。
+        skill_uses_remaining: [u8::MAX; 4],
     }
 }
 
@@ -2128,7 +2132,8 @@ fn enemy_skill_candidates(
         .enumerate()
         .filter_map(|(slot, skill_id)| {
             let skill = dbs.skills.get(&skill_id)?;
-            (current_ap >= skill.cost_ap).then(|| {
+            let has_uses = ctx.skill_uses_remaining.get(slot).copied().unwrap_or(0) > 0;
+            (has_uses && current_ap >= skill.cost_ap).then(|| {
                 apply_skill_weight(score_enemy_skill(slot, skill_id, skill, ctx, dbs), weights)
             })
         })
@@ -2430,6 +2435,7 @@ mod tests {
             target_element: ElementType::Dark,
             target_attached_auras: [None, None],
             target_status_ids,
+            skill_uses_remaining: [2; 4],
         }
     }
 
@@ -2441,6 +2447,44 @@ mod tests {
             statuses: StatusDb::default(),
             reactions: ReactionDb::default(),
         }
+    }
+
+    #[test]
+    fn enemy_skill_candidates_respect_per_turn_uses() {
+        let attack = SkillDef {
+            id: SkillId::WaterBlade,
+            name: "水刃".to_string(),
+            category: SkillCategory::ElementAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 12,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Water),
+            base_accuracy: None,
+            uses_per_turn: None,
+        };
+        let dbs = test_dbs(attack);
+        let skill_ids = [SkillId::WaterBlade; 4];
+        let weights = EnemyAiWeights::default();
+        let mut ctx = test_ai_context(Vec::new());
+
+        // slot 0 用尽、slot 1 仍可用 -> 只能选 slot 1。
+        ctx.skill_uses_remaining = [0, 2, 0, 0];
+        let chosen = choose_enemy_skill(&skill_ids, 2, 5, &dbs, &ctx, &weights)
+            .expect("slot 1 仍有释放次数，应可被选中");
+        assert_eq!(chosen.slot, 1);
+
+        // 两个槽位都用尽 -> 无可选技能。
+        ctx.skill_uses_remaining = [0, 0, 0, 0];
+        assert!(choose_enemy_skill(&skill_ids, 2, 5, &dbs, &ctx, &weights).is_none());
+
+        // slot 0 仍可用 -> 选 slot 0。
+        ctx.skill_uses_remaining = [2, 0, 0, 0];
+        let chosen = choose_enemy_skill(&skill_ids, 2, 5, &dbs, &ctx, &weights)
+            .expect("slot 0 仍有释放次数，应可被选中");
+        assert_eq!(chosen.slot, 0);
     }
 
     fn test_switch_dbs() -> BattleDbs {
@@ -2456,6 +2500,7 @@ mod tests {
             },
             element: Some(ElementType::Water),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         BattleDbs {
             skills: HashMap::from([(attack.id, attack)]),
@@ -2712,6 +2757,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let shield = SkillDef {
             id: SkillId::WaterScreen,
@@ -2721,6 +2767,7 @@ mod tests {
             effect: SkillEffect::Shield { amount: 14 },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let player_attack = SkillDef {
             id: SkillId::WaterBlade,
@@ -2734,6 +2781,7 @@ mod tests {
             },
             element: Some(ElementType::Water),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = BattleDbs {
             skills: HashMap::from([
@@ -2792,6 +2840,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let boost = CardDef {
             id: CardId::NextAttackBoost,
@@ -2845,6 +2894,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let weak_card = CardDef {
             id: CardId::Pursuit,
@@ -2923,6 +2973,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let shield = SkillDef {
             id: SkillId::WaterScreen,
@@ -2932,6 +2983,7 @@ mod tests {
             effect: SkillEffect::Shield { amount: 5 },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = BattleDbs {
             skills: HashMap::from([(attack.id, attack), (shield.id, shield)]),
@@ -2976,6 +3028,7 @@ mod tests {
             },
             element: Some(ElementType::Fire),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let mut dbs = test_dbs(skill.clone());
         dbs.reactions = ReactionDb {
@@ -3019,6 +3072,7 @@ mod tests {
             },
             element: Some(ElementType::Fire),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let no_reaction_dbs = test_dbs(skill.clone());
         let mut setup_dbs = test_dbs(skill.clone());
@@ -3059,6 +3113,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let mut dbs = test_dbs(skill.clone());
         dbs.statuses = StatusDb {
@@ -3105,6 +3160,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let curse = SkillDef {
             id: SkillId::CurseWhisper,
@@ -3116,6 +3172,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let blood_touch = SkillDef {
             id: SkillId::BloodTouch,
@@ -3145,6 +3202,7 @@ mod tests {
             },
             element: Some(ElementType::Dark),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = BattleDbs {
             skills: HashMap::from([
@@ -3227,6 +3285,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let attack = SkillDef {
             id: SkillId::ThunderStrike,
@@ -3240,6 +3299,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = BattleDbs {
             skills: HashMap::from([(swift.id, swift.clone()), (attack.id, attack.clone())]),
@@ -3277,6 +3337,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = BattleDbs {
             skills: HashMap::from([(gale_evasion.id, gale_evasion.clone())]),
@@ -3391,6 +3452,7 @@ mod tests {
             },
             element: Some(ElementType::Fire),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let card = CardDef {
             id: CardId::ReactionCatalyst,
@@ -3446,6 +3508,7 @@ mod tests {
             },
             element: Some(ElementType::Water),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let card = CardDef {
             id: CardId::ReadyToAct,
@@ -3558,6 +3621,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let weak_card = CardDef {
             id: CardId::Pursuit,
@@ -3617,6 +3681,7 @@ mod tests {
             },
             element: None,
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let weak_card = CardDef {
             id: CardId::Pursuit,
@@ -3719,6 +3784,7 @@ mod tests {
             },
             element: Some(ElementType::Light),
             base_accuracy: None,
+            uses_per_turn: None,
         };
         let dbs = test_dbs(skill.clone());
         let without_buff = test_ai_context(vec!["cursed".to_string()]);

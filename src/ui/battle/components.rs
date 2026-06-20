@@ -613,6 +613,18 @@ pub(crate) struct SkillButtonCostText {
     pub index: usize,
 }
 
+/// 技能格的释放次数充能点（slot=技能槽 0..3；pip=该槽内第几个圆点）。
+#[derive(Component)]
+pub(crate) struct SkillUsePip {
+    pub slot: usize,
+    pub pip: usize,
+}
+
+/// 标记某技能格本回合释放次数已耗尽（进入变灰冷却态）。
+/// 持有此标记的技能格由 `update_skill_uses_system` 独占着色，常规悬停/冷却系统将其跳过，避免互相覆盖。
+#[derive(Component)]
+pub(crate) struct SkillButtonExhausted;
+
 /// 背景暗角覆盖层。
 #[derive(Component)]
 pub(crate) struct BattleVignette;

@@ -4,8 +4,8 @@ use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, BattleResultAction, EnemyTeam, Hand,
         InBattle, PendingBattleResultAction, PendingHandDiscard, PendingTacticalDiscard,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
-        UiControlSide, transfer_status_by_id,
+        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard,
+        TurnContext, UiControlSide, transfer_status_by_id,
     },
     data::{BattleDbs, BattleRules, MapBattleContext},
     game_state::{BattlePhase, GameState},
@@ -251,7 +251,7 @@ pub(crate) fn button_select_skill_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
-    query: Query<(&SkillList, &SkillCount), With<InBattle>>,
+    query: Query<(&SkillList, &SkillCount, &SkillUses), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
     pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
@@ -271,7 +271,7 @@ pub(crate) fn button_select_skill_system(
     let Some(active_entity) = active_entity else {
         return;
     };
-    let Ok((skills, skill_count)) = query.get(active_entity) else {
+    let Ok((skills, skill_count, skill_uses)) = query.get(active_entity) else {
         return;
     };
     let skills = skills.0;
@@ -281,6 +281,12 @@ pub(crate) fn button_select_skill_system(
             continue;
         }
         if button.index >= skill_count.0 {
+            continue;
+        }
+        if !skill_uses.has_remaining(button.index) {
+            ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
             continue;
         }
         let skill_id = skills[button.index];

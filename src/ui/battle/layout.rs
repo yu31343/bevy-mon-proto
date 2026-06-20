@@ -920,6 +920,9 @@ fn spawn_colored_debug_tokens(
         });
 }
 
+/// 每个技能格充能点（释放次数）UI 上限；超过此值的配置在 UI 上会被截断显示（功能不受影响）。
+const MAX_SKILL_USE_PIPS: usize = 5;
+
 fn spawn_skill_row_player(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -1030,6 +1033,33 @@ fn spawn_skill_row_player(
                                             TextColor(theme.text_secondary),
                                             SkillButtonMetaText { index: idx },
                                         ));
+                                        // 释放次数充能点：用一次熄灭一个，耗尽时整格变灰冷却。
+                                        column
+                                            .spawn((Node {
+                                                flex_direction: FlexDirection::Row,
+                                                align_items: AlignItems::Center,
+                                                column_gap: Val::Px(3.0),
+                                                margin: UiRect::top(Val::Px(2.0)),
+                                                ..default()
+                                            },))
+                                            .with_children(|pips| {
+                                                for pip in 0..MAX_SKILL_USE_PIPS {
+                                                    pips.spawn((
+                                                        Node {
+                                                            width: Val::Px(7.0),
+                                                            height: Val::Px(7.0),
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            border_radius: BorderRadius::all(
+                                                                Val::Px(4.0),
+                                                            ),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(theme.ap_gem_empty),
+                                                        BorderColor::all(theme.gold_dim),
+                                                        SkillUsePip { slot: idx, pip },
+                                                    ));
+                                                }
+                                            });
                                     });
 
                                 // AP 费用宝石

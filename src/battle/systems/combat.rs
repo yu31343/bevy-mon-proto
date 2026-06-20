@@ -3405,6 +3405,7 @@ mod tests {
             },
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         }
     }
 
@@ -3455,6 +3456,7 @@ mod tests {
             cost_ap: 2,
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
             effect: SkillEffect::Sequence {
                 effects: vec![
                     SkillEffect::Attack {
@@ -3800,6 +3802,7 @@ mod tests {
             },
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         };
 
         {
@@ -3894,6 +3897,7 @@ mod tests {
             effect: SkillEffect::Shield { amount: 8 },
             element: Some(ElementType::Water),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         };
 
         {
@@ -3972,6 +3976,7 @@ mod tests {
             },
             element: Some(ElementType::Water),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         };
 
         {

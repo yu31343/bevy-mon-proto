@@ -6,9 +6,9 @@ use crate::{
     battle::{
         BattleControlMode, BattleEvent, BattleResultNotice, Combatant, ElementAura, EnemyTeam,
         InBattle, PendingHandDiscard, PlayerTeam, RoundOrder, Shield, Side, SkillCount, SkillList,
-        Stats, StatusBoard, Team, TurnCount, UiControlSide,
+        SkillUses, Stats, StatusBoard, Team, TurnCount, UiControlSide,
     },
-    data::{BattleDbs, BattleFormulaRules, ElementType},
+    data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType},
     game_state::BattlePhase,
     pvp,
 };
@@ -1117,6 +1117,81 @@ pub(crate) fn update_ap_gems_system(
     }
     for (count, mut text) in &mut count_q {
         text.0 = ap_for(count.side).to_string();
+    }
+}
+
+/// 技能格变灰冷却色（与行动冷却的锁定色一致）。
+const SKILL_EXHAUSTED_BG: Color = Color::srgba(0.18, 0.13, 0.065, 1.0);
+const SKILL_EXHAUSTED_BORDER: Color = Color::srgba(0.34, 0.26, 0.13, 0.75);
+
+/// 用充能圆点展示每个技能本回合剩余释放次数，并在归 0 时让技能格变灰进入冷却态。
+/// 读取 `UiControlSide` 对应上场精灵的 `SkillUses`（与技能按钮的映射一致），按精灵单独计数。
+pub(crate) fn update_skill_uses_system(
+    mut commands: Commands,
+    ui_control_side: Res<UiControlSide>,
+    theme: Res<UiTheme>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    skill_query: Query<(&SkillList, &SkillCount, &SkillUses), With<InBattle>>,
+    dbs: Res<BattleDbs>,
+    rules: Res<BattleRules>,
+    mut pip_q: Query<(&SkillUsePip, &mut Node, &mut BackgroundColor), Without<SkillButton>>,
+    mut button_q: Query<
+        (
+            Entity,
+            &SkillButton,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Has<SkillButtonExhausted>,
+        ),
+        Without<SkillUsePip>,
+    >,
+) {
+    let active = match ui_control_side.0 {
+        Side::Player => player_team.and_then(|team| team.0.active_combatant()),
+        Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
+    };
+    // (&SkillList, &SkillCount, &SkillUses) 全为引用，元组可 Copy，下方两处复用。
+    let info = active.and_then(|entity| skill_query.get(entity).ok());
+
+    // 充能点：亮=剩余、暗=已用；超过该技能上限或未配置槽位的圆点隐藏。
+    for (pip, mut node, mut bg) in &mut pip_q {
+        let (max, remaining) = match info {
+            Some((skills, count, uses)) if pip.slot < count.0 => (
+                dbs.skill_uses_per_turn(skills.0[pip.slot], &rules) as usize,
+                uses.0[pip.slot] as usize,
+            ),
+            _ => (0, 0),
+        };
+        if pip.pip >= max {
+            node.display = Display::None;
+            continue;
+        }
+        node.display = Display::Flex;
+        *bg = if pip.pip < remaining {
+            BackgroundColor(theme.ap_gem_full)
+        } else {
+            BackgroundColor(theme.ap_gem_empty)
+        };
+    }
+
+    // 变灰冷却：只接管「已耗尽」的技能格；可用时交还给常规悬停/冷却系统着色。
+    for (entity, button, interaction, mut bg, mut border, was_exhausted) in &mut button_q {
+        let exhausted = matches!(
+            info,
+            Some((_, count, uses)) if button.index < count.0 && uses.0[button.index] == 0
+        );
+        if exhausted {
+            *bg = BackgroundColor(SKILL_EXHAUSTED_BG);
+            *border = BorderColor::all(SKILL_EXHAUSTED_BORDER);
+            if !was_exhausted {
+                commands.entity(entity).insert(SkillButtonExhausted);
+            }
+        } else if was_exhausted {
+            commands.entity(entity).remove::<SkillButtonExhausted>();
+            super::visuals::apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
+        }
     }
 }
 

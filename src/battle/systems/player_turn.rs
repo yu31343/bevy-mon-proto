@@ -5,8 +5,8 @@ use crate::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
         PendingKoResolution, PendingTacticalDiscard, RoundOrder, SelectedCards, Shield, Side,
-        SkillCount, SkillList, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
-        next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        SkillCount, SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext,
+        TurnCount, next_phase_after_side_end, note_action_phase, push_named_action_trace,
         push_turn_action_trace, transfer_status_by_id,
     },
     data::{BattleDbs, BattleRules},
@@ -178,6 +178,7 @@ pub fn player_turn_input_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     let action_points = &mut runtime.action_points;
     let round_order = &runtime.round_order;
@@ -332,6 +333,18 @@ pub fn player_turn_input_system(
         };
         let cost = skill.cost_ap;
 
+        // 该技能本回合释放次数已耗尽：提示并清空，避免下一帧重复触发。
+        if !skill_uses_q
+            .get(p_entity)
+            .is_ok_and(|uses| uses.has_remaining(slot))
+        {
+            writers.ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
+            turn_ctx.player_action = None;
+            return;
+        }
+
         // 如果 AP 不够：不执行并清空，避免下一帧重复触发。
         if action_points.player < cost {
             writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
@@ -350,6 +363,11 @@ pub fn player_turn_input_system(
         }
         action_points.player -= cost;
         turn_ctx.player_action = None;
+        if let Ok(mut uses) = skill_uses_q.get_mut(p_entity) {
+            if let Some(remaining) = uses.0.get_mut(slot) {
+                *remaining = remaining.saturating_sub(1);
+            }
+        }
 
         let Ok(
             [
@@ -1039,6 +1057,15 @@ pub fn player_turn_input_system(
         return;
     };
     let cost = skill.cost_ap;
+    if !skill_uses_q
+        .get(p_entity)
+        .is_ok_and(|uses| uses.has_remaining(skill_slot))
+    {
+        writers.ui_notices.write(BattleUiNotice {
+            text: "次数不足"
+        });
+        return;
+    }
     if action_points.player < cost {
         writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
         return;
@@ -1053,6 +1080,11 @@ pub fn player_turn_input_system(
         return;
     }
     action_points.player -= cost;
+    if let Ok(mut uses) = skill_uses_q.get_mut(p_entity) {
+        if let Some(remaining) = uses.0.get_mut(skill_slot) {
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
 
     // 事件：技能使用（用于 UI 闪白）。
     writers.event_writer.write(BattleEvent::SkillUsed {

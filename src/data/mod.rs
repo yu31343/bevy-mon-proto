@@ -404,6 +404,55 @@ mod tests {
     }
 
     #[test]
+    fn bundled_data_default_skill_uses_per_turn_is_two() {
+        let raw = fs::read_to_string("assets/data/battle_data.ron")
+            .expect("battle_data.ron should be readable from repository root");
+        let config: BattleConfig = ron::from_str(&raw).expect("battle_data.ron should parse");
+        assert_eq!(config.rules.default_skill_uses_per_turn, 2);
+    }
+
+    #[test]
+    fn battle_dbs_resolves_skill_uses_per_turn() {
+        // 全局默认（BattleRules::default 走 RON 默认值 2）。
+        let rules = BattleRules::default();
+        assert_eq!(rules.default_skill_uses_per_turn, 2);
+
+        let base = SkillDef {
+            id: SkillId::FirePunch,
+            name: "测试技能".to_string(),
+            category: SkillCategory::NormalAttack,
+            cost_ap: 2,
+            effect: SkillEffect::Attack {
+                power: 10,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: None,
+            base_accuracy: None,
+            uses_per_turn: None,
+        };
+        let overridden = SkillDef {
+            id: SkillId::FlameStorm,
+            uses_per_turn: Some(4),
+            ..base.clone()
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([(base.id, base), (overridden.id, overridden)]),
+            cards: HashMap::new(),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        };
+
+        // 未覆盖 -> 回退全局默认 2。
+        assert_eq!(dbs.skill_uses_per_turn(SkillId::FirePunch, &rules), 2);
+        // 单技能覆盖 -> 4。
+        assert_eq!(dbs.skill_uses_per_turn(SkillId::FlameStorm, &rules), 4);
+        // 未知技能 -> 回退全局默认 2。
+        assert_eq!(dbs.skill_uses_per_turn(SkillId::BloodTouch, &rules), 2);
+    }
+
+    #[test]
     fn ai_difficulty_presets_are_loaded_from_config() {
         let raw = fs::read_to_string("assets/data/battle_data.ron")
             .expect("battle_data.ron should be readable from repository root");
@@ -480,6 +529,9 @@ pub struct SkillDef {
     pub element: Option<ElementType>,
     #[serde(default)]
     pub base_accuracy: Option<f32>,
+    /// 每行动回合可释放次数；None 表示使用 BattleRules.default_skill_uses_per_turn。
+    #[serde(default)]
+    pub uses_per_turn: Option<u8>,
 }
 
 /// 技能效果定义。
@@ -597,6 +649,10 @@ fn default_max_shield_hp_ratio() -> f32 {
     0.5
 }
 
+fn default_skill_uses_per_turn() -> u8 {
+    2
+}
+
 fn default_accuracy_percent() -> i32 {
     100
 }
@@ -619,6 +675,8 @@ pub struct BattleRulesConfig {
     pub discard_ap_gain: i32,
     #[serde(default = "default_max_shield_hp_ratio")]
     pub max_shield_hp_ratio: f32,
+    #[serde(default = "default_skill_uses_per_turn")]
+    pub default_skill_uses_per_turn: u8,
 }
 
 impl Default for BattleRulesConfig {
@@ -632,6 +690,7 @@ impl Default for BattleRulesConfig {
             max_retained_hand: default_max_retained_hand(),
             discard_ap_gain: default_discard_ap_gain(),
             max_shield_hp_ratio: default_max_shield_hp_ratio(),
+            default_skill_uses_per_turn: default_skill_uses_per_turn(),
         }
     }
 }
@@ -646,6 +705,7 @@ pub struct BattleRules {
     pub max_retained_hand: usize,
     pub discard_ap_gain: i32,
     pub max_shield_hp_ratio: f32,
+    pub default_skill_uses_per_turn: u8,
 }
 
 impl BattleRules {
@@ -659,6 +719,7 @@ impl BattleRules {
             max_retained_hand: config.max_retained_hand,
             discard_ap_gain: config.discard_ap_gain,
             max_shield_hp_ratio: config.max_shield_hp_ratio.max(0.0),
+            default_skill_uses_per_turn: config.default_skill_uses_per_turn.max(1),
         }
     }
 }
@@ -857,6 +918,17 @@ pub struct BattleDbs {
     pub elements: ElementDb,
     pub statuses: StatusDb,
     pub reactions: ReactionDb,
+}
+
+impl BattleDbs {
+    /// 解析某技能每行动回合可释放次数：优先用技能自身的 `uses_per_turn` 覆盖，
+    /// 否则回退到 `BattleRules.default_skill_uses_per_turn`。
+    pub fn skill_uses_per_turn(&self, id: SkillId, rules: &BattleRules) -> u8 {
+        self.skills
+            .get(&id)
+            .and_then(|skill| skill.uses_per_turn)
+            .unwrap_or(rules.default_skill_uses_per_turn)
+    }
 }
 
 #[derive(Resource, Debug, Clone)]

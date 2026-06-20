@@ -5,7 +5,7 @@ use crate::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
         PendingKoResolution, PendingTacticalDiscard, RoundOrder, Shield, Side, SkillCount,
-        SkillList, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
+        SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
         next_phase_after_side_end, note_action_phase, push_named_action_trace,
         push_turn_action_trace, transfer_status_by_id,
     },
@@ -250,6 +250,7 @@ pub fn enemy_turn_input_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     if !matches!(
         *battle_mode,
@@ -487,6 +488,16 @@ pub fn enemy_turn_input_system(
             return;
         };
         let cost = skill.cost_ap;
+        if !skill_uses_q
+            .get(e_entity)
+            .is_ok_and(|uses| uses.has_remaining(slot))
+        {
+            writers.ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
+            turn_ctx.enemy_action = None;
+            return;
+        }
         if action_points.enemy < cost {
             writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
             turn_ctx.enemy_action = None;
@@ -494,6 +505,11 @@ pub fn enemy_turn_input_system(
         }
         action_points.enemy -= cost;
         turn_ctx.enemy_action = None;
+        if let Ok(mut uses) = skill_uses_q.get_mut(e_entity) {
+            if let Some(remaining) = uses.0.get_mut(slot) {
+                *remaining = remaining.saturating_sub(1);
+            }
+        }
 
         writers.event_writer.write(BattleEvent::SkillUsed {
             side: Side::Enemy,
@@ -1079,6 +1095,7 @@ pub fn enemy_turn_ai_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     if matches!(
         *battle_mode,
@@ -1291,6 +1308,11 @@ pub fn enemy_turn_ai_system(
             )
         });
 
+        let e_skill_uses = skill_uses_q
+            .get(e_entity)
+            .map(|uses| uses.0)
+            .unwrap_or([0u8; 4]);
+
         let ai_ctx = EnemyAiContext {
             enemy_hp: e_hp,
             enemy_max_hp: e_max_hp,
@@ -1321,6 +1343,7 @@ pub fn enemy_turn_ai_system(
             target_element: p_element,
             target_attached_auras: p_attached_aura,
             target_status_ids: p_status_ids,
+            skill_uses_remaining: e_skill_uses,
         };
         let player_info_visible = !matches!(
             ai_config.player_info_visibility,
@@ -1690,6 +1713,11 @@ pub fn enemy_turn_ai_system(
             }
 
             action_points.enemy -= cost;
+            if let Ok(mut uses) = skill_uses_q.get_mut(e_entity) {
+                if let Some(remaining) = uses.0.get_mut(slot) {
+                    *remaining = remaining.saturating_sub(1);
+                }
+            }
 
             // 技能使用事件
             writers.event_writer.write(BattleEvent::SkillUsed {

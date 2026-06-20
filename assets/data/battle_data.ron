@@ -40,6 +40,7 @@
         max_retained_hand: 4,
         discard_ap_gain: 1,
         max_shield_hp_ratio: 0.5,
+        default_skill_uses_per_turn: 2,   // 每只精灵每个行动回合每个技能可释放次数（可在单个技能用 uses_per_turn 覆盖）
     ),
 
     ai: (

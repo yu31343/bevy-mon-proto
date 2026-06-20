@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     console_log::{ConsoleLogCategory, log as console_log, log_with_prefix},
     data::{
-        AttributeStageBounds, AttributeType, CardId, ElementType, SkillId, StatusCategory,
-        StatusDef, StatusTickTiming,
+        AttributeStageBounds, AttributeType, BattleDbs, BattleRules, CardId, ElementType, SkillId,
+        StatusCategory, StatusDef, StatusTickTiming,
     },
     game_state::BattlePhase,
 };
@@ -78,6 +78,33 @@ pub struct SkillList(pub [SkillId; 4]);
 
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkillCount(pub usize);
+
+/// 每只精灵当前行动回合各技能槽（与 `SkillList` 槽位一一对应）的剩余释放次数。
+/// `slot >= SkillCount.0` 的空槽恒为 0，UI/AI/扣减一律忽略。
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SkillUses(pub [u8; 4]);
+
+impl SkillUses {
+    /// 依据技能配置为某只精灵生成满额剩余次数。
+    pub fn full(
+        skills: &SkillList,
+        count: SkillCount,
+        dbs: &BattleDbs,
+        rules: &BattleRules,
+    ) -> Self {
+        let mut uses = [0u8; 4];
+        let active = count.0.min(4);
+        for (slot, value) in uses.iter_mut().enumerate().take(active) {
+            *value = dbs.skill_uses_per_turn(skills.0[slot], rules);
+        }
+        Self(uses)
+    }
+
+    /// 指定槽位是否还有剩余释放次数。
+    pub fn has_remaining(&self, slot: usize) -> bool {
+        self.0.get(slot).is_some_and(|&n| n > 0)
+    }
+}
 
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Shield(pub i32);

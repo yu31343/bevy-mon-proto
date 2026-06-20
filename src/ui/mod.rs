@@ -196,6 +196,9 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 .after(action_dial_visual_state_system)
                 .after(update_discard_armed_visual_system)
                 .after(tick_button_click_flash),
+            update_skill_uses_system
+                .run_if(in_state(GameState::Battle))
+                .after(battle_action_cooldown_visual_system),
         ),
     );
 
