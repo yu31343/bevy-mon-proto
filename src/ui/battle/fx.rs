@@ -15,9 +15,9 @@ use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
-        ActionDialButton, ActivePortraitFrame, BattleUiCleanupPending, BattleUiRoot, DiscardButton,
-        EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton, SwitchMonsterButton,
-        TeamMemberButton,
+        ActionDialButton, ActionDialHighlight, ActivePortraitFrame, BattleUiCleanupPending,
+        BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton,
+        SwitchMonsterButton, TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
@@ -452,6 +452,10 @@ pub struct ButtonClickFlash(pub Timer);
 
 const CLICK_FLASH_COLOR: Color = Color::srgba(1.0, 0.86, 0.50, 0.92);
 const CLICK_FLASH_BORDER: Color = Color::srgba(0.98, 0.85, 0.50, 0.75);
+const ACTION_DIAL_KEYBOARD_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.34);
+
+#[derive(Component)]
+pub struct ActionDialKeyboardFlash(pub Timer);
 
 /// 检测技能格与结束回合按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
 /// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
@@ -544,10 +548,10 @@ pub fn tick_button_click_flash(
     }
 }
 
-/// 将键盘快捷键触发的操作映射到 `ButtonClickFlash`，使视觉反馈与鼠标点击完全一致。
+/// 将键盘快捷键触发的操作映射到对应按钮反馈，使视觉反馈与鼠标点击一致。
 ///
 /// 纯 UI 层：只读取键盘输入、查找对应按钮实体、insert 组件并改颜色，不含任何战斗逻辑。
-/// `tick_button_click_flash` 完全复用——只要实体上有 `ButtonClickFlash` 它就会运行。
+/// 普通按钮使用 `ButtonClickFlash`；圆盘按钮点亮 `ActionDialHighlight` 子节点。
 ///
 /// 使用 `ParamSet` 规避多个 Query 同时 `&mut BackgroundColor` / `&mut BorderColor`
 /// 导致的 Bevy B0001 Query 冲突——ParamSet 保证同一帧内每次只访问其中一个 Query。
@@ -570,7 +574,13 @@ pub fn keyboard_button_flash_system(
         )>,
         // p1: 结束回合按钮（E）
         Query<
-            (Entity, &mut BackgroundColor, &mut BorderColor),
+            (
+                Entity,
+                &Children,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                Has<ActionDialButton>,
+            ),
             With<super::components::EndTurnButton>,
         >,
         // p2: 手牌按钮（Z/X/C/V/B）
@@ -589,7 +599,13 @@ pub fn keyboard_button_flash_system(
         )>,
         // p4: 换精灵按钮（Q）
         Query<
-            (Entity, &mut BackgroundColor, &mut BorderColor),
+            (
+                Entity,
+                &Children,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                Has<ActionDialButton>,
+            ),
             With<super::components::SwitchMonsterButton>,
         >,
         // p5: 取消按钮（Q 关闭时也闪）
@@ -597,6 +613,7 @@ pub fn keyboard_button_flash_system(
             (Entity, &mut BackgroundColor, &mut BorderColor),
             With<super::components::SwitchCancelButton>,
         >,
+        Query<&mut BackgroundColor, With<ActionDialHighlight>>,
     )>,
 ) {
     // 与按钮变灰逻辑保持一致：对方回合或本地玩家行动冷却中，抑制快捷键闪光。
@@ -615,6 +632,8 @@ pub fn keyboard_button_flash_system(
                 .insert(ButtonClickFlash(Timer::from_seconds(0.15, TimerMode::Once)));
         };
     }
+
+    let mut action_dial_highlights = Vec::new();
 
     if !locked {
         // 1-4 → 技能按钮（slot 0-3）
@@ -636,8 +655,14 @@ pub fn keyboard_button_flash_system(
 
         // E → 结束回合按钮
         if keyboard.just_pressed(KeyCode::KeyE) {
-            if let Ok((entity, mut bg, mut border)) = queries.p1().single_mut() {
-                do_flash!(entity, bg, border);
+            if let Ok((entity, children, mut bg, mut border, is_action_dial)) =
+                queries.p1().single_mut()
+            {
+                if is_action_dial {
+                    action_dial_highlights.extend(children.iter());
+                } else {
+                    do_flash!(entity, bg, border);
+                }
             }
         }
 
@@ -697,8 +722,43 @@ pub fn keyboard_button_flash_system(
             if let Ok((entity, mut bg, mut border)) = queries.p5().single_mut() {
                 do_flash!(entity, bg, border);
             }
-        } else if let Ok((entity, mut bg, mut border)) = queries.p4().single_mut() {
-            do_flash!(entity, bg, border);
+        } else if let Ok((entity, children, mut bg, mut border, is_action_dial)) =
+            queries.p4().single_mut()
+        {
+            if is_action_dial {
+                action_dial_highlights.extend(children.iter());
+            } else {
+                do_flash!(entity, bg, border);
+            }
+        }
+    }
+
+    let mut highlights = queries.p6();
+    for child in action_dial_highlights {
+        if let Ok(mut highlight_bg) = highlights.get_mut(child) {
+            *highlight_bg = BackgroundColor(ACTION_DIAL_KEYBOARD_FLASH_COLOR);
+            commands
+                .entity(child)
+                .insert(ActionDialKeyboardFlash(Timer::from_seconds(
+                    0.15,
+                    TimerMode::Once,
+                )));
+        }
+    }
+}
+
+pub fn tick_action_dial_keyboard_flash_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut ActionDialKeyboardFlash, &mut BackgroundColor)>,
+) {
+    for (entity, mut flash, mut bg) in &mut q {
+        flash.0.tick(time.delta());
+        if flash.0.just_finished() {
+            commands.entity(entity).remove::<ActionDialKeyboardFlash>();
+            *bg = BackgroundColor(Color::NONE);
+        } else {
+            *bg = BackgroundColor(ACTION_DIAL_KEYBOARD_FLASH_COLOR);
         }
     }
 }

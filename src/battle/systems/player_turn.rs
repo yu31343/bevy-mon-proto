@@ -12,7 +12,7 @@ use crate::{
     data::{BattleDbs, BattleRules},
     game_state::{BattlePhase, GameState},
     pvp,
-    ui::battle::components::BattleUiNotice,
+    ui::battle::{components::BattleUiNotice, systems::HandFullEndTurnWarning},
 };
 
 use super::{
@@ -53,6 +53,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     selected: ResMut<'w, SelectedCards>,
+    hand_full_warning: ResMut<'w, HandFullEndTurnWarning>,
     battle_mode: Res<'w, BattleControlMode>,
     pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
     pvp_pending_intent: Option<ResMut<'w, pvp::PvpPendingLocalIntent>>,
@@ -193,6 +194,7 @@ pub fn player_turn_input_system(
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
     let selected = &mut runtime.selected;
+    let hand_full_warning = &mut runtime.hand_full_warning;
     let battle_mode = &runtime.battle_mode;
     let pvp_connection = &mut runtime.pvp_connection;
     let pvp_pending_intent = &mut runtime.pvp_pending_intent;
@@ -760,6 +762,10 @@ pub fn player_turn_input_system(
 
     // 1) 手动结束回合（优先级最高）
     if keyboard.just_pressed(KeyCode::KeyE) {
+        if hand.player.len() > battle_rules.max_retained_hand {
+            hand_full_warning.trigger_end_turn_blocked();
+            return;
+        }
         turn_ctx.player_end_requested = true;
     }
 

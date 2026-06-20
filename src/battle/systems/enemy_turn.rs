@@ -15,7 +15,7 @@ use crate::{
         EnemyAiConfig, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
-    ui::battle::components::BattleUiNotice,
+    ui::battle::{components::BattleUiNotice, systems::HandFullEndTurnWarning},
 };
 
 use super::{
@@ -232,6 +232,7 @@ pub fn enemy_turn_input_system(
     mut selected: ResMut<crate::battle::SelectedCards>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut hand_full_warning: ResMut<HandFullEndTurnWarning>,
     mut runtime: EnemyTurnRuntime,
     mut logs: EnemyTurnLogs,
     mut writers: EnemyTurnEventWriters,
@@ -1009,6 +1010,10 @@ pub fn enemy_turn_input_system(
         }
 
         if keyboard.just_pressed(KeyCode::KeyE) {
+            if hand.enemy.len() > battle_rules.max_retained_hand {
+                hand_full_warning.trigger_end_turn_blocked();
+                return;
+            }
             turn_ctx.enemy_end_requested = true;
         }
     }

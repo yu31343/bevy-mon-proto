@@ -34,12 +34,22 @@ pub(crate) struct HandFullEndTurnWarning {
     pub hint_text: &'static str,
 }
 
+pub(crate) const HAND_FULL_END_TURN_HINT: &str = "手牌大于4张，请弃牌至4张";
+
+impl HandFullEndTurnWarning {
+    pub(crate) fn trigger_end_turn_blocked(&mut self) {
+        self.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
+        self.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
+        self.hint_text = HAND_FULL_END_TURN_HINT;
+    }
+}
+
 impl Default for HandFullEndTurnWarning {
     fn default() -> Self {
         Self {
             border_timer: Timer::from_seconds(0.0, TimerMode::Once),
             hint_timer: Timer::from_seconds(0.0, TimerMode::Once),
-            hint_text: "手牌大于4张，请弃牌至4张",
+            hint_text: HAND_FULL_END_TURN_HINT,
         }
     }
 }
@@ -865,9 +875,7 @@ pub(crate) fn button_end_turn_system(
             Side::Enemy => hand.enemy.len(),
         };
         if current_hand_len > battle_rules.max_retained_hand {
-            hand_full_warning.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
-            hand_full_warning.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
-            hand_full_warning.hint_text = "手牌大于4张，请弃牌至4张";
+            hand_full_warning.trigger_end_turn_blocked();
             break;
         }
 

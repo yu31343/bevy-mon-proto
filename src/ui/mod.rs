@@ -19,9 +19,9 @@ use crate::{
 
 use battle::fx::{
     keyboard_button_flash_system, preload_reaction_icons, process_battle_fx_events,
-    spawn_button_click_flash, spawn_reaction_banner_system, tick_active_frame_pulse_system,
-    tick_button_click_flash, tick_fx_lifetimes, tick_reaction_banner_system, tick_screen_flashes,
-    tick_skill_flash_timer,
+    spawn_button_click_flash, spawn_reaction_banner_system, tick_action_dial_keyboard_flash_system,
+    tick_active_frame_pulse_system, tick_button_click_flash, tick_fx_lifetimes,
+    tick_reaction_banner_system, tick_screen_flashes, tick_skill_flash_timer,
 };
 
 use battle::systems::{PendingSwitchOverlayToggle, SwitchOverlayOpen};
@@ -167,9 +167,14 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             keyboard_button_flash_system
                 .run_if(in_state(GameState::Battle))
                 .after(spawn_button_click_flash),
+            tick_action_dial_keyboard_flash_system
+                .run_if(in_state(GameState::Battle))
+                .after(action_dial_visual_state_system)
+                .after(keyboard_button_flash_system),
             tick_button_click_flash
                 .run_if(in_state(GameState::Battle))
-                .after(keyboard_button_flash_system),
+                .after(keyboard_button_flash_system)
+                .after(tick_action_dial_keyboard_flash_system),
             battle_action_cooldown_visual_system
                 .run_if(in_state(GameState::Battle))
                 .after(update_player_hand_ui_system)
