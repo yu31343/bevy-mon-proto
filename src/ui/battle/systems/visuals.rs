@@ -10,11 +10,8 @@ use super::super::components::{
 use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
 use super::buttons::HandFullEndTurnWarning;
+use crate::battle::{BattleActionCooldown, BattleControlMode, SelectedCards, Side, UiControlSide};
 use crate::game_state::BattlePhase;
-use crate::{
-    battle::{BattleActionCooldown, BattleControlMode, SelectedCards, Side, UiControlSide},
-    pvp,
-};
 
 /// 弃牌武装状态的高亮颜色（琥珀色，与蓝白点击闪光明显区分）
 const DISCARD_ARMED_COLOR: Color = Color::srgba(0.85, 0.60, 0.10, 0.88);
@@ -161,7 +158,6 @@ pub(crate) fn battle_action_cooldown_visual_system(
     cooldown: Res<BattleActionCooldown>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
-    pvp_pending_intent: Option<Res<pvp::PvpPendingLocalIntent>>,
     theme: Res<UiTheme>,
     mut was_locked: Local<bool>,
     mut queries: ParamSet<(
@@ -195,16 +191,11 @@ pub(crate) fn battle_action_cooldown_visual_system(
     // 本地玩家按钮变灰（锁定）的条件：
     //   1. 对方回合（PVP/AI 下非我方回合）——与 AI 模式一致的“非我方回合按钮变色”。
     //      Debug 双控模式下玩家可控制敌方，此时敌方回合不视为对方回合，不变灰。
-    //   2. PVP 客户端已发出本地意图，正在等待 host 快照确认。
-    //   3. 本地玩家自己刚用完技能，处于 2 秒行动冷却。
+    //   2. 本地玩家自己刚用完技能，处于 2 秒行动冷却。
     // 对方使用技能只会启动对方侧冷却，不会让本地按钮变灰。
     let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
         && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
-    let waiting_for_host = *battle_mode == BattleControlMode::PlayerVsRemote
-        && pvp_pending_intent
-            .as_ref()
-            .is_some_and(|pending| pending.0.is_some());
-    let locked = opponent_turn || waiting_for_host || !cooldown.ready(Side::Player);
+    let locked = opponent_turn || !cooldown.ready(Side::Player);
     let should_restore = *was_locked && !locked;
     if !locked && !should_restore {
         return;
