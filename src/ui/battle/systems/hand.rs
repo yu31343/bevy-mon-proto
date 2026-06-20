@@ -2,14 +2,15 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, Hand, PendingHandDiscard, SelectedCards, Side,
-        UiControlSide,
+        ActionPoints, BattleControlMode, BattleEvent, Hand, PendingHandDiscard, SelectedCards,
+        Side, UiControlSide,
     },
-    data::BattleDbs,
+    data::{BattleDbs, CardId},
     game_state::BattlePhase,
 };
 
 use super::super::components::*;
+use super::super::resources::UiFontHandle;
 use super::super::theme::UiTheme;
 
 const HAND_CARDS_PER_LAYER: usize = 6;
@@ -373,8 +374,12 @@ fn apply_card_draw_pose(transform: &mut UiTransform, t: f32) {
 }
 
 /// 进入战斗时重置追踪基线，使开局起手牌也能播放飞入动画。
-pub(crate) fn reset_hand_draw_anim_tracker(mut tracker: ResMut<HandDrawAnimTracker>) {
-    *tracker = HandDrawAnimTracker::default();
+pub(crate) fn reset_hand_draw_anim_tracker(
+    mut draw_tracker: ResMut<HandDrawAnimTracker>,
+    mut exit_tracker: ResMut<HandExitAnimTracker>,
+) {
+    *draw_tracker = HandDrawAnimTracker::default();
+    *exit_tracker = HandExitAnimTracker::default();
 }
 
 /// 检测展示侧手牌新增的末尾卡槽并为其启动入手动画，同时推进进行中的动画。
@@ -448,6 +453,311 @@ pub(crate) fn animate_hand_card_draw_system(
             commands.entity(entity).remove::<CardDrawAnim>();
         } else {
             apply_card_draw_pose(&mut transform, local / anim.duration);
+        }
+    }
+}
+
+// ============================================================================
+// 手牌离场动画（使用 / 弃置）——与入手动画配套
+//
+// 与入手动画相反：卡牌从手牌离开时，在它原本所在的卡槽生成一张"残影"卡（独立于
+// 18 张固定卡槽，因此真实手牌可立即重排补位），再让残影飞出并淡出：
+//   - 使用：上抬 + 放大，如"打出/施放"；
+//   - 弃置：向右下角（弃牌堆方向）抛出 + 缩小 + 旋转。
+//
+// 哪张牌离场、来自哪个卡槽：通过对"展示侧手牌快照"做差分得到离场槽位与 CardId；
+// 使用 vs 弃置：读取 `BattleEvent::CardUsed/CardDiscarded` 并按牌名匹配（带 1~2 帧
+// TTL 缓冲，吸收系统执行顺序带来的事件/资源变更错帧）。覆盖所有出牌/弃牌渠道。
+// ============================================================================
+
+/// 离场动画总时长（秒）。
+const CARD_EXIT_ANIM_DURATION: f32 = 0.42;
+/// 残影卡层级（盖在手牌之上，飞出时不被其他卡遮挡）。
+const CARD_EXIT_Z: i32 = 60;
+
+/// 卡牌离场方式，决定飞出轨迹。
+#[derive(Clone, Copy, PartialEq)]
+enum CardExitKind {
+    Used,
+    Discarded,
+}
+
+/// 残影子树中实体的角色：容器驱动位移/缩放/底色与销毁，文字仅淡出。
+#[derive(Clone, Copy, PartialEq)]
+enum CardExitRole {
+    Container,
+    Label,
+}
+
+/// 残影卡动画状态。
+#[derive(Component)]
+pub(crate) struct CardExitFx {
+    timer: Timer,
+    kind: CardExitKind,
+    role: CardExitRole,
+}
+
+impl CardExitFx {
+    fn new(kind: CardExitKind, role: CardExitRole) -> Self {
+        Self {
+            timer: Timer::from_seconds(CARD_EXIT_ANIM_DURATION, TimerMode::Once),
+            kind,
+            role,
+        }
+    }
+}
+
+/// 追踪上一帧"展示侧手牌"快照，并缓存近期出牌/弃牌事件用于离场分类。
+#[derive(Resource, Default)]
+pub(crate) struct HandExitAnimTracker {
+    last_side: Option<Side>,
+    last_hand: Vec<CardId>,
+    /// 近期事件分类：(牌名, 方式, 年龄帧数)；保留约 2 帧以容忍执行顺序错帧。
+    recent: Vec<(String, CardExitKind, u8)>,
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    let p = 1.0 - t;
+    1.0 - p * p * p
+}
+
+/// 透明度曲线：前半段保持不透明，后半段线性淡出。
+fn card_exit_alpha(fraction: f32) -> f32 {
+    if fraction < 0.5 {
+        1.0
+    } else {
+        (1.0 - (fraction - 0.5) / 0.5).clamp(0.0, 1.0)
+    }
+}
+
+/// 按方式与进度计算残影容器的相对位移 / 缩放 / 旋转。
+fn card_exit_pose(kind: CardExitKind, fraction: f32) -> UiTransform {
+    let e = ease_out_cubic(fraction);
+    match kind {
+        // 使用：上抬并放大，如"打出/施放"。
+        CardExitKind::Used => UiTransform {
+            translation: Val2::px(0.0, -150.0 * e),
+            scale: Vec2::splat(1.0 + 0.28 * e),
+            rotation: Rot2::IDENTITY,
+        },
+        // 弃置：向右下角抛出 + 缩小 + 旋转，如"丢入弃牌堆"。
+        CardExitKind::Discarded => UiTransform {
+            translation: Val2::px(300.0 * e, 170.0 * e),
+            scale: Vec2::splat(1.0 - 0.55 * e),
+            rotation: Rot2::radians(0.6 * e),
+        },
+    }
+}
+
+/// 找出从 `old` 到 `new` 被移除的卡槽：返回 (槽位下标, 被移除的 CardId)。
+///
+/// 所有出牌/弃牌都按下标 remove，余牌左移补位，因此首个不一致处即移除位；若 `new`
+/// 是 `old` 的前缀，则移除位在末尾。仅当确有一张牌离场（长度减少，或等长但内容变化
+/// 即"出牌同时摸牌"）时返回 Some。
+fn detect_removed_card(old: &[CardId], new: &[CardId]) -> Option<(usize, CardId)> {
+    if old.is_empty() || new.len() > old.len() {
+        return None;
+    }
+    if new.len() == old.len() && old == new {
+        return None;
+    }
+    let index = (0..new.len())
+        .find(|&i| new[i] != old[i])
+        .unwrap_or(new.len());
+    old.get(index).map(|card| (index, *card))
+}
+
+/// 检测展示侧手牌的离场牌并在其原卡槽生成残影；同时维护事件分类缓冲。
+pub(crate) fn spawn_hand_card_exit_system(
+    mut commands: Commands,
+    mut events: MessageReader<BattleEvent>,
+    battle_phase: Res<State<BattlePhase>>,
+    hand: Res<Hand>,
+    ui_control_side: Res<UiControlSide>,
+    battle_mode: Res<BattleControlMode>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    dbs: Res<BattleDbs>,
+    theme: Res<UiTheme>,
+    ui_font: Option<Res<UiFontHandle>>,
+    mut tracker: ResMut<HandExitAnimTracker>,
+    root: Query<Entity, With<HandCardsRoot>>,
+) {
+    let display_side = if *battle_phase.get() == BattlePhase::Discard
+        && pending_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy)
+        && matches!(
+            *battle_mode,
+            BattleControlMode::PlayerVsAi | BattleControlMode::PlayerVsRemote
+        ) {
+        Side::Player
+    } else {
+        ui_control_side.0
+    };
+
+    // 维护事件分类缓冲：先令既有条目老化（保留约 2 帧），再纳入本帧新事件。
+    tracker.recent.retain_mut(|(_, _, age)| {
+        *age += 1;
+        *age <= 1
+    });
+    for event in events.read() {
+        match event {
+            BattleEvent::CardUsed { side, card_name } if *side == display_side => {
+                tracker
+                    .recent
+                    .push((card_name.clone(), CardExitKind::Used, 0));
+            }
+            BattleEvent::CardDiscarded { side, card_name } if *side == display_side => {
+                tracker
+                    .recent
+                    .push((card_name.clone(), CardExitKind::Discarded, 0));
+            }
+            _ => {}
+        }
+    }
+
+    let current: &[CardId] = match display_side {
+        Side::Player => &hand.player,
+        Side::Enemy => &hand.enemy,
+    };
+
+    let removed = (tracker.last_side == Some(display_side))
+        .then(|| detect_removed_card(&tracker.last_hand, current))
+        .flatten();
+
+    if let Some((slot_index, card_id)) = removed {
+        let old_len = tracker.last_hand.len();
+        let card = dbs.cards.get(&card_id);
+        let card_name = card
+            .map(|card| card.name.clone())
+            .unwrap_or_else(|| format!("{card_id:?}"));
+
+        // 分类：优先匹配近期事件牌名；缺事件时按阶段兜底（弃牌阶段→弃置，否则→使用）。
+        let kind = tracker
+            .recent
+            .iter()
+            .position(|(name, _, _)| *name == card_name)
+            .map(|pos| tracker.recent.remove(pos).1)
+            .unwrap_or(if *battle_phase.get() == BattlePhase::Discard {
+                CardExitKind::Discarded
+            } else {
+                CardExitKind::Used
+            });
+
+        let accent = card
+            .map(|card| super::super::helpers::card_category_color(card, &theme))
+            .unwrap_or(theme.gold);
+
+        if let Ok(root) = root.single() {
+            spawn_card_exit_ghost(
+                &mut commands,
+                root,
+                &theme,
+                ui_font.as_deref(),
+                slot_index,
+                old_len,
+                card_name,
+                accent,
+                kind,
+            );
+        }
+    }
+
+    tracker.last_side = Some(display_side);
+    tracker.last_hand = current.to_vec();
+}
+
+/// 在离场卡原本所在卡槽生成一张残影卡（与真实卡槽相同的定位算法）。
+fn spawn_card_exit_ghost(
+    commands: &mut Commands,
+    root: Entity,
+    theme: &UiTheme,
+    ui_font: Option<&UiFontHandle>,
+    slot_index: usize,
+    hand_len: usize,
+    card_name: String,
+    accent: Color,
+    kind: CardExitKind,
+) {
+    let name_font = super::super::helpers::make_text_font(16.0, ui_font);
+    commands.entity(root).with_children(|parent| {
+        parent
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    margin: UiRect::left(Val::Px(hand_card_center_offset(slot_index, hand_len))),
+                    bottom: Val::Px(hand_card_bottom(slot_index)),
+                    width: Val::Px(HAND_CARD_WIDTH),
+                    height: Val::Px(HAND_CARD_FULL_HEIGHT),
+                    padding: UiRect::px(10.0, 10.0, 12.0, 10.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(theme.radius_card),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    row_gap: Val::Px(5.0),
+                    ..default()
+                },
+                BackgroundColor(theme.card_bg),
+                BorderColor::all(accent),
+                ZIndex(CARD_EXIT_Z),
+                Pickable::IGNORE,
+                CardExitFx::new(kind, CardExitRole::Container),
+            ))
+            .with_children(|ghost| {
+                ghost.spawn((
+                    Text::new(card_name),
+                    name_font,
+                    TextColor(theme.ink_primary),
+                    Pickable::IGNORE,
+                    CardExitFx::new(kind, CardExitRole::Label),
+                ));
+            });
+    });
+}
+
+/// 推进残影动画并在到期时销毁整张残影。
+pub(crate) fn tick_hand_card_exit_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(
+        Entity,
+        &mut CardExitFx,
+        Option<&mut UiTransform>,
+        Option<&mut BackgroundColor>,
+        Option<&mut BorderColor>,
+        Option<&mut TextColor>,
+    )>,
+) {
+    for (entity, mut fx, transform, background, border, text_color) in &mut q {
+        fx.timer.tick(time.delta());
+        let fraction = fx.timer.fraction();
+        let alpha = card_exit_alpha(fraction);
+
+        match fx.role {
+            CardExitRole::Container => {
+                if let Some(mut transform) = transform {
+                    *transform = card_exit_pose(fx.kind, fraction);
+                }
+                if let Some(mut background) = background {
+                    background.0.set_alpha(alpha * 0.95);
+                }
+                if let Some(mut border) = border {
+                    border.top.set_alpha(alpha);
+                    border.right.set_alpha(alpha);
+                    border.bottom.set_alpha(alpha);
+                    border.left.set_alpha(alpha);
+                }
+                if fx.timer.just_finished() {
+                    commands.entity(entity).despawn();
+                }
+            }
+            CardExitRole::Label => {
+                if let Some(mut text_color) = text_color {
+                    text_color.0.set_alpha(alpha);
+                }
+            }
         }
     }
 }

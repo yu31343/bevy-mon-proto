@@ -17,7 +17,8 @@ pub(crate) use buttons::{
     update_retreat_confirm_overlay_system,
 };
 pub(crate) use hand::{
-    HandDrawAnimTracker, animate_hand_card_draw_system, reset_hand_draw_anim_tracker,
+    HandDrawAnimTracker, HandExitAnimTracker, animate_hand_card_draw_system,
+    reset_hand_draw_anim_tracker, spawn_hand_card_exit_system, tick_hand_card_exit_system,
     update_player_hand_ui_system,
 };
 pub(crate) use roster::{
