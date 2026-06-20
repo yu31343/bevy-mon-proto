@@ -43,6 +43,8 @@ cargo build --release
 
 Debug logging is controlled by environment variables. `BEVY_MON_LOG_DEBUG=1` enables broad battle/formula/status/card/PVP/AI detail; use narrower flags when needed: `BEVY_MON_LOG_BATTLE_DEBUG=1`, `BEVY_MON_LOG_CARDS=1`, `BEVY_MON_LOG_PVP=1`, `BEVY_MON_LOG_AI=1`, or `BEVY_MON_LOG_SPINE=1`.
 
+`src/main.rs` allows a set of clippy lints crate-wide (e.g. `too_many_arguments`, `type_complexity`, `collapsible_if`, `needless_return`). `cargo clippy --all-targets -- -D warnings` passes because of those allows, so match the surrounding style instead of reflexively "fixing" those patterns; prefer narrowing or removing an allow over adding new ones.
+
 Before handing off non-trivial Rust changes, the README recommends at least `cargo fmt --all`, `cargo check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`; for battle data/formula changes, also run focused parsing/formula tests and manually inspect a Vs AI battle with debug logs when practical.
 
 ## Repository workflow
