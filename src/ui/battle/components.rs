@@ -45,6 +45,9 @@ pub(crate) struct ResultText;
 pub(crate) struct BattlePhaseText;
 
 #[derive(Component)]
+pub(crate) struct BattleTurnOrderText;
+
+#[derive(Component)]
 pub(crate) struct TurnBannerText;
 
 #[derive(Component)]

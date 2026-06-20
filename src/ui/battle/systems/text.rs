@@ -4,8 +4,9 @@ use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use super::roster::bench_display_order;
 use crate::{
     battle::{
-        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, Side,
-        SkillCount, SkillList, Stats, StatusBoard, Team, UiControlSide,
+        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam,
+        RoundOrder, Shield, Side, SkillCount, SkillList, Stats, StatusBoard, Team, TurnCount,
+        UiControlSide,
     },
     data::{BattleDbs, BattleFormulaRules, ElementType},
     game_state::BattlePhase,
@@ -139,14 +140,54 @@ fn stage_for_side(
     active.map(|(_, stats, _, _, _, _)| stat_stage(stats, stat))
 }
 
+fn top_bar_side_label(side: Side) -> &'static str {
+    match side {
+        Side::Player => "我方",
+        Side::Enemy => "敌方",
+    }
+}
+
+fn current_top_bar_side(
+    battle_phase: BattlePhase,
+    pending_discard: Option<&PendingHandDiscard>,
+) -> Option<Side> {
+    match battle_phase {
+        BattlePhase::PlayerTurn => Some(Side::Player),
+        BattlePhase::EnemyTurn => Some(Side::Enemy),
+        BattlePhase::Discard => pending_discard.map(|pending| pending.side),
+        _ => None,
+    }
+}
+
 pub(crate) fn update_phase_text_system(
     battle_phase: Res<State<BattlePhase>>,
-    mut text_q: Query<&mut Text, With<BattlePhaseText>>,
+    turn_count: Res<TurnCount>,
+    round_order: Res<RoundOrder>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    mut text_q: ParamSet<(
+        Query<&mut Text, With<BattlePhaseText>>,
+        Query<&mut Text, With<BattleTurnOrderText>>,
+    )>,
 ) {
-    if let Ok(mut text) = text_q.single_mut() {
+    if let Ok(mut text) = text_q.p0().single_mut() {
+        text.0 = if turn_count.0 == 0 {
+            "准备中".to_string()
+        } else {
+            format!("第 {} 回合", turn_count.0)
+        };
+    }
+
+    if let Ok(mut text) = text_q.p1().single_mut() {
+        let current = current_top_bar_side(*battle_phase.get(), pending_discard.as_deref());
+        let marker = |side| {
+            if current == Some(side) { "●" } else { "○" }
+        };
         text.0 = format!(
-            "战斗阶段：{}",
-            super::super::helpers::phase_label(*battle_phase.get())
+            "{} {} → {} {}",
+            top_bar_side_label(round_order.first),
+            marker(round_order.first),
+            top_bar_side_label(round_order.second),
+            marker(round_order.second)
         );
     }
 }

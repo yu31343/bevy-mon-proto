@@ -1222,7 +1222,7 @@ pub(crate) fn setup_ui_system(
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    column_gap: Val::Px(24.0),
+                    column_gap: Val::Px(50.0),
                     border: UiRect::bottom(Val::Px(1.0)),
                     ..default()
                 },
@@ -1231,27 +1231,58 @@ pub(crate) fn setup_ui_system(
                 theme.panel_shadow(),
             ))
             .with_children(|bar| {
-                bar.spawn((
-                    Text::new("战斗阶段：准备中"),
-                    body_font.clone(),
-                    TextColor(theme.text_primary),
-                    theme.title_text_shadow(),
-                    BattlePhaseText,
-                ));
-                spawn_ap_gem_group(
-                    bar,
-                    &theme,
-                    body_font.clone(),
-                    meta_font.clone(),
-                    Side::Player,
-                );
-                spawn_ap_gem_group(
-                    bar,
-                    &theme,
-                    body_font.clone(),
-                    meta_font.clone(),
-                    Side::Enemy,
-                );
+                bar.spawn((Node {
+                    width: Val::Px(176.0),
+                    justify_content: JustifyContent::FlexEnd,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },))
+                .with_children(|round| {
+                    round.spawn((
+                        Text::new("准备中"),
+                        body_font.clone(),
+                        TextColor(theme.text_primary),
+                        theme.title_text_shadow(),
+                        BattlePhaseText,
+                    ));
+                });
+                bar.spawn((Node {
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(24.0),
+                    ..default()
+                },))
+                .with_children(|ap| {
+                    spawn_ap_gem_group(
+                        ap,
+                        &theme,
+                        body_font.clone(),
+                        meta_font.clone(),
+                        Side::Player,
+                    );
+                    spawn_ap_gem_group(
+                        ap,
+                        &theme,
+                        body_font.clone(),
+                        meta_font.clone(),
+                        Side::Enemy,
+                    );
+                });
+                bar.spawn((Node {
+                    width: Val::Px(176.0),
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },))
+                .with_children(|order| {
+                    order.spawn((
+                        Text::new("我方 ○ → 敌方 ○"),
+                        body_font.clone(),
+                        TextColor(theme.text_primary),
+                        theme.title_text_shadow(),
+                        BattleTurnOrderText,
+                    ));
+                });
             });
 
             // === Player Info: Top-Left (单一描金信息卡) ===
