@@ -358,7 +358,7 @@ fn spawn_battle_vfx(
                 fit: SpineUiFit::Contain,
                 auto_size: Some(NODE_SIZE),
                 reference_size: Some(REFERENCE_SIZE),
-                offset: Vec2::ZERO,
+                offset: config.offset,
                 scale: if mirror_vfx { -0.9 } else { 0.9 },
                 flip_y: mirror_vfx,
                 animation: Some(if config.repeat {
