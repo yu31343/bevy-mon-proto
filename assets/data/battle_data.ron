@@ -516,6 +516,7 @@
             cost_ap: 2,
             effect: Attack(power: 12, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: FlameStorm,
@@ -524,6 +525,7 @@
             cost_ap: 4,
             effect: Attack(power: 18, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Fire),
+            uses_per_turn: Some(2),
         ),
         (
             id: BurningSoul,
@@ -538,6 +540,7 @@
                 duration_turns: 2,
             ),
             element: None,
+            uses_per_turn: Some(2),
         ),
         (
             id: ExplosiveIgnition,
@@ -554,6 +557,7 @@
                 ]),
             ]),
             element: Some(Fire),
+            uses_per_turn: Some(2),
         ),
         (
             id: WaterBlade,
@@ -562,6 +566,7 @@
             cost_ap: 2,
             effect: Attack(power: 16, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: UndertowCrash,
@@ -579,6 +584,7 @@
                 ),
             ]),
             element: Some(Water),
+            uses_per_turn: Some(2),
         ),
         (
             id: WaterScreen,
@@ -595,6 +601,7 @@
                 ),
             ]),
             element: None,
+            uses_per_turn: Some(2),
         ),
         (
             id: TidalImpact,
@@ -617,6 +624,7 @@
                 ]),
             ]),
             element: Some(Water),
+            uses_per_turn: Some(2),
         ),
         (
             id: VineWhip,
@@ -625,6 +633,7 @@
             cost_ap: 2,
             effect: Attack(power: 16, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: EntanglingVines,
@@ -633,6 +642,7 @@
             cost_ap: 4,
             effect: Attack(power: 22, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Grass),
+            uses_per_turn: Some(2),
         ),
         (
             id: NatureHealing,
@@ -653,6 +663,7 @@
                 ]),
             ]),
             element: None,
+            uses_per_turn: Some(3),
         ),
         (
             id: LifeBloom,
@@ -675,6 +686,7 @@
                 ]),
             ]),
             element: Some(Grass),
+            uses_per_turn: Some(2),
         ),
         (
             id: ThunderStrike,
@@ -683,6 +695,7 @@
             cost_ap: 2,
             effect: Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: ThousandThunder,
@@ -691,6 +704,7 @@
             cost_ap: 4,
             effect: Attack(power: 23, lifesteal_ratio: None, ignore_shield: false),
             element: Some(Thunder),
+            uses_per_turn: Some(2),
         ),
         (
             id: SwiftThunder,
@@ -705,6 +719,7 @@
                 duration_turns: 2,
             ),
             element: None,
+            uses_per_turn: Some(2),
         ),
         (
             id: ElectroPulse,
@@ -721,6 +736,7 @@
                 ]),
             ]),
             element: Some(Thunder),
+            uses_per_turn: Some(2),
         ),
         (
             id: WindBlade,
@@ -729,6 +745,7 @@
             cost_ap: 2,
             effect: Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: ShadowWingAssassinate,
@@ -751,6 +768,7 @@
                 ]),
             ]),
             element: Some(Wind),
+            uses_per_turn: Some(2),
         ),
         (
             id: GaleEvasion,
@@ -759,6 +777,7 @@
             cost_ap: 2,
             effect: ApplyStatus(status_id: "wind_evade"),
             element: None,
+            uses_per_turn: Some(1),
         ),
         (
             id: CycloneRend,
@@ -781,6 +800,7 @@
                 ]),
             ]),
             element: Some(Wind),
+            uses_per_turn: Some(3),
         ),
         (
             id: LightBladeSlash,
@@ -789,6 +809,7 @@
             cost_ap: 2,
             effect: Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: SacredJudgment,
@@ -811,6 +832,7 @@
                 ]),
             ]),
             element: Some(Light),
+            uses_per_turn: Some(2),
         ),
         (
             id: HolyShelter,
@@ -827,6 +849,7 @@
                 ),
             ]),
             element: None,
+            uses_per_turn: Some(2),
         ),
         (
             id: PurifyingLight,
@@ -844,6 +867,7 @@
                 ]),
             ]),
             element: None,
+            uses_per_turn: Some(2),
         ),
         (
             id: ShadowBlade,
@@ -852,6 +876,7 @@
             cost_ap: 2,
             effect: Attack(power: 15, lifesteal_ratio: None, ignore_shield: false),
             element: None,
+            uses_per_turn: Some(4),
         ),
         (
             id: AbyssReap,
@@ -868,6 +893,7 @@
                 ]),
             ]),
             element: Some(Dark),
+            uses_per_turn: Some(2),
         ),
         (
             id: CurseWhisper,
@@ -876,6 +902,7 @@
             cost_ap: 2,
             effect: ApplyStatus(status_id: "cursed"),
             element: None,
+            uses_per_turn: Some(1),
         ),
         (
             id: BloodTouch,
@@ -892,6 +919,7 @@
                 ]),
             ]),
             element: Some(Dark),
+            uses_per_turn: Some(2),
         ),
     ],
     monsters: [
