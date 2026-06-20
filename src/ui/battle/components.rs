@@ -493,9 +493,13 @@ pub(crate) struct DebugStatusToken;
 
 // === 七圣召唤风重构新增 marker ===
 
-/// AP 宝石 pip（每侧 0..=max_ap 个）。
+/// AP 宝石 pip（每侧固定 10 个；每个表示 2 AP）。
 #[derive(Component)]
-pub(crate) struct ApGemPip {
+pub(crate) struct ApGemPip;
+
+/// AP 宝石点亮填充层（0 / 半颗 / 满颗）。
+#[derive(Component)]
+pub(crate) struct ApGemPipFill {
     pub side: Side,
     pub index: usize,
 }

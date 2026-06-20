@@ -1057,19 +1057,21 @@ pub(crate) fn update_action_points_text_system(
 pub(crate) fn update_ap_gems_system(
     action_points: Res<crate::battle::ActionPoints>,
     theme: Res<UiTheme>,
-    mut pip_q: Query<(&ApGemPip, &mut BackgroundColor)>,
+    mut pip_q: Query<&mut BackgroundColor, (With<ApGemPip>, Without<ApGemPipFill>)>,
+    mut fill_q: Query<(&ApGemPipFill, &mut Node, &mut BackgroundColor), Without<ApGemPip>>,
     mut count_q: Query<(&ApGemCountText, &mut Text)>,
 ) {
     let ap_for = |side: Side| match side {
         Side::Player => action_points.player,
         Side::Enemy => action_points.enemy,
     };
-    for (pip, mut bg) in &mut pip_q {
-        *bg = if (pip.index as i32) < ap_for(pip.side) {
-            BackgroundColor(theme.ap_gem_full)
-        } else {
-            BackgroundColor(theme.ap_gem_empty)
-        };
+    for mut bg in &mut pip_q {
+        *bg = BackgroundColor(theme.ap_gem_empty);
+    }
+    for (fill, mut node, mut bg) in &mut fill_q {
+        let filled_units = (ap_for(fill.side).max(0) - fill.index as i32 * 2).clamp(0, 2);
+        node.width = Val::Percent(filled_units as f32 * 50.0);
+        *bg = BackgroundColor(theme.ap_gem_full);
     }
     for (count, mut text) in &mut count_q {
         text.0 = ap_for(count.side).to_string();

@@ -8,7 +8,8 @@ const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
 const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
 const ACTIVE_INFO_MASK_TOP: f32 = 40.0; //距离屏幕顶部的距离
 const ACTIVE_INFO_MASK_SIDE: f32 = 14.0; //距离屏幕边缘的距离
-const ACTIVE_INFO_MASK_WIDTH: f32 = 318.0; //信息卡宽度
+const ACTIVE_INFO_MASK_WIDTH: f32 = 380.0; //信息卡宽度
+const SWITCH_CANDIDATE_CARD_WIDTH: f32 = 318.0; //换人候选卡宽度
 // 上场精灵大头像与压在其角上的元素图标尺寸。
 const PORTRAIT_SIZE: f32 = 105.0; //上场大头像边长
 const PORTRAIT_BADGE_SIZE: f32 = 28.0; //头像角上的元素图标边长
@@ -26,8 +27,8 @@ pub(crate) const BENCH_BG_DEAD: Color = Color::srgba(0.08, 0.075, 0.075, 0.66);
 /// 阵亡待机位/换人项的冷灰描边，替代金色描边以传达“不可用”。
 pub(crate) const DEAD_MEMBER_BORDER: Color = Color::srgba(0.34, 0.32, 0.32, 0.70);
 
-/// AP 宝石 pip 的最大数量（与 BattleRules.max_ap 对齐；多余的 AP 仍由数字显示）。
-const AP_GEM_COUNT: usize = 12;
+/// 顶栏 AP 宝石数量；每颗表示 2 AP，半颗表示 1 AP，数字仍显示真实 AP。
+const AP_GEM_COUNT: usize = 10;
 
 pub(crate) fn spawn_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
@@ -605,7 +606,7 @@ fn spawn_switch_candidate_card(
         .spawn((
             Button,
             Node {
-                width: Val::Px(ACTIVE_INFO_MASK_WIDTH),
+                width: Val::Px(SWITCH_CANDIDATE_CARD_WIDTH),
                 padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(12.0)),
@@ -1101,12 +1102,25 @@ fn spawn_ap_gem_group(
                                 height: Val::Px(11.0),
                                 border: UiRect::all(Val::Px(1.0)),
                                 border_radius: BorderRadius::all(Val::Px(6.0)),
+                                overflow: Overflow::clip(),
                                 ..default()
                             },
                             BackgroundColor(theme.ap_gem_empty),
                             BorderColor::all(theme.gold_dim),
-                            ApGemPip { side, index },
-                        ));
+                            ApGemPip,
+                        ))
+                        .with_children(|pip| {
+                            pip.spawn((
+                                Node {
+                                    width: Val::Percent(0.0),
+                                    height: Val::Percent(100.0),
+                                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.ap_gem_full),
+                                ApGemPipFill { side, index },
+                            ));
+                        });
                     }
                 });
             group.spawn((
