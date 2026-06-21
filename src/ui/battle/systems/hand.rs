@@ -375,11 +375,34 @@ fn apply_card_draw_pose(transform: &mut UiTransform, t: f32) {
 
 /// 进入战斗时重置追踪基线，使开局起手牌也能播放飞入动画。
 pub(crate) fn reset_hand_draw_anim_tracker(
+    mut commands: Commands,
     mut draw_tracker: ResMut<HandDrawAnimTracker>,
     mut exit_tracker: ResMut<HandExitAnimTracker>,
+    mut battle_events: ResMut<Messages<BattleEvent>>,
+    mut ui_notices: ResMut<Messages<BattleUiNotice>>,
+    mut action_text_q: Query<(&mut Text, &mut Visibility, &mut BattleActionText)>,
+    card_exit_fx_q: Query<(Entity, &CardExitFx)>,
+    card_draw_anim_q: Query<Entity, With<CardDrawAnim>>,
 ) {
     *draw_tracker = HandDrawAnimTracker::default();
     *exit_tracker = HandExitAnimTracker::default();
+    battle_events.clear();
+    ui_notices.clear();
+
+    for (entity, fx) in &card_exit_fx_q {
+        if fx.role == CardExitRole::Container {
+            commands.entity(entity).despawn();
+        }
+    }
+    for entity in &card_draw_anim_q {
+        commands.entity(entity).remove::<CardDrawAnim>();
+    }
+
+    for (mut text, mut visibility, mut action_text) in &mut action_text_q {
+        text.0.clear();
+        action_text.remaining = 0.0;
+        *visibility = Visibility::Hidden;
+    }
 }
 
 /// 检测展示侧手牌新增的末尾卡槽并为其启动入手动画，同时推进进行中的动画。
@@ -759,5 +782,55 @@ pub(crate) fn tick_hand_card_exit_system(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn reset_hand_draw_anim_tracker_clears_stale_battle_presentation() {
+        let mut app = App::new();
+        app.init_resource::<HandDrawAnimTracker>();
+        app.init_resource::<HandExitAnimTracker>();
+        app.init_resource::<Messages<BattleEvent>>();
+        app.init_resource::<Messages<BattleUiNotice>>();
+
+        app.world_mut()
+            .resource_mut::<Messages<BattleEvent>>()
+            .write(BattleEvent::SkillUsed {
+                side: Side::Player,
+                skill_name: "火拳".to_string(),
+                slot: 0,
+            });
+        app.world_mut()
+            .resource_mut::<Messages<BattleUiNotice>>()
+            .write(BattleUiNotice { text: "AP不足" });
+        app.world_mut().spawn((
+            Text::new("我方发动火拳"),
+            Visibility::Visible,
+            BattleActionText { remaining: 1.5 },
+        ));
+
+        app.world_mut()
+            .run_system_once(reset_hand_draw_anim_tracker)
+            .expect("reset system should run");
+
+        assert!(app.world().resource::<Messages<BattleEvent>>().is_empty());
+        assert!(
+            app.world()
+                .resource::<Messages<BattleUiNotice>>()
+                .is_empty()
+        );
+
+        let mut query = app
+            .world_mut()
+            .query::<(&Text, &Visibility, &BattleActionText)>();
+        let (text, visibility, action_text) = query.single(app.world()).expect("action text");
+        assert_eq!(text.0, "");
+        assert_eq!(*visibility, Visibility::Hidden);
+        assert_eq!(action_text.remaining, 0.0);
     }
 }

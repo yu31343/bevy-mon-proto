@@ -52,6 +52,10 @@ fn update_ui_scale_system(
     ui_scale.0 = (window.width() / BASE_UI_WIDTH).min(window.height() / BASE_UI_HEIGHT);
 }
 
+fn battle_phase_initialized(battle_phase: Res<State<BattlePhase>>) -> bool {
+    *battle_phase.get() != BattlePhase::Init
+}
+
 /// 旧版战斗 UI 注册入口（供 `ui::battle` 桥接）。
 ///
 /// 后续重构会逐步把实现迁移进 `src/ui/battle/`，此处保持行为不变。
@@ -107,17 +111,19 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
 
     app.add_systems(
         Update,
-        update_player_hand_ui_system.run_if(in_state(GameState::Battle)),
+        update_player_hand_ui_system
+            .run_if(in_state(GameState::Battle).and(battle_phase_initialized)),
     );
     app.add_systems(
         Update,
-        animate_hand_card_draw_system.run_if(in_state(GameState::Battle)),
+        animate_hand_card_draw_system
+            .run_if(in_state(GameState::Battle).and(battle_phase_initialized)),
     );
     app.add_systems(
         Update,
         (spawn_hand_card_exit_system, tick_hand_card_exit_system)
             .chain()
-            .run_if(in_state(GameState::Battle)),
+            .run_if(in_state(GameState::Battle).and(battle_phase_initialized)),
     );
     app.add_systems(
         Update,
@@ -181,12 +187,16 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
             update_battle_bars_system.run_if(in_state(GameState::Battle)),
             update_action_points_text_system.run_if(in_state(GameState::Battle)),
             update_battle_action_text_system.run_if(in_state(GameState::Battle)),
-            process_battle_fx_events,
-            tick_skill_flash_timer.after(process_battle_fx_events),
-            tick_screen_flashes,
-            tick_fx_lifetimes,
-            spawn_reaction_banner_system,
-            tick_reaction_banner_system.after(spawn_reaction_banner_system),
+            process_battle_fx_events.run_if(in_state(GameState::Battle)),
+            tick_skill_flash_timer
+                .run_if(in_state(GameState::Battle))
+                .after(process_battle_fx_events),
+            tick_screen_flashes.run_if(in_state(GameState::Battle)),
+            tick_fx_lifetimes.run_if(in_state(GameState::Battle)),
+            spawn_reaction_banner_system.run_if(in_state(GameState::Battle)),
+            tick_reaction_banner_system
+                .run_if(in_state(GameState::Battle))
+                .after(spawn_reaction_banner_system),
             spawn_button_click_flash
                 .run_if(in_state(GameState::Battle))
                 .after(update_player_roster_ui_system),
