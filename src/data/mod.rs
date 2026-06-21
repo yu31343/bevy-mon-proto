@@ -394,7 +394,7 @@ mod tests {
         validate_battle_config(&config).expect("battle_data.ron should validate");
         assert!(config.rules.initial_cards > 0);
         assert_eq!(config.rules.cards_per_round, 2);
-        assert_eq!(config.rules.max_ap, 12);
+        assert_eq!(config.rules.max_ap, 9);
         assert_eq!(config.rules.max_retained_hand, 4);
         assert_eq!(config.ai.default_difficulty, AiDifficulty::Normal);
         assert_eq!(config.ai.default_config().search_depth, 1);
