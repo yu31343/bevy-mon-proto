@@ -60,7 +60,7 @@
                     healing_value: 0.9,
                     shield_value: 0.85,
                     status_value: 0.65,
-                    reaction_value: 0.65,
+                    reaction_value: 0.25,
                     switch_value: 0.6,
                     card_value: 0.75,
                     discard_value: 0.75,
