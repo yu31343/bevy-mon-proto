@@ -310,9 +310,8 @@ pub(crate) fn update_player_hand_ui_system(
 //
 // 实现要点：手牌槽是 18 个固定 `PlayerCardButton`，其 `Node` 位置每帧由
 // `update_player_hand_ui_system` 改写；本动画只改写各卡的 `UiTransform`
-// （平移 / 缩放 / 旋转的相对偏移），与布局系统互不争用。所有抽牌渠道最终都把
-// 卡牌 push 到 `hand.player` / `hand.enemy` 末尾，因此"展示侧手牌长度增长"即为
-// 新牌进入信号——对新增的末尾槽位逐一挂上动画即可覆盖全部获牌渠道。
+// （平移 / 缩放 / 旋转的相对偏移），与布局系统互不争用。卡牌效果抽牌优先使用
+// `CardsDrawn` 事件定位新增末尾槽位，其他获牌渠道用手牌快照差分兜底。
 // ============================================================================
 
 /// 单张卡入手动画总时长（秒）。
@@ -343,11 +342,11 @@ pub(crate) struct CardDrawAnim {
 }
 
 impl CardDrawAnim {
-    /// `order` 为该牌在本批新牌中的序号，用于错峰起播。
-    fn new(order: usize) -> Self {
+    /// `base_delay` 用于等待同批离场动画先播放；`order` 为该牌在本批新牌中的序号。
+    fn new(order: usize, base_delay: f32) -> Self {
         Self {
             elapsed: 0.0,
-            delay: order as f32 * CARD_DRAW_ANIM_STAGGER,
+            delay: base_delay + order as f32 * CARD_DRAW_ANIM_STAGGER,
             duration: CARD_DRAW_ANIM_DURATION,
         }
     }
@@ -402,6 +401,17 @@ fn detect_drawn_card_range(
     }
 
     (matched_current < current.len()).then_some(matched_current..current.len())
+}
+
+fn card_draw_base_delay(has_used: bool, has_discarded: bool) -> f32 {
+    let mut delay = 0.0;
+    if has_used {
+        delay += CARD_EXIT_ANIM_DURATION;
+    }
+    if has_discarded {
+        delay += CARD_EXIT_ANIM_DURATION;
+    }
+    delay
 }
 
 /// 进入战斗时重置追踪基线，使开局起手牌也能播放飞入动画。
@@ -476,13 +486,24 @@ pub(crate) fn animate_hand_card_draw_system(
         Side::Enemy => &hand.enemy,
     };
 
-    let reported_draw_count = events
-        .read()
-        .filter_map(|event| match event {
-            BattleEvent::CardsDrawn { side, count } if *side == display_side => Some(*count),
-            _ => None,
-        })
-        .sum::<usize>();
+    let mut reported_draw_count = 0;
+    let mut has_used = false;
+    let mut has_discarded = false;
+    for event in events.read() {
+        match event {
+            BattleEvent::CardsDrawn { side, count } if *side == display_side => {
+                reported_draw_count += *count;
+            }
+            BattleEvent::CardUsed { side, .. } if *side == display_side => {
+                has_used = true;
+            }
+            BattleEvent::CardDiscarded { side, .. } if *side == display_side => {
+                has_discarded = true;
+            }
+            _ => {}
+        }
+    }
+    let draw_base_delay = card_draw_base_delay(has_used, has_discarded);
 
     // 仅当展示侧未变（或首次观测）时才检测新摸到的牌；切换展示侧只更新基线。
     let same_or_first = tracker.last_side == Some(display_side) || tracker.last_side.is_none();
@@ -500,7 +521,7 @@ pub(crate) fn animate_hand_card_draw_system(
                 apply_card_draw_pose(&mut transform, 0.0);
                 commands
                     .entity(entity)
-                    .insert(CardDrawAnim::new(btn.index - range.start));
+                    .insert(CardDrawAnim::new(btn.index - range.start, draw_base_delay));
                 continue;
             }
         }
@@ -557,14 +578,16 @@ enum CardExitRole {
 #[derive(Component)]
 pub(crate) struct CardExitFx {
     timer: Timer,
+    delay: f32,
     kind: CardExitKind,
     role: CardExitRole,
 }
 
 impl CardExitFx {
-    fn new(kind: CardExitKind, role: CardExitRole) -> Self {
+    fn new(kind: CardExitKind, role: CardExitRole, delay: f32) -> Self {
         Self {
             timer: Timer::from_seconds(CARD_EXIT_ANIM_DURATION, TimerMode::Once),
+            delay,
             kind,
             role,
         }
@@ -664,9 +687,11 @@ pub(crate) fn spawn_hand_card_exit_system(
         *age += 1;
         *age <= 1
     });
+    let mut has_new_used_event = false;
     for event in events.read() {
         match event {
             BattleEvent::CardUsed { side, card_name } if *side == display_side => {
+                has_new_used_event = true;
                 tracker
                     .recent
                     .push((card_name.clone(), CardExitKind::Used, 0));
@@ -707,6 +732,11 @@ pub(crate) fn spawn_hand_card_exit_system(
             } else {
                 CardExitKind::Used
             });
+        let exit_delay = if kind == CardExitKind::Discarded && has_new_used_event {
+            CARD_EXIT_ANIM_DURATION
+        } else {
+            0.0
+        };
 
         let accent = card
             .map(|card| super::super::helpers::card_category_color(card, &theme))
@@ -723,6 +753,7 @@ pub(crate) fn spawn_hand_card_exit_system(
                 card_name,
                 accent,
                 kind,
+                exit_delay,
             );
         }
     }
@@ -742,6 +773,7 @@ fn spawn_card_exit_ghost(
     card_name: String,
     accent: Color,
     kind: CardExitKind,
+    delay: f32,
 ) {
     let name_font = super::super::helpers::make_text_font(16.0, ui_font);
     commands.entity(root).with_children(|parent| {
@@ -767,7 +799,7 @@ fn spawn_card_exit_ghost(
                 BorderColor::all(accent),
                 ZIndex(CARD_EXIT_Z),
                 Pickable::IGNORE,
-                CardExitFx::new(kind, CardExitRole::Container),
+                CardExitFx::new(kind, CardExitRole::Container, delay),
             ))
             .with_children(|ghost| {
                 ghost.spawn((
@@ -775,7 +807,7 @@ fn spawn_card_exit_ghost(
                     name_font,
                     TextColor(theme.ink_primary),
                     Pickable::IGNORE,
-                    CardExitFx::new(kind, CardExitRole::Label),
+                    CardExitFx::new(kind, CardExitRole::Label, delay),
                 ));
             });
     });
@@ -795,6 +827,11 @@ pub(crate) fn tick_hand_card_exit_system(
     )>,
 ) {
     for (entity, mut fx, transform, background, border, text_color) in &mut q {
+        if fx.delay > 0.0 {
+            fx.delay = (fx.delay - time.delta_secs()).max(0.0);
+            continue;
+        }
+
         fx.timer.tick(time.delta());
         let fraction = fx.timer.fraction();
         let alpha = card_exit_alpha(fraction);
@@ -859,6 +896,17 @@ mod tests {
         let current = [CardId::GainAp, CardId::NextAttackBoost];
 
         assert_eq!(detect_drawn_card_range(&old, &current, 1), Some(1..2));
+    }
+
+    #[test]
+    fn draw_delay_waits_for_used_and_discarded_exits() {
+        assert_eq!(card_draw_base_delay(false, false), 0.0);
+        assert_eq!(card_draw_base_delay(true, false), CARD_EXIT_ANIM_DURATION);
+        assert_eq!(card_draw_base_delay(false, true), CARD_EXIT_ANIM_DURATION);
+        assert_eq!(
+            card_draw_base_delay(true, true),
+            CARD_EXIT_ANIM_DURATION * 2.0
+        );
     }
 
     #[test]
