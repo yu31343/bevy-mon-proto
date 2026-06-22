@@ -4,9 +4,10 @@ use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
 use super::roster::bench_display_order;
 use crate::{
     battle::{
-        BattleControlMode, BattleEvent, BattleResultNotice, Combatant, ElementAura, EnemyTeam,
-        InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS, RoundOrder, Shield,
-        Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team, TurnCount, UiControlSide,
+        BattleControlMode, BattleEvent, BattlePerformanceReport, BattleResultNotice, Combatant,
+        ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS,
+        RoundOrder, Shield, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team,
+        TurnCount, UiControlSide, format_performance_report,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType, EnemyAiConfig},
     game_state::BattlePhase,
@@ -1319,7 +1320,9 @@ pub(crate) fn update_battle_action_text_system(
                 };
                 format!("{}发动{}", owner, skill_name)
             }
-            BattleEvent::CardUsed { side, card_name } => {
+            BattleEvent::CardUsed {
+                side, card_name, ..
+            } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
@@ -1327,7 +1330,9 @@ pub(crate) fn update_battle_action_text_system(
                 };
                 format!("{}使用技能牌{}", owner, card_name)
             }
-            BattleEvent::CardDiscarded { side, card_name } => {
+            BattleEvent::CardDiscarded {
+                side, card_name, ..
+            } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
@@ -1385,6 +1390,7 @@ pub(crate) fn update_result_ui_system(
         ),
     >,
     battle_result: Res<crate::battle::BattleResult>,
+    performance_report: Res<BattlePerformanceReport>,
     battle_mode: Res<BattleControlMode>,
     notice: Res<BattleResultNotice>,
     pvp_rematch: Option<Res<pvp::PvpRematchState>>,
@@ -1406,7 +1412,12 @@ pub(crate) fn update_result_ui_system(
         title.0 = result_title(&battle_result.message).to_string();
     }
     for mut result_text in &mut text_queries.p1() {
-        result_text.0 = clean_result_message(&battle_result.message);
+        let base_message = clean_result_message(&battle_result.message);
+        result_text.0 = if let Some(summary) = performance_report.summary.as_ref() {
+            format!("{base_message}\n{}", format_performance_report(summary))
+        } else {
+            base_message
+        };
     }
     for mut node in &mut restart_button_q {
         node.display = if is_pvp { Display::None } else { Display::Flex };

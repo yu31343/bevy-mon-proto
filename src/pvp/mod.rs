@@ -25,14 +25,14 @@ use crate::{
     console_log::{ConsoleLogCategory, log as console_log},
     data::{
         BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardId, MonsterPool,
-        SkillDef, TeamSelections,
+        SkillDef, SkillId, TeamSelections,
     },
     game_state::{BattlePhase, GameState},
 };
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 5;
+const PROTOCOL_VERSION: u32 = 6;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
@@ -352,11 +352,15 @@ enum PvpBattleFeedback {
     TurnStarted(u32),
     CardUsed {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        cost_ap: i32,
     },
     CardDiscarded {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        ap_gain: i32,
     },
     CardsDrawn {
         side: Side,
@@ -364,8 +368,10 @@ enum PvpBattleFeedback {
     },
     SkillUsed {
         side: Side,
+        skill_id: SkillId,
         skill_name: String,
         slot: usize,
+        cost_ap: i32,
     },
     DamageDealt {
         source: Side,
@@ -396,6 +402,7 @@ enum PvpBattleFeedback {
     ReactionTriggered {
         source: Side,
         target: Side,
+        reaction_id: String,
         reaction_name: String,
     },
 }
@@ -2336,13 +2343,27 @@ fn pvp_forward_host_battle_events_system(
 fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback> {
     Some(match event {
         BattleEvent::TurnStarted(turn) => PvpBattleFeedback::TurnStarted(*turn),
-        BattleEvent::CardUsed { side, card_name } => PvpBattleFeedback::CardUsed {
+        BattleEvent::CardUsed {
+            side,
+            card_id,
+            card_name,
+            cost_ap,
+        } => PvpBattleFeedback::CardUsed {
             side: *side,
+            card_id: *card_id,
             card_name: card_name.clone(),
+            cost_ap: *cost_ap,
         },
-        BattleEvent::CardDiscarded { side, card_name } => PvpBattleFeedback::CardDiscarded {
+        BattleEvent::CardDiscarded {
+            side,
+            card_id,
+            card_name,
+            ap_gain,
+        } => PvpBattleFeedback::CardDiscarded {
             side: *side,
+            card_id: *card_id,
             card_name: card_name.clone(),
+            ap_gain: *ap_gain,
         },
         BattleEvent::CardsDrawn { side, count } => PvpBattleFeedback::CardsDrawn {
             side: *side,
@@ -2350,12 +2371,16 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
         },
         BattleEvent::SkillUsed {
             side,
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         } => PvpBattleFeedback::SkillUsed {
             side: *side,
+            skill_id: *skill_id,
             skill_name: skill_name.clone(),
             slot: *slot,
+            cost_ap: *cost_ap,
         },
         BattleEvent::DamageDealt {
             source,
@@ -2391,10 +2416,12 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
         BattleEvent::ReactionTriggered {
             source,
             target,
+            reaction_id,
             reaction_name,
         } => PvpBattleFeedback::ReactionTriggered {
             source: *source,
             target: *target,
+            reaction_id: reaction_id.clone(),
             reaction_name: reaction_name.clone(),
         },
         _ => return None,
@@ -2408,13 +2435,27 @@ fn should_replay_pvp_feedback_on_client(feedback: &PvpBattleFeedback) -> bool {
 fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
     match feedback {
         PvpBattleFeedback::TurnStarted(turn) => BattleEvent::TurnStarted(turn),
-        PvpBattleFeedback::CardUsed { side, card_name } => BattleEvent::CardUsed {
-            side: mirror_side(side),
+        PvpBattleFeedback::CardUsed {
+            side,
+            card_id,
             card_name,
+            cost_ap,
+        } => BattleEvent::CardUsed {
+            side: mirror_side(side),
+            card_id,
+            card_name,
+            cost_ap,
         },
-        PvpBattleFeedback::CardDiscarded { side, card_name } => BattleEvent::CardDiscarded {
-            side: mirror_side(side),
+        PvpBattleFeedback::CardDiscarded {
+            side,
+            card_id,
             card_name,
+            ap_gain,
+        } => BattleEvent::CardDiscarded {
+            side: mirror_side(side),
+            card_id,
+            card_name,
+            ap_gain,
         },
         PvpBattleFeedback::CardsDrawn { side, count } => BattleEvent::CardsDrawn {
             side: mirror_side(side),
@@ -2422,12 +2463,16 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
         },
         PvpBattleFeedback::SkillUsed {
             side,
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         } => BattleEvent::SkillUsed {
             side: mirror_side(side),
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         },
         PvpBattleFeedback::DamageDealt {
             source,
@@ -2463,10 +2508,12 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
         PvpBattleFeedback::ReactionTriggered {
             source,
             target,
+            reaction_id,
             reaction_name,
         } => BattleEvent::ReactionTriggered {
             source: mirror_side(source),
             target: mirror_side(target),
+            reaction_id,
             reaction_name,
         },
     }
@@ -3011,7 +3058,9 @@ fn apply_remote_card(
         action_points.enemy += 1;
         event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
+            card_id,
             card_name,
+            ap_gain: 1,
         });
         return;
     }
@@ -3026,7 +3075,9 @@ fn apply_remote_card(
     let _ = pending_boosts;
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
+        card_id,
         card_name,
+        cost_ap: card.cost_ap,
     });
 }
 

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::data::ElementType;
+use crate::data::{CardId, ElementType, SkillId};
 
 use super::{Side, TurnAction};
 
@@ -17,11 +17,15 @@ pub enum BattleEvent {
     TurnStarted(u32),
     CardUsed {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        cost_ap: i32,
     },
     CardDiscarded {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        ap_gain: i32,
     },
     CardsDrawn {
         side: Side,
@@ -29,9 +33,11 @@ pub enum BattleEvent {
     },
     SkillUsed {
         side: Side,
+        skill_id: SkillId,
         skill_name: String,
         /// 技能在 4 格栏中的索引（用于 UI 高亮）。
         slot: usize,
+        cost_ap: i32,
     },
     DamageDealt {
         source: Side,
@@ -64,6 +70,7 @@ pub enum BattleEvent {
     ReactionTriggered {
         source: Side,
         target: Side,
+        reaction_id: String,
         reaction_name: String,
     },
     WindSpreadTriggered {

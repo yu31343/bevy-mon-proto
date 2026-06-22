@@ -439,8 +439,10 @@ pub fn player_turn_input_system(
 
         writers.event_writer.write(BattleEvent::SkillUsed {
             side: Side::Player,
+            skill_id,
             skill_name: skill.name.clone(),
             slot,
+            cost_ap: cost,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -801,7 +803,9 @@ pub fn player_turn_input_system(
                 .unwrap_or_else(|| format!("{card_id:?}"));
             writers.event_writer.write(BattleEvent::CardDiscarded {
                 side: Side::Player,
+                card_id,
                 card_name: card_name.clone(),
+                ap_gain: 1,
             });
             note_action_phase(
                 &mut logs.structured_log,
@@ -912,7 +916,9 @@ pub fn player_turn_input_system(
             .unwrap_or_else(|| format!("{card_id:?}"));
         writers.event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Player,
+            card_id,
             card_name: card_name.clone(),
+            ap_gain: 1,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -984,7 +990,9 @@ pub fn player_turn_input_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 writers.event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Player,
+                    card_id,
                     card_name: card_name.clone(),
+                    ap_gain: 1,
                 });
                 note_action_phase(
                     &mut logs.structured_log,
@@ -1041,7 +1049,9 @@ pub fn player_turn_input_system(
                 let card_name = card.name.to_string();
                 writers.event_writer.write(BattleEvent::CardUsed {
                     side: Side::Player,
+                    card_id,
                     card_name: card_name.clone(),
+                    cost_ap: card.cost_ap,
                 });
 
                 let effect_detail = "效果已排入卡牌结算".to_string();
@@ -1147,8 +1157,10 @@ pub fn player_turn_input_system(
     // 事件：技能使用（用于 UI 闪白）。
     writers.event_writer.write(BattleEvent::SkillUsed {
         side: Side::Player,
+        skill_id,
         skill_name: skill.name.clone(),
         slot: skill_slot,
+        cost_ap: cost,
     });
     note_action_phase(
         &mut logs.structured_log,

@@ -3,13 +3,15 @@ use bevy::prelude::*;
 use super::{element_text, side_text};
 use crate::{
     battle::{
-        BattleActionCooldown, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent, BattleLog,
-        BattleResult, BattleStateEvent, BattleStatusEvent, BattleTraceEvent, Combatant,
-        ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam, ReplayEventLog, Shield,
-        Side, Stats, StatusBoard, StructuredBattleLog, TurnCount, push_battle_line,
-        push_replay_log_entry, push_structured_battle_line,
+        BattleActionCooldown, BattleControlMode, BattleEvent, BattleFormulaEvent,
+        BattleLifecycleEvent, BattleLog, BattlePerformanceStats, BattleResult, BattleStateEvent,
+        BattleStatusEvent, BattleTraceEvent, Combatant, ElementAura, EnemyTeam, InBattle,
+        PendingHandDiscard, PlayerTeam, ReplayEventLog, Shield, Side, Stats, StatusBoard,
+        StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
+        push_structured_battle_line, record_performance_event,
     },
     console_log::{ConsoleLogCategory, log as console_log},
+    data::BattleDbs,
     game_state::GameState,
 };
 
@@ -29,6 +31,22 @@ pub fn start_battle_action_cooldown_system(
         if let BattleEvent::SkillUsed { side, .. } = event {
             cooldown.start(*side);
         }
+    }
+}
+
+pub fn track_performance_events_system(
+    mut events: MessageReader<BattleEvent>,
+    mut stats: ResMut<BattlePerformanceStats>,
+    dbs: Res<BattleDbs>,
+    battle_mode: Res<BattleControlMode>,
+) {
+    if *battle_mode == BattleControlMode::PlayerVsRemote {
+        events.clear();
+        return;
+    }
+
+    for event in events.read() {
+        record_performance_event(&mut stats, &dbs, event);
     }
 }
 
@@ -152,10 +170,14 @@ pub fn consume_battle_events_system(
     for event in events.read() {
         let line = match event {
             BattleEvent::TurnStarted(turn) => format!("--- 第 {turn} 回合 ---"),
-            BattleEvent::CardUsed { side, card_name } => {
+            BattleEvent::CardUsed {
+                side, card_name, ..
+            } => {
                 format!("{} 使用了卡牌：{}。", side_text(*side), card_name)
             }
-            BattleEvent::CardDiscarded { side, card_name } => {
+            BattleEvent::CardDiscarded {
+                side, card_name, ..
+            } => {
                 format!("{} 弃置了卡牌：{}。", side_text(*side), card_name)
             }
             BattleEvent::CardsDrawn { .. } => continue,
@@ -198,6 +220,7 @@ pub fn consume_battle_events_system(
                 source,
                 target,
                 reaction_name,
+                ..
             } => format!(
                 "{} 对 {} 触发了元素反应：{}。",
                 side_text(*source),

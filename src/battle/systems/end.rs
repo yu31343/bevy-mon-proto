@@ -7,11 +7,13 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionTrace, BattleControlMode, BattleEvent, BattleLog, BattleResult, BattleResultAction,
+        ActionTrace, BattleControlMode, BattleEvent, BattleLog, BattlePerformanceOutcome,
+        BattlePerformanceReport, BattlePerformanceStats, BattleResult, BattleResultAction,
         BattleResultNotice, Combatant, ElementAura, InBattle, PendingBattleResultAction,
-        PendingKoResolution, ReplayEventLog, RoundOrder, Shield, Side, Stats, StructuredBattleLog,
-        TurnContext, TurnCount, battle_phase_for_side, note_action_phase, note_structured_phase,
-        push_battle_line, push_named_action_trace, transfer_status_by_id,
+        PendingKoResolution, PerformanceTeamSnapshot, ReplayEventLog, RoundOrder, Shield, Side,
+        Stats, StructuredBattleLog, TurnContext, TurnCount, battle_phase_for_side,
+        build_performance_report, format_performance_report, note_action_phase,
+        note_structured_phase, push_battle_line, push_named_action_trace, transfer_status_by_id,
     },
     data::TeamSelections,
     game_state::{BattlePhase, GameState},
@@ -240,6 +242,13 @@ pub fn check_end_system(
     }
 }
 
+#[derive(SystemParam)]
+pub struct ResolveKoPerformance<'w> {
+    battle_mode: Res<'w, BattleControlMode>,
+    stats: Res<'w, BattlePerformanceStats>,
+    report: ResMut<'w, BattlePerformanceReport>,
+}
+
 pub fn resolve_ko_system(
     time: Res<Time>,
     mut query: Query<
@@ -257,6 +266,7 @@ pub fn resolve_ko_system(
     turn_count: Res<TurnCount>,
     turn_ctx: Res<TurnContext>,
     round_order: Res<RoundOrder>,
+    mut performance: ResolveKoPerformance,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -355,6 +365,26 @@ pub fn resolve_ko_system(
     }
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
+        if *performance.battle_mode == BattleControlMode::PlayerVsRemote {
+            performance.report.summary = None;
+        } else {
+            let outcome = if pending_ko.player_defeated && pending_ko.enemy_defeated {
+                BattlePerformanceOutcome::Draw
+            } else if pending_ko.enemy_defeated {
+                BattlePerformanceOutcome::Victory
+            } else {
+                BattlePerformanceOutcome::Defeat
+            };
+            let (player_snapshot, enemy_snapshot) = performance_team_snapshots(&mut query);
+            performance.report.summary = Some(build_performance_report(
+                &performance.stats,
+                outcome,
+                turn_count.0,
+                player_snapshot,
+                enemy_snapshot,
+            ));
+        }
+
         battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
             "平局！按 R 返回。".to_string()
         } else if pending_ko.enemy_defeated {
@@ -409,6 +439,34 @@ pub fn resolve_ko_system(
     }
 }
 
+fn performance_team_snapshots(
+    query: &mut Query<
+        (
+            &Combatant,
+            &mut Stats,
+            &Name,
+            &mut crate::battle::StatusBoard,
+        ),
+        With<InBattle>,
+    >,
+) -> (PerformanceTeamSnapshot, PerformanceTeamSnapshot) {
+    let mut player = PerformanceTeamSnapshot::default();
+    let mut enemy = PerformanceTeamSnapshot::default();
+    for (combatant, stats, _, _) in query.iter_mut() {
+        let snapshot = match combatant.side {
+            Side::Player => &mut player,
+            Side::Enemy => &mut enemy,
+        };
+        snapshot.current_hp += stats.hp.max(0);
+        snapshot.max_hp += stats.max_hp.max(0);
+        snapshot.member_count += 1;
+        if stats.hp > 0 {
+            snapshot.alive_count += 1;
+        }
+    }
+    (player, enemy)
+}
+
 fn sanitize_filename_segment(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -431,6 +489,7 @@ fn write_export_logs(
     battle_result: &BattleResult,
     replay_log: &ReplayEventLog,
     action_trace: &ActionTrace,
+    performance_report: Option<&BattlePerformanceReport>,
 ) -> Result<String, String> {
     fs::create_dir_all(export_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
 
@@ -449,20 +508,34 @@ fn write_export_logs(
     fs::write(&action_path, action_text)
         .map_err(|err| format!("写入 {:?} 失败：{err}", action_path))?;
 
-    Ok(format!(
-        "已导出：{} 与 {}",
-        replay_path.display(),
-        action_path.display()
-    ))
+    let mut exported_paths = vec![
+        replay_path.display().to_string(),
+        action_path.display().to_string(),
+    ];
+    if let Some(summary) = performance_report.and_then(|report| report.summary.as_ref()) {
+        let performance_path = export_dir.join(format!("{result_slug}_performance.txt"));
+        fs::write(&performance_path, format_performance_report(summary))
+            .map_err(|err| format!("写入 {:?} 失败：{err}", performance_path))?;
+        exported_paths.push(performance_path.display().to_string());
+    }
+
+    Ok(format!("已导出：{}", exported_paths.join("、")))
 }
 
 fn export_logs(
     battle_result: &BattleResult,
     replay_log: &ReplayEventLog,
     action_trace: &ActionTrace,
+    performance_report: &BattlePerformanceReport,
 ) -> Result<String, String> {
     let export_dir = PathBuf::from("battle_logs");
-    write_export_logs(&export_dir, battle_result, replay_log, action_trace)
+    write_export_logs(
+        &export_dir,
+        battle_result,
+        replay_log,
+        action_trace,
+        Some(performance_report),
+    )
 }
 
 #[derive(SystemParam)]
@@ -474,6 +547,7 @@ pub struct ResultRuntime<'w> {
     team_selections: Option<ResMut<'w, TeamSelections>>,
     replay_log: Res<'w, ReplayEventLog>,
     action_trace: Res<'w, ActionTrace>,
+    performance_report: Res<'w, BattlePerformanceReport>,
     battle_mode: ResMut<'w, BattleControlMode>,
     ui_control_side: ResMut<'w, crate::battle::UiControlSide>,
     selected_cards: ResMut<'w, crate::battle::SelectedCards>,
@@ -503,6 +577,7 @@ pub fn restart_from_result_system(
             &runtime.battle_result,
             &runtime.replay_log,
             &runtime.action_trace,
+            &runtime.performance_report,
         ) {
             Ok(_) => {
                 runtime.result_notice.text = "导出成功".to_string();
@@ -676,9 +751,10 @@ mod tests {
     use crate::{
         battle::{
             ActionTraceEntry, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent,
-            BattleStateEvent, BattleStatusEvent, BattleTraceEvent, ElementAura, EnemyTeam,
-            PlayerTeam, ReplayEventLog, Shield, Side, StatusBoard, StatusInstance,
-            StructuredBattleLog, Team, systems::consume_battle_events_system,
+            BattlePerformanceReport, BattlePerformanceStats, BattleStateEvent, BattleStatusEvent,
+            BattleTraceEvent, ElementAura, EnemyTeam, PlayerTeam, ReplayEventLog, Shield, Side,
+            StatusBoard, StatusInstance, StructuredBattleLog, Team,
+            systems::consume_battle_events_system,
         },
         data::{BattleFormulaRules, ElementType, StatusCategory, StatusTickTiming},
         game_state::GameState,
@@ -721,6 +797,9 @@ mod tests {
         app.add_plugins(TimePlugin);
         app.init_resource::<Messages<BattleEvent>>();
         app.insert_resource(pending_ko);
+        app.insert_resource(BattleControlMode::PlayerVsAi);
+        app.insert_resource(BattlePerformanceStats::default());
+        app.insert_resource(BattlePerformanceReport::default());
         app.insert_resource(TurnCount(5));
         app.insert_resource(TurnContext::default());
         app.insert_resource(RoundOrder::default());
@@ -1208,9 +1287,14 @@ mod tests {
             detail: "玩家释放火拳".to_string(),
         }]);
 
-        let export_message =
-            write_export_logs(&export_dir, &battle_result, &replay_log, &action_trace)
-                .expect("export should succeed");
+        let export_message = write_export_logs(
+            &export_dir,
+            &battle_result,
+            &replay_log,
+            &action_trace,
+            None,
+        )
+        .expect("export should succeed");
 
         let slug = sanitize_filename_segment(&battle_result.message);
         let replay_path = export_dir.join(format!("{slug}_replay.ron"));
@@ -1301,8 +1385,10 @@ mod tests {
             .resource_mut::<Messages<BattleEvent>>()
             .write(BattleEvent::SkillUsed {
                 side: Side::Player,
+                skill_id: crate::data::SkillId::FirePunch,
                 skill_name: "火拳".to_string(),
                 slot: 0,
+                cost_ap: 2,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleEvent>>()
@@ -1375,7 +1461,7 @@ mod tests {
         assert_eq!(replay_log.0[5].summary, "burning_aura:applied");
 
         let export_message =
-            write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+            write_export_logs(&export_dir, battle_result, replay_log, &action_trace, None)
                 .expect("export should succeed");
         let slug = sanitize_filename_segment(&battle_result.message);
         let replay_path = export_dir.join(format!("{slug}_replay.ron"));
@@ -1486,7 +1572,7 @@ mod tests {
             },
         ]);
         let battle_result = app.world().resource::<BattleResult>();
-        write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+        write_export_logs(&export_dir, battle_result, replay_log, &action_trace, None)
             .expect("export should succeed");
 
         let slug = sanitize_filename_segment(&battle_result.message);

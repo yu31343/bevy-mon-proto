@@ -416,6 +416,7 @@ pub(super) fn react_to_battle_events(
                 side,
                 skill_name,
                 slot,
+                ..
             } => {
                 match skill_name.as_str() {
                     "燃魂强化" => spawn_battle_vfx(

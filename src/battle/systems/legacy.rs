@@ -424,8 +424,10 @@ fn resolve_turn_system(
 
         event_writer.write(BattleEvent::SkillUsed {
             side: attacker_side,
+            skill_id,
             skill_name: skill.name.clone(),
             slot: skill_slot,
+            cost_ap: skill.cost_ap,
         });
 
         if actor_is_player_slot {

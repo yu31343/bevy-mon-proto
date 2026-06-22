@@ -15,7 +15,7 @@ pub use enemy_turn::{enemy_turn_ai_system, enemy_turn_input_system};
 pub use events::{
     consume_battle_events_system, discard_action_cooldown_ready, enemy_action_cooldown_ready,
     player_action_cooldown_ready, start_battle_action_cooldown_system,
-    tick_battle_action_cooldown_system,
+    tick_battle_action_cooldown_system, track_performance_events_system,
 };
 pub use init::init_battle_system;
 pub use player_turn::player_turn_input_system;

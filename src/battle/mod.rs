@@ -1,6 +1,7 @@
 pub(crate) mod ai;
 mod components;
 mod events;
+mod performance;
 mod systems;
 
 use bevy::prelude::*;
@@ -9,6 +10,7 @@ use crate::game_state::{BattlePhase, GameState};
 
 pub use components::*;
 pub use events::*;
+pub use performance::*;
 pub(crate) use systems::{SideEndTickParams, player_action_cooldown_ready};
 
 /// 战斗插件：注册战斗资源、事件与各阶段系统。
@@ -23,6 +25,8 @@ impl Plugin for BattlePlugin {
             .init_resource::<ReplayEventLog>()
             .init_resource::<ActionTrace>()
             .init_resource::<BattleResult>()
+            .init_resource::<BattlePerformanceStats>()
+            .init_resource::<BattlePerformanceReport>()
             .init_resource::<PendingBattleResultAction>()
             .init_resource::<BattleResultNotice>()
             .init_resource::<PendingKoResolution>()
@@ -101,6 +105,7 @@ impl Plugin for BattlePlugin {
             Update,
             (
                 systems::card_trigger_event_system,
+                systems::track_performance_events_system,
                 systems::start_battle_action_cooldown_system,
                 systems::consume_battle_events_system,
             )

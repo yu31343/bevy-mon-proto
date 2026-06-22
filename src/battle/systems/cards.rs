@@ -316,7 +316,9 @@ pub(crate) fn discard_card_from_hand(
         .unwrap_or_else(|| format!("{card_id:?}"));
     event_writer.write(BattleEvent::CardDiscarded {
         side,
+        card_id,
         card_name: card_name.clone(),
+        ap_gain: rules.discard_ap_gain,
     });
     Some(card_name)
 }
@@ -583,7 +585,9 @@ pub(crate) fn use_card_from_hand(ctx: CardPlayContext) -> Option<(String, String
     gain_ap(ctx.side, -card.cost_ap, ctx.rules, ctx.action_points);
     ctx.event_writer.write(BattleEvent::CardUsed {
         side: ctx.side,
+        card_id,
         card_name: card.name.clone(),
+        cost_ap: card.cost_ap,
     });
     let detail = apply_card_effect(ctx, &card);
     Some((card.name, detail))
@@ -1030,13 +1034,13 @@ pub(crate) fn card_trigger_event_system(
     let events: Vec<_> = messages.p0().read().cloned().collect();
     for event in events {
         match &event {
-            BattleEvent::CardDiscarded { side, card_name } => {
-                if let Some(card) = runtime
-                    .dbs
-                    .cards
-                    .values()
-                    .find(|card| card.name == *card_name)
-                {
+            BattleEvent::CardDiscarded {
+                side,
+                card_id,
+                card_name,
+                ..
+            } => {
+                if let Some(card) = runtime.dbs.cards.get(card_id) {
                     runtime.piles.push_discard(*side, card.id);
                     console_log(
                         ConsoleLogCategory::Cards,
@@ -1078,14 +1082,13 @@ pub(crate) fn card_trigger_event_system(
                     resolved_tactical_side = Some(*side);
                 }
             }
-            BattleEvent::CardUsed { side, card_name } => {
-                if let Some(card) = runtime
-                    .dbs
-                    .cards
-                    .values()
-                    .find(|card| card.name == *card_name)
-                    .cloned()
-                {
+            BattleEvent::CardUsed {
+                side,
+                card_id,
+                card_name,
+                ..
+            } => {
+                if let Some(card) = runtime.dbs.cards.get(card_id).cloned() {
                     runtime.piles.push_discard(*side, card.id);
                     console_log(
                         ConsoleLogCategory::Cards,
@@ -1550,6 +1553,7 @@ mod tests {
             .write(BattleEvent::ReactionTriggered {
                 source: Side::Player,
                 target: Side::Enemy,
+                reaction_id: "vaporize".to_string(),
                 reaction_name: "蒸发".to_string(),
             });
 
@@ -1593,6 +1597,7 @@ mod tests {
             .write(BattleEvent::ReactionTriggered {
                 source: Side::Player,
                 target: Side::Enemy,
+                reaction_id: "vaporize".to_string(),
                 reaction_name: "蒸发".to_string(),
             });
 

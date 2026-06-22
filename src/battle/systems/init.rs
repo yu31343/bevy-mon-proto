@@ -3,11 +3,12 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         AccuracyRng, ActionPoints, ActionTrace, BattleActionCooldown, BattleControlMode, BattleLog,
-        BattleResult, BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, ReplayEventLog, RoundOrder, RoundTransition, SelectedCards,
-        Shield, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, StructuredBattleLog,
-        TurnContext, TurnCount, UiControlSide, clear_runtime_battle_logs, clear_turn_context,
-        new_battle_shuffle_seed, note_structured_phase, push_battle_line,
+        BattlePerformanceReport, BattlePerformanceStats, BattleResult, BattleShuffleSeed,
+        CardPiles, CardTurnMemory, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
+        ReplayEventLog, RoundOrder, RoundTransition, SelectedCards, Shield, Side, SkillCount,
+        SkillList, SkillUses, Stats, StatusBoard, StructuredBattleLog, TurnContext, TurnCount,
+        UiControlSide, clear_runtime_battle_logs, clear_turn_context, new_battle_shuffle_seed,
+        note_structured_phase, push_battle_line,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleDataStatus, BattleDbs, BattleRules, CardDeck, MonsterPool, TeamSelections},
@@ -38,6 +39,8 @@ pub(crate) struct InitBattleRuntime<'w> {
     structured_log: ResMut<'w, StructuredBattleLog>,
     replay_log: ResMut<'w, ReplayEventLog>,
     action_trace: ResMut<'w, ActionTrace>,
+    performance_stats: ResMut<'w, BattlePerformanceStats>,
+    performance_report: ResMut<'w, BattlePerformanceReport>,
     result: ResMut<'w, BattleResult>,
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
@@ -66,6 +69,8 @@ pub fn init_battle_system(
     let structured_log = &mut runtime.structured_log;
     let replay_log = &mut runtime.replay_log;
     let action_trace = &mut runtime.action_trace;
+    let performance_stats = &mut runtime.performance_stats;
+    let performance_report = &mut runtime.performance_report;
     let result = &mut runtime.result;
     let turn_count = &mut runtime.turn_count;
     let round_order = &mut runtime.round_order;
@@ -85,6 +90,8 @@ pub fn init_battle_system(
     clear_turn_context(turn_ctx);
     action_cooldown.reset();
     clear_runtime_battle_logs(battle_log, structured_log, replay_log, action_trace);
+    **performance_stats = BattlePerformanceStats::default();
+    performance_report.summary = None;
     result.message.clear();
     result.export_status = None;
     turn_count.0 = 0;

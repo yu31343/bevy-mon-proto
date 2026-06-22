@@ -482,7 +482,7 @@ mod tests {
 }
 
 /// 技能唯一标识（逻辑层使用）。
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub enum SkillId {
     FirePunch,
     FlameStorm,

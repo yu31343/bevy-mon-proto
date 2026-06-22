@@ -275,7 +275,9 @@ fn try_play_boost_card_for_skill(
     action_points.enemy -= card.cost_ap;
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
+        card_id,
         card_name: card.name.to_string(),
+        cost_ap: card.cost_ap,
     });
     true
 }
@@ -458,7 +460,9 @@ pub fn enemy_turn_input_system(
                 .unwrap_or_else(|| format!("{card_id:?}"));
             writers.event_writer.write(BattleEvent::CardDiscarded {
                 side: Side::Enemy,
+                card_id,
                 card_name: card_name.clone(),
+                ap_gain: 1,
             });
             note_action_phase(
                 &mut logs.structured_log,
@@ -501,7 +505,9 @@ pub fn enemy_turn_input_system(
             .unwrap_or_else(|| format!("{card_id:?}"));
         writers.event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
+            card_id,
             card_name: card_name.clone(),
+            ap_gain: 1,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -569,8 +575,10 @@ pub fn enemy_turn_input_system(
 
         writers.event_writer.write(BattleEvent::SkillUsed {
             side: Side::Enemy,
+            skill_id,
             skill_name: skill.name.clone(),
             slot,
+            cost_ap: cost,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -970,7 +978,9 @@ pub fn enemy_turn_input_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     writers.event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name: card_name.clone(),
+                        ap_gain: 1,
                     });
                     note_action_phase(
                         &mut logs.structured_log,
@@ -1009,7 +1019,9 @@ pub fn enemy_turn_input_system(
                     let card_name = card.name.to_string();
                     writers.event_writer.write(BattleEvent::CardUsed {
                         side: Side::Enemy,
+                        card_id,
                         card_name: card_name.clone(),
+                        cost_ap: card.cost_ap,
                     });
 
                     let effect_detail = "效果已排入卡牌结算".to_string();
@@ -1214,7 +1226,9 @@ pub fn enemy_turn_ai_system(
             .unwrap_or_else(|| format!("{card_id:?}"));
         writers.event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
+            card_id,
             card_name: card_name.clone(),
+            ap_gain: 1,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -1782,8 +1796,10 @@ pub fn enemy_turn_ai_system(
             // 技能使用事件
             writers.event_writer.write(BattleEvent::SkillUsed {
                 side: Side::Enemy,
+                skill_id,
                 skill_name: skill.name.clone(),
                 slot,
+                cost_ap: cost,
             });
             console_log(
                 ConsoleLogCategory::Ai,
@@ -2185,7 +2201,9 @@ pub fn enemy_turn_ai_system(
                 action_points.enemy -= card_cost;
                 writers.event_writer.write(BattleEvent::CardUsed {
                     side: Side::Enemy,
+                    card_id,
                     card_name: card_name.clone(),
+                    cost_ap: card_cost,
                 });
                 console_log(
                     ConsoleLogCategory::Ai,
@@ -2259,7 +2277,9 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 writers.event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Enemy,
+                    card_id,
                     card_name: card_name.clone(),
+                    ap_gain: 1,
                 });
                 note_action_phase(
                     &mut logs.structured_log,

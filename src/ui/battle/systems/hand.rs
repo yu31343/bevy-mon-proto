@@ -788,13 +788,17 @@ pub(crate) fn spawn_hand_card_exit_system(
     let mut has_new_used_event = false;
     for event in events.read() {
         match event {
-            BattleEvent::CardUsed { side, card_name } if *side == display_side => {
+            BattleEvent::CardUsed {
+                side, card_name, ..
+            } if *side == display_side => {
                 has_new_used_event = true;
                 tracker
                     .recent
                     .push((card_name.clone(), CardExitKind::Used, 0));
             }
-            BattleEvent::CardDiscarded { side, card_name } if *side == display_side => {
+            BattleEvent::CardDiscarded {
+                side, card_name, ..
+            } if *side == display_side => {
                 tracker
                     .recent
                     .push((card_name.clone(), CardExitKind::Discarded, 0));
@@ -1019,8 +1023,10 @@ mod tests {
             .resource_mut::<Messages<BattleEvent>>()
             .write(BattleEvent::SkillUsed {
                 side: Side::Player,
+                skill_id: crate::data::SkillId::FirePunch,
                 skill_name: "火拳".to_string(),
                 slot: 0,
+                cost_ap: 2,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleUiNotice>>()

@@ -488,6 +488,7 @@ fn sync_aura_status(
 }
 
 fn emit_reaction(
+    reaction_id: &str,
     reaction_name: &str,
     attacker_side: Side,
     target_side: Side,
@@ -501,6 +502,7 @@ fn emit_reaction(
     event_writer.write(BattleEvent::ReactionTriggered {
         source: attacker_side,
         target: target_side,
+        reaction_id: reaction_id.to_string(),
         reaction_name: reaction_name.to_string(),
     });
     if let Some(round) = round {
@@ -1309,8 +1311,12 @@ fn resolve_element_attachment_only(
         }
     }
 
-    if let Some(name) = outcome.reaction_name.as_deref() {
+    if let (Some(id), Some(name)) = (
+        outcome.reaction_id.as_deref(),
+        outcome.reaction_name.as_deref(),
+    ) {
         emit_reaction(
+            id,
             name,
             attacker_side,
             target_side,
@@ -3162,8 +3168,9 @@ fn apply_effect_with_context(
                         }
                     }
 
-                    if let Some(name) = reaction_name {
+                    if let (Some(id), Some(name)) = (reaction_id, reaction_name) {
                         emit_reaction(
+                            id,
                             name,
                             attacker_side,
                             target_side,

@@ -582,7 +582,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Player,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.player_action = None;
                     selected_state.index = None;
@@ -611,7 +613,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Player,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.player_action = None;
                     selected_state.index = None;
@@ -641,7 +645,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Player,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.player_action = None;
                     selected_state.index = None;
@@ -676,7 +682,9 @@ pub(crate) fn button_play_card_two_step_system(
                 *ap -= card.cost_ap;
                 event_writer.write(BattleEvent::CardUsed {
                     side: Side::Player,
+                    card_id,
                     card_name: card.name.to_string(),
+                    cost_ap: card.cost_ap,
                 });
                 turn_ctx.player_action = None;
                 selected_state.index = None;
@@ -701,7 +709,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.enemy_action = None;
                     selected_state.index = None;
@@ -718,7 +728,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.enemy_action = None;
                     selected_state.index = None;
@@ -736,7 +748,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.enemy_action = None;
                     selected_state.index = None;
@@ -759,7 +773,9 @@ pub(crate) fn button_play_card_two_step_system(
                 *ap -= card.cost_ap;
                 event_writer.write(BattleEvent::CardUsed {
                     side: Side::Enemy,
+                    card_id,
                     card_name: card.name.to_string(),
+                    cost_ap: card.cost_ap,
                 });
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
@@ -851,7 +867,9 @@ pub(crate) fn button_discard_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Player,
+                    card_id,
                     card_name,
+                    ap_gain: 1,
                 });
                 turn_ctx.player_action = None;
                 selected_state.index = None;
@@ -882,7 +900,9 @@ pub(crate) fn button_discard_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Enemy,
+                    card_id,
                     card_name,
+                    ap_gain: 1,
                 });
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
