@@ -1,11 +1,11 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Combatant,
         ElementAura, EnemyTeam, Hand, InBattle, PendingBoost, PendingBoosts,
-        PendingGuardCounterClear, PendingHandDiscard, PendingTacticalDiscard, PlayerTeam, Shield,
-        Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
+        PendingGuardCounterClear, PendingHandDiscard, PendingKoResolution, PendingTacticalDiscard,
+        PlayerTeam, Shield, Side, Stats, StatusBoard, StatusInstance, upsert_status_instance,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{
@@ -80,6 +80,49 @@ fn active_entity(
         Side::Player => player_team.and_then(|team| team.0.active_combatant()),
         Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
     }
+}
+
+fn active_hp_is_zero_or_less(
+    side: Side,
+    player_team: Option<&PlayerTeam>,
+    enemy_team: Option<&EnemyTeam>,
+    query: &CardCombatQuery,
+) -> bool {
+    active_entity(side, player_team, enemy_team)
+        .and_then(|entity| {
+            query
+                .get(entity)
+                .ok()
+                .map(|(_, stats, _, _, _)| stats.hp <= 0)
+        })
+        .unwrap_or(false)
+}
+
+fn schedule_delayed_card_ko_check(
+    current_phase: BattlePhase,
+    pending_ko: &mut PendingKoResolution,
+    next_phase: &mut NextState<BattlePhase>,
+    player_team: Option<&PlayerTeam>,
+    enemy_team: Option<&EnemyTeam>,
+    query: &CardCombatQuery,
+) {
+    if !matches!(
+        current_phase,
+        BattlePhase::PlayerTurn | BattlePhase::EnemyTurn
+    ) {
+        return;
+    }
+
+    if !active_hp_is_zero_or_less(Side::Player, player_team, enemy_team, query)
+        && !active_hp_is_zero_or_less(Side::Enemy, player_team, enemy_team, query)
+    {
+        return;
+    }
+
+    if pending_ko.resume_phase.is_none() {
+        pending_ko.resume_phase = Some(current_phase);
+    }
+    next_phase.set(BattlePhase::CheckEnd);
 }
 
 fn team_alive_count(
@@ -955,41 +998,54 @@ fn apply_fixed_damage_to_active(
     });
 }
 
+#[derive(SystemParam)]
+pub(crate) struct CardTriggerRuntime<'w> {
+    pending_guard_clear: Option<Res<'w, PendingGuardCounterClear>>,
+    pending_tactical_discard: Option<Res<'w, PendingTacticalDiscard>>,
+    selected: ResMut<'w, crate::battle::SelectedCards>,
+    pending_boosts: ResMut<'w, PendingBoosts>,
+    memory: ResMut<'w, CardTurnMemory>,
+    action_points: ResMut<'w, ActionPoints>,
+    hand: ResMut<'w, Hand>,
+    piles: ResMut<'w, CardPiles>,
+    rules: Res<'w, BattleRules>,
+    deck: Res<'w, CardDeck>,
+    player_team: Option<Res<'w, PlayerTeam>>,
+    enemy_team: Option<Res<'w, EnemyTeam>>,
+    dbs: Res<'w, BattleDbs>,
+    battle_phase: Res<'w, State<BattlePhase>>,
+    pending_ko: ResMut<'w, PendingKoResolution>,
+    next_phase: ResMut<'w, NextState<BattlePhase>>,
+}
+
 pub(crate) fn card_trigger_event_system(
     mut commands: Commands,
     mut messages: ParamSet<(MessageReader<BattleEvent>, MessageWriter<BattleEvent>)>,
-    pending_guard_clear: Option<Res<PendingGuardCounterClear>>,
-    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
-    mut selected: ResMut<crate::battle::SelectedCards>,
-    mut pending_boosts: ResMut<PendingBoosts>,
-    mut memory: ResMut<CardTurnMemory>,
-    mut action_points: ResMut<ActionPoints>,
-    mut hand: ResMut<Hand>,
-    mut piles: ResMut<CardPiles>,
-    rules: Res<BattleRules>,
-    deck: Res<CardDeck>,
-    player_team: Option<Res<PlayerTeam>>,
-    enemy_team: Option<Res<EnemyTeam>>,
-    dbs: Res<BattleDbs>,
+    mut runtime: CardTriggerRuntime,
     mut query: CardCombatQuery,
 ) {
-    let pending_tactical = pending_tactical_discard.as_deref().cloned();
+    let pending_tactical = runtime.pending_tactical_discard.as_deref().cloned();
     let mut resolved_tactical_side = None;
     let mut new_tactical_discard = None;
     let events: Vec<_> = messages.p0().read().cloned().collect();
     for event in events {
         match &event {
             BattleEvent::CardDiscarded { side, card_name } => {
-                if let Some(card) = dbs.cards.values().find(|card| card.name == *card_name) {
-                    piles.push_discard(*side, card.id);
+                if let Some(card) = runtime
+                    .dbs
+                    .cards
+                    .values()
+                    .find(|card| card.name == *card_name)
+                {
+                    runtime.piles.push_discard(*side, card.id);
                     console_log(
                         ConsoleLogCategory::Cards,
                         format!(
                             "[{}] 弃置卡牌：{}；牌堆 {} 张；弃牌 {} 张",
                             super::side_text(*side),
                             card_name,
-                            piles.draw.len(),
-                            piles.discard.len()
+                            runtime.piles.draw.len(),
+                            runtime.piles.discard.len()
                         ),
                     );
                 }
@@ -1001,10 +1057,10 @@ pub(crate) fn card_trigger_event_system(
                     let drawn_cards = draw_cards_with_names(
                         *side,
                         pending.draw,
-                        &mut hand,
-                        &mut piles,
-                        &deck,
-                        &dbs,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
                     );
                     {
                         let mut writer = messages.p1();
@@ -1016,28 +1072,29 @@ pub(crate) fn card_trigger_event_system(
                         "战术整理弃置其他手牌后抽牌",
                         pending.draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                     resolved_tactical_side = Some(*side);
                 }
             }
             BattleEvent::CardUsed { side, card_name } => {
-                if let Some(card) = dbs
+                if let Some(card) = runtime
+                    .dbs
                     .cards
                     .values()
                     .find(|card| card.name == *card_name)
                     .cloned()
                 {
-                    piles.push_discard(*side, card.id);
+                    runtime.piles.push_discard(*side, card.id);
                     console_log(
                         ConsoleLogCategory::Cards,
                         format!(
                             "[{}] 使用卡牌：{}；牌堆 {} 张；弃牌 {} 张",
                             super::side_text(*side),
                             card_name,
-                            piles.draw.len(),
-                            piles.discard.len()
+                            runtime.piles.draw.len(),
+                            runtime.piles.discard.len()
                         ),
                     );
                     let mut writer = messages.p1();
@@ -1045,17 +1102,17 @@ pub(crate) fn card_trigger_event_system(
                         CardPlayContext {
                             side: *side,
                             card_index: 0,
-                            dbs: &dbs,
-                            rules: &rules,
-                            deck: &deck,
-                            hand: &mut hand,
-                            piles: &mut piles,
-                            action_points: &mut action_points,
-                            pending_boosts: &mut pending_boosts,
+                            dbs: &runtime.dbs,
+                            rules: &runtime.rules,
+                            deck: &runtime.deck,
+                            hand: &mut runtime.hand,
+                            piles: &mut runtime.piles,
+                            action_points: &mut runtime.action_points,
+                            pending_boosts: &mut runtime.pending_boosts,
                             pending_tactical_discard: Some(&mut new_tactical_discard),
-                            memory: &mut memory,
-                            player_team: player_team.as_deref(),
-                            enemy_team: enemy_team.as_deref(),
+                            memory: &mut runtime.memory,
+                            player_team: runtime.player_team.as_deref(),
+                            enemy_team: runtime.enemy_team.as_deref(),
                             combat_query: &mut query,
                             event_writer: &mut writer,
                         },
@@ -1064,18 +1121,24 @@ pub(crate) fn card_trigger_event_system(
                 }
             }
             BattleEvent::ReactionTriggered { source, target, .. } => {
-                if let Some(amount) = pending_mut(*source, &mut pending_boosts)
+                if let Some(amount) = pending_mut(*source, &mut runtime.pending_boosts)
                     .next_element_attachment_ap
                     .take()
                 {
-                    gain_ap(*source, amount, &rules, &mut action_points);
+                    gain_ap(*source, amount, &runtime.rules, &mut runtime.action_points);
                 }
-                if let Some((draw, source_card)) = pending_mut(*source, &mut pending_boosts)
+                if let Some((draw, source_card)) = pending_mut(*source, &mut runtime.pending_boosts)
                     .next_aura_attack_draw
                     .take()
                 {
-                    let drawn_cards =
-                        draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    let drawn_cards = draw_cards_with_names(
+                        *source,
+                        draw,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
+                    );
                     {
                         let mut writer = messages.p1();
                         emit_cards_drawn(&mut writer, *source, drawn_cards.len());
@@ -1086,11 +1149,11 @@ pub(crate) fn card_trigger_event_system(
                         "元素反应触发附着目标抽牌",
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
-                if let Some(amount) = pending_mut(*source, &mut pending_boosts)
+                if let Some(amount) = pending_mut(*source, &mut runtime.pending_boosts)
                     .next_reaction_fixed_damage
                     .take()
                 {
@@ -1099,8 +1162,8 @@ pub(crate) fn card_trigger_event_system(
                         *source,
                         *target,
                         amount,
-                        player_team.as_deref(),
-                        enemy_team.as_deref(),
+                        runtime.player_team.as_deref(),
+                        runtime.enemy_team.as_deref(),
                         &mut query,
                         &mut writer,
                     );
@@ -1114,19 +1177,26 @@ pub(crate) fn card_trigger_event_system(
             } => {
                 let source = crate::battle::opposite_side(*target);
                 if (!from.is_empty() || !to.is_empty())
-                    && let Some(amount) = pending_mut(source, &mut pending_boosts)
+                    && let Some(amount) = pending_mut(source, &mut runtime.pending_boosts)
                         .next_element_attachment_ap
                         .take()
                 {
-                    gain_ap(source, amount, &rules, &mut action_points);
+                    gain_ap(source, amount, &runtime.rules, &mut runtime.action_points);
                 }
                 if !from.is_empty()
-                    && let Some((draw, source_card)) = pending_mut(source, &mut pending_boosts)
-                        .next_aura_attack_draw
-                        .take()
+                    && let Some((draw, source_card)) =
+                        pending_mut(source, &mut runtime.pending_boosts)
+                            .next_aura_attack_draw
+                            .take()
                 {
-                    let drawn_cards =
-                        draw_cards_with_names(source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    let drawn_cards = draw_cards_with_names(
+                        source,
+                        draw,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
+                    );
                     {
                         let mut writer = messages.p1();
                         emit_cards_drawn(&mut writer, source, drawn_cards.len());
@@ -1137,8 +1207,8 @@ pub(crate) fn card_trigger_event_system(
                         "元素附着变化触发抽牌",
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
             }
@@ -1147,7 +1217,7 @@ pub(crate) fn card_trigger_event_system(
                 target,
                 element,
             } => {
-                let pending = pending_mut(*source, &mut pending_boosts)
+                let pending = pending_mut(*source, &mut runtime.pending_boosts)
                     .next_wind_spread_damage
                     .take();
                 if let Some((amount, elements)) = pending {
@@ -1157,41 +1227,49 @@ pub(crate) fn card_trigger_event_system(
                             *source,
                             *target,
                             amount,
-                            player_team.as_deref(),
-                            enemy_team.as_deref(),
+                            runtime.player_team.as_deref(),
+                            runtime.enemy_team.as_deref(),
                             &mut query,
                             &mut writer,
                         );
                     } else {
-                        pending_mut(*source, &mut pending_boosts).next_wind_spread_damage =
+                        pending_mut(*source, &mut runtime.pending_boosts).next_wind_spread_damage =
                             Some((amount, elements));
                     }
                 }
             }
             BattleEvent::ShieldAbsorbed { side, amount } if *amount > 0 => {
-                if let Some(ap) = pending_mut(*side, &mut pending_boosts)
+                if let Some(ap) = pending_mut(*side, &mut runtime.pending_boosts)
                     .shield_absorb_ap
                     .take()
                 {
-                    gain_ap(*side, ap, &rules, &mut action_points);
+                    gain_ap(*side, ap, &runtime.rules, &mut runtime.action_points);
                 }
             }
             BattleEvent::SkillUsed { side, .. } => {
-                let Some((skill_cost, draw, source_card)) = pending_mut(*side, &mut pending_boosts)
-                    .next_skill_cost_draw
-                    .clone()
+                let Some((skill_cost, draw, source_card)) =
+                    pending_mut(*side, &mut runtime.pending_boosts)
+                        .next_skill_cost_draw
+                        .clone()
                 else {
                     continue;
                 };
                 let skill_name = skill_name_from_event(&event);
-                let matched = dbs
+                let matched = runtime
+                    .dbs
                     .skills
                     .values()
                     .any(|skill| skill.cost_ap == skill_cost && skill.name == skill_name);
                 if matched {
-                    pending_mut(*side, &mut pending_boosts).next_skill_cost_draw = None;
-                    let drawn_cards =
-                        draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    pending_mut(*side, &mut runtime.pending_boosts).next_skill_cost_draw = None;
+                    let drawn_cards = draw_cards_with_names(
+                        *side,
+                        draw,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
+                    );
                     {
                         let mut writer = messages.p1();
                         emit_cards_drawn(&mut writer, *side, drawn_cards.len());
@@ -1202,8 +1280,8 @@ pub(crate) fn card_trigger_event_system(
                         &format!("使用{}AP技能：{}", skill_cost, skill_name),
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
             }
@@ -1213,22 +1291,32 @@ pub(crate) fn card_trigger_event_system(
                 amount,
                 ..
             } if *amount > 0 => {
-                let has_aura =
-                    active_entity(*target, player_team.as_deref(), enemy_team.as_deref())
-                        .and_then(|entity| {
-                            query
-                                .get(entity)
-                                .ok()
-                                .map(|(_, _, _, _, aura)| !aura.elements().is_empty())
-                        })
-                        .unwrap_or(false);
+                let has_aura = active_entity(
+                    *target,
+                    runtime.player_team.as_deref(),
+                    runtime.enemy_team.as_deref(),
+                )
+                .and_then(|entity| {
+                    query
+                        .get(entity)
+                        .ok()
+                        .map(|(_, _, _, _, aura)| !aura.elements().is_empty())
+                })
+                .unwrap_or(false);
                 if has_aura
-                    && let Some((draw, source_card)) = pending_mut(*source, &mut pending_boosts)
-                        .next_aura_attack_draw
-                        .take()
+                    && let Some((draw, source_card)) =
+                        pending_mut(*source, &mut runtime.pending_boosts)
+                            .next_aura_attack_draw
+                            .take()
                 {
-                    let drawn_cards =
-                        draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    let drawn_cards = draw_cards_with_names(
+                        *source,
+                        draw,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
+                    );
                     {
                         let mut writer = messages.p1();
                         emit_cards_drawn(&mut writer, *source, drawn_cards.len());
@@ -1239,33 +1327,34 @@ pub(crate) fn card_trigger_event_system(
                         "攻击命中附着目标",
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
             }
             BattleEvent::CombatantFainted { side, .. } => {
                 let scoring_side = match side {
                     Side::Player => {
-                        memory.enemy.knocked_out_opponent_this_turn = true;
+                        runtime.memory.enemy.knocked_out_opponent_this_turn = true;
                         Side::Enemy
                     }
                     Side::Enemy => {
-                        memory.player.knocked_out_opponent_this_turn = true;
+                        runtime.memory.player.knocked_out_opponent_this_turn = true;
                         Side::Player
                     }
                 };
-                if let Some((draw, source_card)) = pending_mut(scoring_side, &mut pending_boosts)
-                    .next_knockout_draw
-                    .take()
+                if let Some((draw, source_card)) =
+                    pending_mut(scoring_side, &mut runtime.pending_boosts)
+                        .next_knockout_draw
+                        .take()
                 {
                     let drawn_cards = draw_cards_with_names(
                         scoring_side,
                         draw,
-                        &mut hand,
-                        &mut piles,
-                        &deck,
-                        &dbs,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
                     );
                     {
                         let mut writer = messages.p1();
@@ -1277,22 +1366,28 @@ pub(crate) fn card_trigger_event_system(
                         "本行动击倒敌方精灵",
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
             }
             BattleEvent::Switched { side, .. } => {
                 match side {
-                    Side::Player => memory.player.switched_this_turn = true,
-                    Side::Enemy => memory.enemy.switched_this_turn = true,
+                    Side::Player => runtime.memory.player.switched_this_turn = true,
+                    Side::Enemy => runtime.memory.enemy.switched_this_turn = true,
                 }
-                if let Some((draw, source_card)) = pending_mut(*side, &mut pending_boosts)
+                if let Some((draw, source_card)) = pending_mut(*side, &mut runtime.pending_boosts)
                     .next_switch_draw
                     .take()
                 {
-                    let drawn_cards =
-                        draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    let drawn_cards = draw_cards_with_names(
+                        *side,
+                        draw,
+                        &mut runtime.hand,
+                        &mut runtime.piles,
+                        &runtime.deck,
+                        &runtime.dbs,
+                    );
                     {
                         let mut writer = messages.p1();
                         emit_cards_drawn(&mut writer, *side, drawn_cards.len());
@@ -1303,8 +1398,8 @@ pub(crate) fn card_trigger_event_system(
                         "本行动换人后抽牌",
                         draw,
                         &drawn_cards,
-                        &hand,
-                        &piles,
+                        &runtime.hand,
+                        &runtime.piles,
                     );
                 }
             }
@@ -1313,23 +1408,35 @@ pub(crate) fn card_trigger_event_system(
     }
 
     if let Some(side) = resolved_tactical_side {
-        let selected_state = selected_mut(side, &mut selected);
+        let selected_state = selected_mut(side, &mut runtime.selected);
         selected_state.index = None;
         selected_state.discard_armed = false;
         commands.remove_resource::<PendingTacticalDiscard>();
     }
 
     if let Some(pending) = new_tactical_discard {
-        let selected_state = selected_mut(pending.side, &mut selected);
+        let selected_state = selected_mut(pending.side, &mut runtime.selected);
         selected_state.index = None;
         selected_state.discard_armed = true;
         commands.insert_resource(pending);
     }
 
-    if let Some(pending_guard_clear) = pending_guard_clear {
-        clear_opponent_guard_counter_effects(pending_guard_clear.acting_side, &mut pending_boosts);
+    if let Some(pending_guard_clear) = runtime.pending_guard_clear.as_deref() {
+        clear_opponent_guard_counter_effects(
+            pending_guard_clear.acting_side,
+            &mut runtime.pending_boosts,
+        );
         commands.remove_resource::<PendingGuardCounterClear>();
     }
+
+    schedule_delayed_card_ko_check(
+        *runtime.battle_phase.get(),
+        &mut runtime.pending_ko,
+        &mut runtime.next_phase,
+        runtime.player_team.as_deref(),
+        runtime.enemy_team.as_deref(),
+        &query,
+    );
 }
 
 fn skill_name_from_event(event: &BattleEvent) -> &str {
@@ -1337,5 +1444,167 @@ fn skill_name_from_event(event: &BattleEvent) -> &str {
         skill_name
     } else {
         ""
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::{
+        battle::{EnemyTeam, PlayerTeam, Team},
+        data::{ElementDb, ReactionDb, StatusDb},
+    };
+
+    fn test_stats(hp: i32) -> Stats {
+        Stats {
+            hp,
+            max_hp: 30,
+            atk: 10,
+            def: 0,
+            spd: 10,
+            acc: 100,
+            atk_stage: 0,
+            def_stage: 0,
+            spd_stage: 0,
+            acc_stage: 0,
+        }
+    }
+
+    fn spawn_test_combatant(app: &mut App, side: Side, hp: i32) -> Entity {
+        app.world_mut()
+            .spawn((
+                InBattle,
+                Combatant {
+                    side,
+                    element: ElementType::Fire,
+                },
+                test_stats(hp),
+                Shield(0),
+                StatusBoard::default(),
+                ElementAura::default(),
+            ))
+            .id()
+    }
+
+    fn test_dbs() -> BattleDbs {
+        BattleDbs {
+            skills: HashMap::new(),
+            cards: HashMap::from([(
+                CardId::ReactionCatalyst,
+                CardDef {
+                    id: CardId::ReactionCatalyst,
+                    name: "反应催化".to_string(),
+                    cost_ap: 2,
+                    effect: CardEffect::NextReactionFixedDamage {
+                        amount: 20,
+                        ignore_shield: false,
+                    },
+                },
+            )]),
+            elements: ElementDb::default(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb::default(),
+        }
+    }
+
+    fn setup_card_trigger_app(phase: BattlePhase) -> App {
+        let mut app = App::new();
+        app.init_resource::<Messages<BattleEvent>>();
+        app.insert_resource(crate::battle::SelectedCards::default());
+        app.insert_resource(PendingBoosts::default());
+        app.insert_resource(CardTurnMemory::default());
+        app.insert_resource(ActionPoints::default());
+        app.insert_resource(Hand::default());
+        app.insert_resource(CardPiles::default());
+        app.insert_resource(BattleRules::default());
+        app.insert_resource(CardDeck::default());
+        app.insert_resource(test_dbs());
+        app.insert_resource(State::new(phase));
+        app.insert_resource(PendingKoResolution::default());
+        app.insert_resource(NextState::<BattlePhase>::default());
+        app.add_systems(Update, card_trigger_event_system);
+        app
+    }
+
+    #[test]
+    fn delayed_reaction_card_damage_schedules_ko_resolution() {
+        let mut app = setup_card_trigger_app(BattlePhase::PlayerTurn);
+        let player = spawn_test_combatant(&mut app, Side::Player, 30);
+        let enemy = spawn_test_combatant(&mut app, Side::Enemy, 10);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy],
+            active_index: 0,
+        }));
+        app.world_mut()
+            .resource_mut::<PendingBoosts>()
+            .player
+            .next_reaction_fixed_damage = Some(20);
+        app.world_mut()
+            .resource_mut::<Messages<BattleEvent>>()
+            .write(BattleEvent::ReactionTriggered {
+                source: Side::Player,
+                target: Side::Enemy,
+                reaction_name: "蒸发".to_string(),
+            });
+
+        app.update();
+
+        let (_, enemy_stats, _, _, _) = app
+            .world_mut()
+            .query::<(&Combatant, &Stats, &Shield, &StatusBoard, &ElementAura)>()
+            .get(app.world(), enemy)
+            .expect("enemy combatant exists");
+        assert_eq!(enemy_stats.hp, 0);
+        assert!(matches!(
+            app.world().resource::<NextState<BattlePhase>>(),
+            NextState::Pending(BattlePhase::CheckEnd)
+        ));
+        assert_eq!(
+            app.world().resource::<PendingKoResolution>().resume_phase,
+            Some(BattlePhase::PlayerTurn)
+        );
+    }
+
+    #[test]
+    fn nonlethal_delayed_card_damage_does_not_schedule_ko_resolution() {
+        let mut app = setup_card_trigger_app(BattlePhase::PlayerTurn);
+        let player = spawn_test_combatant(&mut app, Side::Player, 30);
+        let enemy = spawn_test_combatant(&mut app, Side::Enemy, 25);
+        app.insert_resource(PlayerTeam(Team {
+            combatants: vec![player],
+            active_index: 0,
+        }));
+        app.insert_resource(EnemyTeam(Team {
+            combatants: vec![enemy],
+            active_index: 0,
+        }));
+        app.world_mut()
+            .resource_mut::<PendingBoosts>()
+            .player
+            .next_reaction_fixed_damage = Some(20);
+        app.world_mut()
+            .resource_mut::<Messages<BattleEvent>>()
+            .write(BattleEvent::ReactionTriggered {
+                source: Side::Player,
+                target: Side::Enemy,
+                reaction_name: "蒸发".to_string(),
+            });
+
+        app.update();
+
+        assert!(matches!(
+            app.world().resource::<NextState<BattlePhase>>(),
+            NextState::Unchanged
+        ));
+        assert_eq!(
+            app.world().resource::<PendingKoResolution>().resume_phase,
+            None
+        );
     }
 }
