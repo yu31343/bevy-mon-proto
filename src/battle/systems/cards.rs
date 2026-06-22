@@ -162,6 +162,15 @@ fn draw_cards_with_names(
     drawn_cards
 }
 
+fn emit_cards_drawn(event_writer: &mut MessageWriter<BattleEvent>, side: Side, drawn_count: usize) {
+    if drawn_count > 0 {
+        event_writer.write(BattleEvent::CardsDrawn {
+            side,
+            count: drawn_count,
+        });
+    }
+}
+
 fn merge_card_effect_sources(existing: &mut String, source_card: &str) {
     if !existing.split(" + ").any(|source| source == source_card) {
         existing.push_str(" + ");
@@ -643,6 +652,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
                 let drawn_cards = draw_cards_with_names(
                     ctx.side, *amount, ctx.hand, ctx.piles, ctx.deck, ctx.dbs,
                 );
+                emit_cards_drawn(ctx.event_writer, ctx.side, drawn_cards.len());
                 log_card_effect_draw(
                     ctx.side,
                     &card.name,
@@ -732,6 +742,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
         } => {
             let drawn_cards =
                 draw_cards_with_names(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck, ctx.dbs);
+            emit_cards_drawn(ctx.event_writer, ctx.side, drawn_cards.len());
             log_card_effect_draw(
                 ctx.side,
                 &card.name,
@@ -774,6 +785,7 @@ fn apply_card_effect(ctx: CardPlayContext, card: &CardDef) -> String {
             if switched {
                 let drawn_cards =
                     draw_cards_with_names(ctx.side, *draw, ctx.hand, ctx.piles, ctx.deck, ctx.dbs);
+                emit_cards_drawn(ctx.event_writer, ctx.side, drawn_cards.len());
                 log_card_effect_draw(
                     ctx.side,
                     &card.name,
@@ -994,6 +1006,10 @@ pub(crate) fn card_trigger_event_system(
                         &deck,
                         &dbs,
                     );
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, *side, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         *side,
                         &pending.source_card,
@@ -1060,6 +1076,10 @@ pub(crate) fn card_trigger_event_system(
                 {
                     let drawn_cards =
                         draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, *source, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         *source,
                         &source_card,
@@ -1107,6 +1127,10 @@ pub(crate) fn card_trigger_event_system(
                 {
                     let drawn_cards =
                         draw_cards_with_names(source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, source, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         source,
                         &source_card,
@@ -1168,6 +1192,10 @@ pub(crate) fn card_trigger_event_system(
                     pending_mut(*side, &mut pending_boosts).next_skill_cost_draw = None;
                     let drawn_cards =
                         draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, *side, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         *side,
                         &source_card,
@@ -1201,6 +1229,10 @@ pub(crate) fn card_trigger_event_system(
                 {
                     let drawn_cards =
                         draw_cards_with_names(*source, draw, &mut hand, &mut piles, &deck, &dbs);
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, *source, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         *source,
                         &source_card,
@@ -1235,6 +1267,10 @@ pub(crate) fn card_trigger_event_system(
                         &deck,
                         &dbs,
                     );
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, scoring_side, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         scoring_side,
                         &source_card,
@@ -1257,6 +1293,10 @@ pub(crate) fn card_trigger_event_system(
                 {
                     let drawn_cards =
                         draw_cards_with_names(*side, draw, &mut hand, &mut piles, &deck, &dbs);
+                    {
+                        let mut writer = messages.p1();
+                        emit_cards_drawn(&mut writer, *side, drawn_cards.len());
+                    }
                     log_card_effect_draw(
                         *side,
                         &source_card,

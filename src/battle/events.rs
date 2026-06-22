@@ -23,6 +23,10 @@ pub enum BattleEvent {
         side: Side,
         card_name: String,
     },
+    CardsDrawn {
+        side: Side,
+        count: usize,
+    },
     SkillUsed {
         side: Side,
         skill_name: String,

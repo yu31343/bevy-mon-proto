@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use std::ops::Range;
 
 use crate::{
     battle::{
@@ -326,11 +327,11 @@ const CARD_DRAW_ANIM_START_SCALE: f32 = 0.55;
 /// 起始旋转弧度（轻微倾斜，落位回正），约 7°。
 const CARD_DRAW_ANIM_START_ROT: f32 = 0.12;
 
-/// 追踪上一帧"展示侧手牌"的阵营与长度，用于检测新增的末尾卡槽。
+/// 追踪上一帧"展示侧手牌"的阵营与快照，用于检测新增的末尾卡槽。
 #[derive(Resource, Default)]
 pub(crate) struct HandDrawAnimTracker {
     last_side: Option<Side>,
-    last_len: usize,
+    last_hand: Vec<CardId>,
 }
 
 /// 挂在正在播放入手动画的 `PlayerCardButton` 上的动画状态。
@@ -373,6 +374,36 @@ fn apply_card_draw_pose(transform: &mut UiTransform, t: f32) {
     transform.rotation = Rot2::radians(CARD_DRAW_ANIM_START_ROT * remain);
 }
 
+fn detect_drawn_card_range(
+    old: &[CardId],
+    current: &[CardId],
+    reported_draw_count: usize,
+) -> Option<Range<usize>> {
+    if current.is_empty() {
+        return None;
+    }
+
+    if reported_draw_count > 0 {
+        let count = reported_draw_count.min(current.len());
+        return Some(current.len() - count..current.len());
+    }
+
+    let mut old_index = 0;
+    let mut matched_current = 0;
+    for card in current {
+        let Some(offset) = old
+            .get(old_index..)
+            .and_then(|remaining| remaining.iter().position(|old_card| old_card == card))
+        else {
+            break;
+        };
+        old_index += offset + 1;
+        matched_current += 1;
+    }
+
+    (matched_current < current.len()).then_some(matched_current..current.len())
+}
+
 /// 进入战斗时重置追踪基线，使开局起手牌也能播放飞入动画。
 pub(crate) fn reset_hand_draw_anim_tracker(
     mut commands: Commands,
@@ -412,6 +443,7 @@ pub(crate) fn reset_hand_draw_anim_tracker(
 /// 不触发整手动画。
 pub(crate) fn animate_hand_card_draw_system(
     time: Res<Time>,
+    mut events: MessageReader<BattleEvent>,
     battle_phase: Res<State<BattlePhase>>,
     hand: Res<Hand>,
     ui_control_side: Res<UiControlSide>,
@@ -439,17 +471,26 @@ pub(crate) fn animate_hand_card_draw_system(
         ui_control_side.0
     };
 
-    let hand_len = match display_side {
-        Side::Player => hand.player.len(),
-        Side::Enemy => hand.enemy.len(),
+    let current_hand: &[CardId] = match display_side {
+        Side::Player => &hand.player,
+        Side::Enemy => &hand.enemy,
     };
 
-    // 仅当展示侧未变（或首次观测）且手牌变长时，末尾新增的槽位才是新摸到的牌。
+    let reported_draw_count = events
+        .read()
+        .filter_map(|event| match event {
+            BattleEvent::CardsDrawn { side, count } if *side == display_side => Some(*count),
+            _ => None,
+        })
+        .sum::<usize>();
+
+    // 仅当展示侧未变（或首次观测）时才检测新摸到的牌；切换展示侧只更新基线。
     let same_or_first = tracker.last_side == Some(display_side) || tracker.last_side.is_none();
-    let new_range =
-        (same_or_first && hand_len > tracker.last_len).then(|| tracker.last_len..hand_len);
+    let new_range = same_or_first
+        .then(|| detect_drawn_card_range(&tracker.last_hand, current_hand, reported_draw_count))
+        .flatten();
     tracker.last_side = Some(display_side);
-    tracker.last_len = hand_len;
+    tracker.last_hand = current_hand.to_vec();
 
     let dt = time.delta_secs();
     for (entity, btn, mut transform, anim) in &mut cards {
@@ -788,7 +829,37 @@ pub(crate) fn tick_hand_card_exit_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::CardId;
     use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn detects_drawn_cards_when_hand_grows() {
+        let old = [CardId::GainAp, CardId::NextAttackBoost];
+        let current = [
+            CardId::GainAp,
+            CardId::NextAttackBoost,
+            CardId::TacticalRefresh,
+            CardId::RotationCover,
+        ];
+
+        assert_eq!(detect_drawn_card_range(&old, &current, 0), Some(2..4));
+    }
+
+    #[test]
+    fn detects_drawn_card_after_discard_with_same_final_len() {
+        let old = [CardId::GainAp, CardId::NextAttackBoost];
+        let current = [CardId::NextAttackBoost, CardId::TacticalRefresh];
+
+        assert_eq!(detect_drawn_card_range(&old, &current, 0), Some(1..2));
+    }
+
+    #[test]
+    fn reported_draw_count_handles_same_card_drawn_back_to_same_slot() {
+        let old = [CardId::GainAp, CardId::NextAttackBoost];
+        let current = [CardId::GainAp, CardId::NextAttackBoost];
+
+        assert_eq!(detect_drawn_card_range(&old, &current, 1), Some(1..2));
+    }
 
     #[test]
     fn reset_hand_draw_anim_tracker_clears_stale_battle_presentation() {

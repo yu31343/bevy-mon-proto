@@ -358,6 +358,10 @@ enum PvpBattleFeedback {
         side: Side,
         card_name: String,
     },
+    CardsDrawn {
+        side: Side,
+        count: usize,
+    },
     SkillUsed {
         side: Side,
         skill_name: String,
@@ -2340,6 +2344,10 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
             side: *side,
             card_name: card_name.clone(),
         },
+        BattleEvent::CardsDrawn { side, count } => PvpBattleFeedback::CardsDrawn {
+            side: *side,
+            count: *count,
+        },
         BattleEvent::SkillUsed {
             side,
             skill_name,
@@ -2407,6 +2415,10 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
         PvpBattleFeedback::CardDiscarded { side, card_name } => BattleEvent::CardDiscarded {
             side: mirror_side(side),
             card_name,
+        },
+        PvpBattleFeedback::CardsDrawn { side, count } => BattleEvent::CardsDrawn {
+            side: mirror_side(side),
+            count,
         },
         PvpBattleFeedback::SkillUsed {
             side,

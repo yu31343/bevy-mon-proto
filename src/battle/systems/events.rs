@@ -158,6 +158,7 @@ pub fn consume_battle_events_system(
             BattleEvent::CardDiscarded { side, card_name } => {
                 format!("{} 弃置了卡牌：{}。", side_text(*side), card_name)
             }
+            BattleEvent::CardsDrawn { .. } => continue,
             BattleEvent::ElementAuraApplied {
                 side,
                 from,
