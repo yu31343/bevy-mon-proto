@@ -2693,13 +2693,16 @@ pub(crate) fn setup_ui_system(
                                 CardGlow { index: idx },
                             ));
                             // 顶行：费用宝石 + 类别色带 + 快捷键
-                            card.spawn((Node {
-                                width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(4.0),
-                                ..default()
-                            },))
+                            card.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(4.0),
+                                    ..default()
+                                },
+                                PlayerCardTopRow { index: idx },
+                            ))
                                 .with_children(|top| {
                                     top.spawn((
                                         Node {
@@ -2782,6 +2785,7 @@ pub(crate) fn setup_ui_system(
                                     ..default()
                                 },
                                 BackgroundColor(theme.gold_divider),
+                                PlayerCardDivider { index: idx },
                             ));
                             card.spawn((
                                 Text::new(""),

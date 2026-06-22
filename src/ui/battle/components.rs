@@ -187,6 +187,16 @@ pub(crate) struct PlayerCardDescText {
 }
 
 #[derive(Component)]
+pub(crate) struct PlayerCardTopRow {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct PlayerCardDivider {
+    pub index: usize,
+}
+
+#[derive(Component)]
 pub(crate) struct DiscardButton;
 
 #[derive(Component)]

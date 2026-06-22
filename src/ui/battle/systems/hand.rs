@@ -21,6 +21,12 @@ const HAND_CARD_FULL_HEIGHT: f32 = 180.0;
 const HAND_CARD_STACK_HEIGHT: f32 = 34.0;
 const HAND_CARD_SELECTED_WIDTH: f32 = 142.0;
 const HAND_CARD_SELECTED_HEIGHT: f32 = 240.0;
+const HAND_CARD_NAME_FONT_SIZE: f32 = 16.0;
+const HAND_CARD_STACK_NAME_FONT_SIZE: f32 = 14.0;
+const HAND_CARD_GLOW_OUTSET: f32 = -4.0;
+const HAND_CARD_GLOW_BORDER: f32 = 3.0;
+const HAND_CARD_GLOW_RADIUS: f32 = 18.0;
+const HAND_CARD_STACK_GLOW_BORDER: f32 = 2.0;
 
 /// AP 足够时可出牌的发光描边——饱和亮金，与暗化禁用环拉开强对比。
 const CARD_PLAYABLE_GLOW: Color = Color::srgba(1.0, 0.86, 0.42, 0.98);
@@ -77,6 +83,7 @@ pub(crate) fn update_player_hand_ui_system(
     mut card_text_q: Query<
         (
             &mut Text,
+            Option<&mut TextFont>,
             Option<&BattleHintText>,
             Option<&PlayerCardHotkeyText>,
             Option<&PlayerCardNameText>,
@@ -91,9 +98,15 @@ pub(crate) fn update_player_hand_ui_system(
         Query<(&PlayerCardHotkeyBadge, &mut Visibility)>,
         Query<(&PlayerCardCostText, &mut Visibility)>,
     )>,
-    mut card_nodes: Query<(&PlayerCardButton, &mut Node, &mut ZIndex)>,
+    mut node_queries: ParamSet<(
+        Query<(&PlayerCardButton, &mut Node, &mut ZIndex)>,
+        Query<(&PlayerCardTopRow, &mut Node)>,
+        Query<(&PlayerCardDivider, &mut Node)>,
+        Query<(&PlayerCardNameText, &mut Node)>,
+        Query<(&PlayerCardDescText, &mut Node)>,
+        Query<(&CardGlow, &mut Node, &mut BorderColor)>,
+    )>,
     mut card_band_q: Query<(&CardCategoryBand, &mut BackgroundColor)>,
-    mut card_glow_q: Query<(&CardGlow, &mut BorderColor)>,
 ) {
     let display_side = if *battle_phase.get() == BattlePhase::Discard
         && pending_discard
@@ -117,7 +130,7 @@ pub(crate) fn update_player_hand_ui_system(
         Side::Enemy => selected.enemy,
     };
 
-    for (meta, mut node, mut z_index) in &mut card_nodes {
+    for (meta, mut node, mut z_index) in &mut node_queries.p0() {
         let has_card = meta.index < active_hand.len();
         node.display = if has_card {
             Display::Flex
@@ -152,12 +165,27 @@ pub(crate) fn update_player_hand_ui_system(
         node.padding = if is_selected || !is_stacked {
             UiRect::px(10.0, 10.0, 12.0, 10.0)
         } else {
-            UiRect::px(8.0, 8.0, 4.0, 8.0)
+            UiRect::px(8.0, 8.0, 6.0, 6.0)
         };
         node.row_gap = if is_selected || !is_stacked {
             Val::Px(4.0)
         } else {
             Val::Px(0.0)
+        };
+        node.justify_content = if is_stacked && !is_selected {
+            JustifyContent::Center
+        } else {
+            JustifyContent::FlexStart
+        };
+        node.align_items = if is_stacked && !is_selected {
+            AlignItems::Center
+        } else {
+            AlignItems::Stretch
+        };
+        node.overflow = if is_stacked && !is_selected {
+            Overflow::clip()
+        } else {
+            Overflow::visible()
         };
         *z_index = ZIndex(if is_selected {
             40
@@ -166,7 +194,7 @@ pub(crate) fn update_player_hand_ui_system(
         });
     }
 
-    for (mut text, is_hint, hotkey, name, cost, desc, cat) in &mut card_text_q {
+    for (mut text, text_font, is_hint, hotkey, name, cost, desc, cat) in &mut card_text_q {
         if is_hint.is_some() {
             let side_label = match display_side {
                 Side::Player => "我方",
@@ -230,6 +258,13 @@ pub(crate) fn update_player_hand_ui_system(
         if hotkey.is_some() {
             text.0 = super::super::helpers::card_hotkey_label(idx).to_string();
         } else if name.is_some() {
+            if let Some(mut font) = text_font {
+                font.font_size = if hand_card_layer(idx) > 0 && active_selected.index != Some(idx) {
+                    HAND_CARD_STACK_NAME_FONT_SIZE
+                } else {
+                    HAND_CARD_NAME_FONT_SIZE
+                };
+            }
             text.0 = card.name.to_string();
         } else if cost.is_some() {
             text.0 = card.cost_ap.to_string();
@@ -238,6 +273,51 @@ pub(crate) fn update_player_hand_ui_system(
         } else if cat.is_some() {
             text.0 = super::super::helpers::card_category_label(card).to_string();
         }
+    }
+
+    for (meta, mut node) in &mut node_queries.p1() {
+        let is_selected = active_selected.index == Some(meta.index);
+        let is_stacked = hand_card_layer(meta.index) > 0;
+        node.display = if meta.index < active_hand.len() && (!is_stacked || is_selected) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    for (meta, mut node) in &mut node_queries.p2() {
+        let is_selected = active_selected.index == Some(meta.index);
+        let is_stacked = hand_card_layer(meta.index) > 0;
+        node.display = if meta.index < active_hand.len() && (!is_stacked || is_selected) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    for (meta, mut node) in &mut node_queries.p3() {
+        let is_selected = active_selected.index == Some(meta.index);
+        let is_stacked = hand_card_layer(meta.index) > 0;
+        node.display = if meta.index < active_hand.len() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        node.width = Val::Percent(100.0);
+        node.overflow = if is_stacked && !is_selected {
+            Overflow::clip()
+        } else {
+            Overflow::visible()
+        };
+    }
+
+    for (meta, mut node) in &mut node_queries.p4() {
+        let is_selected = active_selected.index == Some(meta.index);
+        node.display = if meta.index < active_hand.len() && is_selected {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
 
     for (meta, mut vis) in &mut visibility_queries.p1() {
@@ -288,7 +368,25 @@ pub(crate) fn update_player_hand_ui_system(
         Side::Player => action_points.player,
         Side::Enemy => action_points.enemy,
     };
-    for (glow, mut border) in &mut card_glow_q {
+    for (glow, mut node, mut border) in &mut node_queries.p5() {
+        let is_selected = active_selected.index == Some(glow.index);
+        let is_stacked = hand_card_layer(glow.index) > 0;
+        if is_stacked && !is_selected {
+            node.top = Val::Px(0.0);
+            node.left = Val::Px(0.0);
+            node.right = Val::Px(0.0);
+            node.bottom = Val::Px(0.0);
+            node.border = UiRect::all(Val::Px(HAND_CARD_STACK_GLOW_BORDER));
+            node.border_radius = BorderRadius::all(theme.radius_card);
+        } else {
+            node.top = Val::Px(HAND_CARD_GLOW_OUTSET);
+            node.left = Val::Px(HAND_CARD_GLOW_OUTSET);
+            node.right = Val::Px(HAND_CARD_GLOW_OUTSET);
+            node.bottom = Val::Px(HAND_CARD_GLOW_OUTSET);
+            node.border = UiRect::all(Val::Px(HAND_CARD_GLOW_BORDER));
+            node.border_radius = BorderRadius::all(Val::Px(HAND_CARD_GLOW_RADIUS));
+        }
+
         let lit = glow.index < active_hand.len()
             && dbs
                 .cards
