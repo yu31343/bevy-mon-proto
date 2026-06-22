@@ -5,8 +5,8 @@ use super::roster::bench_display_order;
 use crate::{
     battle::{
         BattleControlMode, BattleEvent, BattleResultNotice, Combatant, ElementAura, EnemyTeam,
-        InBattle, PendingHandDiscard, PlayerTeam, RoundOrder, Shield, Side, SkillCount, SkillList,
-        SkillUses, Stats, StatusBoard, Team, TurnCount, UiControlSide,
+        InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS, RoundOrder, Shield,
+        Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team, TurnCount, UiControlSide,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType},
     game_state::BattlePhase,
@@ -157,6 +157,36 @@ fn current_top_bar_side(
         BattlePhase::EnemyTurn => Some(Side::Enemy),
         BattlePhase::Discard => pending_discard.map(|pending| pending.side),
         _ => None,
+    }
+}
+
+fn round_banner_alpha(fraction: f32) -> f32 {
+    const FADE_IN_END: f32 = 0.16;
+    const FADE_OUT_START: f32 = 0.72;
+    if fraction <= FADE_IN_END {
+        (fraction / FADE_IN_END).clamp(0.0, 1.0)
+    } else if fraction >= FADE_OUT_START {
+        (1.0 - (fraction - FADE_OUT_START) / (1.0 - FADE_OUT_START)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+fn round_banner_scale(fraction: f32) -> f32 {
+    const POP_END: f32 = 0.18;
+    const SETTLE_END: f32 = 0.32;
+    const SHRINK_START: f32 = 0.78;
+    if fraction <= POP_END {
+        let t = fraction / POP_END;
+        0.72 + (1.14 - 0.72) * t
+    } else if fraction <= SETTLE_END {
+        let t = (fraction - POP_END) / (SETTLE_END - POP_END);
+        1.14 + (1.0 - 1.14) * t
+    } else if fraction >= SHRINK_START {
+        let t = (fraction - SHRINK_START) / (1.0 - SHRINK_START);
+        1.0 + (0.88 - 1.0) * t
+    } else {
+        1.0
     }
 }
 
@@ -900,7 +930,9 @@ pub(crate) fn update_active_panel_tokens_system(
 }
 
 pub(crate) fn update_skill_text_system(
+    time: Res<Time>,
     battle_phase: Res<State<BattlePhase>>,
+    turn_count: Res<TurnCount>,
     ui_control_side: Res<crate::battle::UiControlSide>,
     theme: Res<UiTheme>,
     mut text_q: Query<
@@ -908,7 +940,9 @@ pub(crate) fn update_skill_text_system(
             &mut Text,
             Option<&mut TextColor>,
             Option<&mut TextShadow>,
-            Option<&TurnBannerText>,
+            Option<&mut TextFont>,
+            Option<&mut UiTransform>,
+            Option<&mut TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
@@ -958,7 +992,9 @@ pub(crate) fn update_skill_text_system(
         mut text,
         text_color,
         text_shadow,
-        is_turn_banner,
+        text_font,
+        transform,
+        turn_banner,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
@@ -968,20 +1004,61 @@ pub(crate) fn update_skill_text_system(
         enemy_skill_icon,
     ) in &mut text_q
     {
-        if is_turn_banner.is_some() {
-            let (banner_text, outline_color) = match *battle_phase.get() {
-                BattlePhase::PlayerTurn => ("你的回合", Color::srgba(0.05, 0.24, 1.0, 0.95)),
-                BattlePhase::EnemyTurn => ("敌方回合", Color::srgba(1.0, 0.05, 0.04, 0.95)),
-                BattlePhase::Discard => ("弃牌阶段", Color::srgba(0.05, 0.24, 1.0, 0.95)),
-                _ => ("", Color::srgba(0.0, 0.0, 0.0, 0.0)),
-            };
-            text.0 = banner_text.to_string();
-            if let Some(mut text_color) = text_color {
-                text_color.0 = Color::WHITE;
+        if let Some(mut banner) = turn_banner {
+            let phase = *battle_phase.get();
+            if phase == BattlePhase::RoundStart {
+                if banner.round != turn_count.0 {
+                    banner.round = turn_count.0;
+                    banner.elapsed = 0.0;
+                } else {
+                    banner.elapsed += time.delta_secs();
+                }
+
+                let fraction = (banner.elapsed / ROUND_TRANSITION_SECONDS).clamp(0.0, 1.0);
+                let alpha = round_banner_alpha(fraction);
+                text.0 = format!("第 {} 回合", turn_count.0);
+                if let Some(mut font) = text_font {
+                    font.font_size = 88.0;
+                }
+                if let Some(mut color) = text_color {
+                    color.0 = Color::srgba(1.0, 0.92, 0.28, alpha);
+                }
+                if let Some(mut shadow) = text_shadow {
+                    shadow.offset = Vec2::new(5.0, 5.0);
+                    shadow.color = Color::srgba(0.95, 0.10, 0.04, alpha * 0.95);
+                }
+                if let Some(mut transform) = transform {
+                    transform.scale = Vec2::splat(round_banner_scale(fraction));
+                }
+                continue;
             }
-            if let Some(mut text_shadow) = text_shadow {
-                text_shadow.offset = Vec2::new(3.0, 3.0);
-                text_shadow.color = outline_color;
+
+            banner.elapsed = 0.0;
+            let (banner_text, outline_color) = match phase {
+                BattlePhase::PlayerTurn => {
+                    ("你的回合".to_string(), Color::srgba(0.05, 0.24, 1.0, 0.95))
+                }
+                BattlePhase::EnemyTurn => {
+                    ("敌方回合".to_string(), Color::srgba(1.0, 0.05, 0.04, 0.95))
+                }
+                BattlePhase::Discard => {
+                    ("弃牌阶段".to_string(), Color::srgba(0.05, 0.24, 1.0, 0.95))
+                }
+                _ => ("".to_string(), Color::srgba(0.0, 0.0, 0.0, 0.0)),
+            };
+            text.0 = banner_text;
+            if let Some(mut font) = text_font {
+                font.font_size = 46.0;
+            }
+            if let Some(mut color) = text_color {
+                color.0 = Color::WHITE;
+            }
+            if let Some(mut shadow) = text_shadow {
+                shadow.offset = Vec2::new(3.0, 3.0);
+                shadow.color = outline_color;
+            }
+            if let Some(mut transform) = transform {
+                transform.scale = Vec2::ONE;
             }
             continue;
         }

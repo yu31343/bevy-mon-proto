@@ -102,8 +102,11 @@ pub(crate) struct BattlePhaseText;
 #[derive(Component)]
 pub(crate) struct BattleTurnOrderText;
 
-#[derive(Component)]
-pub(crate) struct TurnBannerText;
+#[derive(Component, Default)]
+pub(crate) struct TurnBannerText {
+    pub round: u32,
+    pub elapsed: f32,
+}
 
 #[derive(Component)]
 pub(crate) struct ActionPointsText;

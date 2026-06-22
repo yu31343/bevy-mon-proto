@@ -589,6 +589,23 @@ impl Default for PendingKoResolution {
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnCount(pub u32);
 
+pub const ROUND_TRANSITION_SECONDS: f32 = 1.0;
+
+#[derive(Resource, Debug, Clone)]
+pub struct RoundTransition {
+    pub timer: Timer,
+    pub pending_next_phase: Option<BattlePhase>,
+}
+
+impl Default for RoundTransition {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            pending_next_phase: None,
+        }
+    }
+}
+
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ActionPoints {
     pub player: i32,

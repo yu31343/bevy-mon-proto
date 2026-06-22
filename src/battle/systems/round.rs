@@ -3,10 +3,10 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, CardPiles, CardTurnMemory, Hand,
-        InBattle, PendingBoosts, PendingHandDiscard, PlayerTeam, PvpTurnOrder, RoundOrder,
-        SelectedCards, Side, SkillCount, SkillList, SkillUses, Stats, StructuredBattleLog,
-        TurnContext, TurnCount, UiControlSide, note_round_phase, opposite_side,
-        push_named_action_trace,
+        InBattle, PendingBoosts, PendingHandDiscard, PlayerTeam, PvpTurnOrder,
+        ROUND_TRANSITION_SECONDS, RoundOrder, RoundTransition, SelectedCards, Side, SkillCount,
+        SkillList, SkillUses, Stats, StructuredBattleLog, TurnContext, TurnCount, UiControlSide,
+        note_round_phase, opposite_side, push_named_action_trace,
     },
     console_log::{ConsoleLogCategory, log as console_log},
     data::{BattleDbs, BattleFormulaRules, BattleRules, CardDeck},
@@ -39,6 +39,7 @@ pub(crate) struct RoundStartResources<'w> {
     turn_ctx: ResMut<'w, TurnContext>,
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
+    round_transition: ResMut<'w, RoundTransition>,
     pending_boosts: ResMut<'w, PendingBoosts>,
     card_memory: ResMut<'w, CardTurnMemory>,
     selected: ResMut<'w, SelectedCards>,
@@ -47,6 +48,7 @@ pub(crate) struct RoundStartResources<'w> {
 }
 
 pub fn round_start_system(
+    time: Res<Time>,
     card_deck: Res<CardDeck>,
     query: Query<&Stats>,
     mut skill_uses_q: Query<(&SkillList, &SkillCount, &mut SkillUses), With<InBattle>>,
@@ -67,11 +69,21 @@ pub fn round_start_system(
     let turn_ctx = &mut runtime.turn_ctx;
     let turn_count = &mut runtime.turn_count;
     let round_order = &mut runtime.round_order;
+    let round_transition = &mut runtime.round_transition;
     let pending_boosts = &mut runtime.pending_boosts;
     let card_memory = &mut runtime.card_memory;
     let selected = &mut runtime.selected;
     let structured_log = &mut runtime.structured_log;
     let action_trace = &mut runtime.action_trace;
+
+    if let Some(next) = round_transition.pending_next_phase {
+        round_transition.timer.tick(time.delta());
+        if round_transition.timer.is_finished() {
+            round_transition.pending_next_phase = None;
+            next_phase.set(next);
+        }
+        return;
+    }
 
     if card_deck.0.is_empty() {
         return;
@@ -216,10 +228,12 @@ pub fn round_start_system(
         format!("敌方抽牌 [{}]；{}", enemy_cards, ap_snapshot),
     );
 
-    next_phase.set(match round_order.first {
+    let first_phase = match round_order.first {
         Side::Player => BattlePhase::PlayerTurn,
         Side::Enemy => BattlePhase::EnemyTurn,
-    });
+    };
+    round_transition.pending_next_phase = Some(first_phase);
+    round_transition.timer = Timer::from_seconds(ROUND_TRANSITION_SECONDS, TimerMode::Once);
 }
 
 pub fn sync_ui_control_side_system(

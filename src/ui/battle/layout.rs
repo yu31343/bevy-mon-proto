@@ -2173,7 +2173,8 @@ pub(crate) fn setup_ui_system(
                         offset: Vec2::new(2.0, 2.0),
                         color: Color::srgba(0.0, 0.0, 0.0, 0.60),
                     },
-                    TurnBannerText,
+                    UiTransform::default(),
+                    TurnBannerText::default(),
                 ));
                 banner.spawn((
                     Text::new(""),

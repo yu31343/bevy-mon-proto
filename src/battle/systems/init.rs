@@ -4,9 +4,9 @@ use crate::{
     battle::{
         AccuracyRng, ActionPoints, ActionTrace, BattleActionCooldown, BattleControlMode, BattleLog,
         BattleResult, BattleShuffleSeed, CardPiles, CardTurnMemory, Combatant, ElementAura, Hand,
-        InBattle, PendingBoosts, ReplayEventLog, RoundOrder, SelectedCards, Shield, Side,
-        SkillCount, SkillList, SkillUses, Stats, StatusBoard, StructuredBattleLog, TurnContext,
-        TurnCount, UiControlSide, clear_runtime_battle_logs, clear_turn_context,
+        InBattle, PendingBoosts, ReplayEventLog, RoundOrder, RoundTransition, SelectedCards,
+        Shield, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, StructuredBattleLog,
+        TurnContext, TurnCount, UiControlSide, clear_runtime_battle_logs, clear_turn_context,
         new_battle_shuffle_seed, note_structured_phase, push_battle_line,
     },
     console_log::{ConsoleLogCategory, log as console_log},
@@ -41,6 +41,7 @@ pub(crate) struct InitBattleRuntime<'w> {
     result: ResMut<'w, BattleResult>,
     turn_count: ResMut<'w, TurnCount>,
     round_order: ResMut<'w, RoundOrder>,
+    round_transition: ResMut<'w, RoundTransition>,
     accuracy_rng: ResMut<'w, AccuracyRng>,
     next_game_state: ResMut<'w, NextState<GameState>>,
 }
@@ -68,6 +69,7 @@ pub fn init_battle_system(
     let result = &mut runtime.result;
     let turn_count = &mut runtime.turn_count;
     let round_order = &mut runtime.round_order;
+    let round_transition = &mut runtime.round_transition;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let next_game_state = &mut runtime.next_game_state;
 
@@ -87,6 +89,7 @@ pub fn init_battle_system(
     result.export_status = None;
     turn_count.0 = 0;
     **round_order = RoundOrder::default();
+    **round_transition = RoundTransition::default();
     accuracy_rng.reset(0xA5A5_1F2D_D3C4_B7E9);
     commands.insert_resource(crate::pvp::PvpPendingLocalIntent::default());
     commands.insert_resource(crate::pvp::PvpLastRemoteIntentSeq::default());

@@ -193,9 +193,17 @@ pub(crate) fn battle_action_cooldown_visual_system(
     //      Debug 双控模式下玩家可控制敌方，此时敌方回合不视为对方回合，不变灰。
     //   2. 本地玩家自己刚用完技能，处于 2 秒行动冷却。
     // 对方使用技能只会启动对方侧冷却，不会让本地按钮变灰。
-    let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
+    let phase = *battle_phase.get();
+    let opponent_turn = phase == BattlePhase::EnemyTurn
         && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
-    let locked = opponent_turn || !cooldown.ready(Side::Player);
+    let non_controllable_phase = matches!(
+        phase,
+        BattlePhase::Init
+            | BattlePhase::RoundStart
+            | BattlePhase::CheckEnd
+            | BattlePhase::DeathResolve
+    );
+    let locked = non_controllable_phase || opponent_turn || !cooldown.ready(Side::Player);
     let should_restore = *was_locked && !locked;
     if !locked && !should_restore {
         return;

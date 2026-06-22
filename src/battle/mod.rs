@@ -27,6 +27,7 @@ impl Plugin for BattlePlugin {
             .init_resource::<BattleResultNotice>()
             .init_resource::<PendingKoResolution>()
             .init_resource::<TurnCount>()
+            .init_resource::<RoundTransition>()
             .init_resource::<ActionPoints>()
             .init_resource::<RoundOrder>()
             .init_resource::<AccuracyRng>()
