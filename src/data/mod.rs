@@ -465,14 +465,18 @@ mod tests {
 
         assert_eq!(easy.player_info_visibility, AiPlayerInfoVisibility::None);
         assert_eq!(easy.search_depth, 1);
+        assert_eq!(easy.max_attack_actions_per_turn, Some(1));
         assert_eq!(
             normal.player_info_visibility,
             AiPlayerInfoVisibility::Public
         );
+        assert_eq!(normal.max_attack_actions_per_turn, Some(2));
         assert_eq!(hard.search_depth, 2);
         assert_eq!(hard.player_info_visibility, AiPlayerInfoVisibility::Public);
+        assert_eq!(hard.max_attack_actions_per_turn, None);
         assert_eq!(expert.search_depth, 3);
         assert_eq!(expert.player_info_visibility, AiPlayerInfoVisibility::Full);
+        assert_eq!(expert.max_attack_actions_per_turn, None);
         assert!(expert.weights.player_threat > hard.weights.player_threat);
     }
 }
@@ -823,6 +827,8 @@ pub struct EnemyAiConfig {
     #[serde(default = "default_ai_random_score_jitter")]
     pub random_score_jitter: f32,
     #[serde(default)]
+    pub max_attack_actions_per_turn: Option<u8>,
+    #[serde(default)]
     pub weights: EnemyAiWeights,
 }
 
@@ -835,6 +841,7 @@ impl Default for EnemyAiConfig {
             top_candidates: default_ai_top_candidates(),
             switch_score_threshold: default_ai_switch_score_threshold(),
             random_score_jitter: default_ai_random_score_jitter(),
+            max_attack_actions_per_turn: None,
             weights: EnemyAiWeights::default(),
         }
     }
@@ -1200,6 +1207,12 @@ fn validate_ai_config(config: &EnemyAiConfig, field_prefix: &str) -> Result<(), 
     if !config.random_score_jitter.is_finite() || config.random_score_jitter < 0.0 {
         return Err(format!(
             "{field_prefix}.{:?}.random_score_jitter 必须是 >= 0.0 的有限数",
+            config.difficulty
+        ));
+    }
+    if config.max_attack_actions_per_turn == Some(0) {
+        return Err(format!(
+            "{field_prefix}.{:?}.max_attack_actions_per_turn 必须为 None 或 >= 1",
             config.difficulty
         ));
     }

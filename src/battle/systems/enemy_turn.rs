@@ -25,14 +25,72 @@ use super::{
 };
 
 use crate::battle::ai::{
-    EnemyAiContext, EnemyPlannedAction, EnemySwitchCandidate, ScoredEnemySkill, best_action_value,
-    build_player_threat_context, choose_enemy_discard_card, choose_enemy_plan_candidates,
-    choose_enemy_skill_with_threat, enemy_skill_candidate_report, enemy_switch_candidate_report,
-    score_card_for_skill,
+    EnemyAiContext, EnemyAiPlan, EnemyAiSkillKind, EnemyPlannedAction, EnemySwitchCandidate,
+    ScoredEnemySkill, best_action_value, build_player_threat_context, choose_enemy_discard_card,
+    choose_enemy_plan_candidates, choose_enemy_skill_with_threat, enemy_skill_candidate_report,
+    enemy_switch_candidate_report, score_card_for_skill,
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
 const ENEMY_AI_ACTION_DELAY: f32 = 0.0;
+
+#[derive(Default)]
+pub(crate) struct EnemyAiTurnState {
+    delay: f32,
+    started: bool,
+    switched_this_turn: bool,
+    attacks_used: u8,
+}
+
+impl EnemyAiTurnState {
+    fn reset(&mut self) {
+        self.delay = 0.0;
+        self.started = false;
+        self.switched_this_turn = false;
+        self.attacks_used = 0;
+    }
+}
+
+fn attack_limit_reached(state: &EnemyAiTurnState, config: &EnemyAiConfig) -> bool {
+    config
+        .max_attack_actions_per_turn
+        .is_some_and(|max| state.attacks_used >= max)
+}
+
+fn plan_uses_attack(plan: &EnemyAiPlan) -> bool {
+    match &plan.action {
+        EnemyPlannedAction::UseSkill(skill) | EnemyPlannedAction::UseCardForSkill { skill, .. } => {
+            skill.kind == EnemyAiSkillKind::Attack
+        }
+        _ => false,
+    }
+}
+
+fn choose_enemy_plan_with_jitter(
+    plans: &[EnemyAiPlan],
+    random_score_jitter: f32,
+    rng: &mut crate::battle::AccuracyRng,
+) -> Option<EnemyAiPlan> {
+    if random_score_jitter <= 0.0 || plans.len() <= 1 {
+        return plans.first().cloned();
+    }
+
+    plans
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, plan)| {
+            let jitter = (rng.next_unit_f32() * 2.0 - 1.0) * random_score_jitter;
+            (index, plan, jitter)
+        })
+        .max_by(|(index_a, plan_a, jitter_a), (index_b, plan_b, jitter_b)| {
+            (plan_a.score + *jitter_a)
+                .partial_cmp(&(plan_b.score + *jitter_b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| index_b.cmp(index_a))
+        })
+        .map(|(_, plan, _)| plan)
+}
 
 #[derive(SystemParam)]
 pub(crate) struct EnemyTurnLogs<'w> {
@@ -96,7 +154,7 @@ fn finalize_enemy_turn(
         ),
         With<InBattle>,
     >,
-    ai_state: &mut (f32, bool, bool),
+    ai_state: &mut EnemyAiTurnState,
 ) {
     let team_entities = enemy_team.0.combatants.clone();
     for entity in team_entities {
@@ -126,9 +184,7 @@ fn finalize_enemy_turn(
         acting_side: Side::Enemy,
     });
     turn_ctx.enemy_ended = true;
-    ai_state.0 = 0.0;
-    ai_state.1 = false;
-    ai_state.2 = false;
+    ai_state.reset();
     if let Ok((_, _, stats, _, _, _, _, _, _)) = exec_query.get(e_entity) {
         if stats.hp <= 0 {
             super::clamp_ap_to_max(Side::Enemy, battle_rules, action_points);
@@ -1049,7 +1105,7 @@ pub fn enemy_turn_input_system(
             format!("敌方主动结束回合；剩余AP={}", action_points.enemy),
         );
         turn_ctx.enemy_end_requested = false;
-        let mut ai_state = (0.0_f32, false, false);
+        let mut ai_state = EnemyAiTurnState::default();
         finalize_enemy_turn(
             e_entity,
             enemy_team,
@@ -1080,7 +1136,7 @@ pub fn enemy_turn_ai_system(
     mut runtime: EnemyTurnRuntime,
     mut logs: EnemyTurnLogs,
     mut writers: EnemyTurnEventWriters,
-    mut ai_state: Local<(f32, bool, bool)>,
+    mut ai_state: Local<EnemyAiTurnState>,
     mut exec_query: Query<
         (
             Entity,
@@ -1101,9 +1157,7 @@ pub fn enemy_turn_ai_system(
         *battle_mode,
         BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
     ) {
-        ai_state.0 = 0.0;
-        ai_state.1 = false;
-        ai_state.2 = false;
+        ai_state.reset();
         return;
     }
 
@@ -1123,21 +1177,19 @@ pub fn enemy_turn_ai_system(
     let next_game_state = &mut runtime.next_game_state;
     let ai_config = &runtime.ai_config;
 
-    if ai_state.0 > 0.0 {
-        ai_state.0 = (ai_state.0 - time.delta_secs()).max(0.0);
+    if ai_state.delay > 0.0 {
+        ai_state.delay = (ai_state.delay - time.delta_secs()).max(0.0);
         return;
     }
 
     if turn_ctx.enemy_ended {
-        ai_state.0 = 0.0;
-        ai_state.1 = false;
-        ai_state.2 = false;
+        ai_state.reset();
         return;
     }
 
-    if !ai_state.1 {
-        ai_state.1 = true;
-        ai_state.0 = ENEMY_AI_INITIAL_DELAY;
+    if !ai_state.started {
+        ai_state.started = true;
+        ai_state.delay = ENEMY_AI_INITIAL_DELAY;
         return;
     }
 
@@ -1188,7 +1240,7 @@ pub fn enemy_turn_ai_system(
                 action_points.enemy
             ),
         );
-        ai_state.0 = ENEMY_AI_ACTION_DELAY;
+        ai_state.delay = ENEMY_AI_ACTION_DELAY;
         return;
     }
 
@@ -1262,9 +1314,7 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-            ai_state.0 = 0.0;
-            ai_state.1 = false;
-            ai_state.2 = false;
+            ai_state.reset();
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
@@ -1374,12 +1424,15 @@ pub fn enemy_turn_ai_system(
             console_log(
                 ConsoleLogCategory::AiDetail,
                 format!(
-                    "[round {}][enemy] AI配置：难度={:?}；搜索深度={}；候选数={}；换人阈值={:.2}；权重={:?}",
+                    "[round {}][enemy] AI配置：难度={:?}；搜索深度={}；候选数={}；换人阈值={:.2}；随机扰动={:.2}；攻击上限={:?}；已攻击={}；权重={:?}",
                     logs.turn_count.0,
                     ai_config.difficulty,
                     ai_config.search_depth,
                     ai_config.top_candidates,
                     ai_config.switch_score_threshold,
+                    ai_config.random_score_jitter,
+                    ai_config.max_attack_actions_per_turn,
+                    ai_state.attacks_used,
                     ai_config.weights
                 ),
             );
@@ -1520,7 +1573,7 @@ pub fn enemy_turn_ai_system(
             &current_switch_candidate,
             enemy_switch_candidates.as_slice(),
             current_best_action,
-            ai_state.2,
+            ai_state.switched_this_turn,
             ai_config.switch_score_threshold,
             player_threat,
         ));
@@ -1537,7 +1590,7 @@ pub fn enemy_turn_ai_system(
                         action_points.enemy,
                         &dbs,
                         &ai_ctx,
-                        ai_state.2,
+                        ai_state.switched_this_turn,
                         ai_config.switch_score_threshold,
                         &ai_config.weights,
                         player_threat.as_ref()
@@ -1545,7 +1598,7 @@ pub fn enemy_turn_ai_system(
                 ),
             );
         }
-        let plan_candidates = choose_enemy_plan_candidates(
+        let mut plan_candidates = choose_enemy_plan_candidates(
             &hand.enemy,
             action_points.enemy,
             &e_skills_arr,
@@ -1558,7 +1611,14 @@ pub fn enemy_turn_ai_system(
             ai_config.search_depth,
             ai_config.top_candidates,
         );
-        let planned_action = plan_candidates.first().cloned();
+        if attack_limit_reached(&ai_state, ai_config) {
+            plan_candidates.retain(|plan| !plan_uses_attack(plan));
+        }
+        let planned_action = choose_enemy_plan_with_jitter(
+            &plan_candidates,
+            ai_config.random_score_jitter,
+            accuracy_rng,
+        );
         if log_enabled(ConsoleLogCategory::AiDetail) {
             console_log(
                 ConsoleLogCategory::AiDetail,
@@ -1690,7 +1750,7 @@ pub fn enemy_turn_ai_system(
                         name, chosen_switch.score, action_points.enemy
                     ),
                 );
-                ai_state.2 = true;
+                ai_state.switched_this_turn = true;
                 acted_this_update = true;
                 break;
             }
@@ -2089,6 +2149,10 @@ pub fn enemy_turn_ai_system(
                 };
             }
 
+            if chosen_skill.kind == EnemyAiSkillKind::Attack {
+                ai_state.attacks_used = ai_state.attacks_used.saturating_add(1);
+            }
+
             let should_go_check_end = exec_query
                 .get(p_entity)
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
@@ -2099,9 +2163,7 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or(false);
             if should_go_check_end {
                 pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-                ai_state.0 = 0.0;
-                ai_state.1 = false;
-                ai_state.2 = false;
+                ai_state.reset();
                 next_phase.set(BattlePhase::CheckEnd);
                 return;
             }
@@ -2238,7 +2300,7 @@ pub fn enemy_turn_ai_system(
     }
 
     if acted_this_update {
-        ai_state.0 = ENEMY_AI_ACTION_DELAY;
+        ai_state.delay = ENEMY_AI_ACTION_DELAY;
         return;
     }
 

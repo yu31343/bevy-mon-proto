@@ -171,6 +171,39 @@ fn apply_skill_weight(mut scored: ScoredEnemySkill, weights: &EnemyAiWeights) ->
     scored
 }
 
+fn apply_offensive_pressure(
+    mut scored: ScoredEnemySkill,
+    skill: &SkillDef,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+    weights: &EnemyAiWeights,
+) -> ScoredEnemySkill {
+    if scored.kind != EnemyAiSkillKind::Attack {
+        return scored;
+    }
+
+    let attack_value = estimate_attack_value(skill, ctx, dbs).max(0.0);
+    let target_hp = ctx.player_hp.max(0) as f32;
+    if attack_value <= 0.0 || target_hp <= 0.0 {
+        return scored;
+    }
+
+    if attack_value >= target_hp {
+        let overkill = (attack_value - target_hp).min(16.0);
+        scored.score +=
+            (24.0 + overkill * 0.5) * weights.kill_bonus * weights.attack_value.max(0.25);
+    } else {
+        let pressure_ratio = (attack_value / target_hp).clamp(0.0, 1.0);
+        let aggression = (weights.attack_value - 1.0).max(0.0);
+        scored.score += pressure_ratio * 14.0 * aggression;
+        if ctx.player_hp <= 12 {
+            scored.score += attack_value.min(12.0) * 0.35 * weights.kill_bonus;
+        }
+    }
+
+    scored
+}
+
 pub(crate) fn build_player_threat_context(
     skill_ids: [SkillId; 4],
     skill_count: usize,
@@ -1779,6 +1812,9 @@ pub(crate) fn best_action_value(
     action_ctx.enemy_def_stage = candidate.def_stage;
     action_ctx.enemy_spd_stage = candidate.spd_stage;
     action_ctx.enemy_acc_stage = candidate.acc_stage;
+    action_ctx.enemy_element = candidate.element;
+    action_ctx.enemy_attached_auras = candidate.attached_auras;
+    action_ctx.enemy_status_ids = candidate.status_ids.clone();
     action_ctx.enemy_has_aura = candidate.has_aura;
     action_ctx.enemy_has_cleansable_debuff = candidate.has_cleansable_debuff;
 
@@ -1942,6 +1978,13 @@ fn apply_player_threat_adjustment(
     let danger_pressure = (incoming_threat / enemy_hp).clamp(0.0, 2.0);
     let player_response = player_response_value(player_threat, dbs);
     let threat_weight = weights.player_threat;
+    let defensive_threat_scale = if lethal_threat {
+        1.0
+    } else if danger_pressure >= 0.65 {
+        0.75
+    } else {
+        0.35
+    };
 
     match scored.kind {
         EnemyAiSkillKind::Attack | EnemyAiSkillKind::Debuff => {
@@ -1958,7 +2001,10 @@ fn apply_player_threat_adjustment(
             if let Some(SkillEffect::Heal { amount }) = primary_effect(&skill.effect) {
                 let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0) as f32;
                 let effective_heal = (*amount as f32).min(missing_hp + incoming_threat * 0.35);
-                scored.score += effective_heal * (0.6 + danger_pressure * 0.5) * threat_weight;
+                scored.score += effective_heal
+                    * (0.6 + danger_pressure * 0.5)
+                    * threat_weight
+                    * defensive_threat_scale;
             }
             if lethal_threat {
                 scored.score += 22.0 * threat_weight;
@@ -1973,7 +2019,10 @@ fn apply_player_threat_adjustment(
                     ctx.max_shield_hp_ratio,
                 ) as f32;
                 let prevented = effective_amount.min(incoming_threat.max(0.0));
-                scored.score += prevented * (0.9 + danger_pressure * 0.4) * threat_weight;
+                scored.score += prevented
+                    * (0.9 + danger_pressure * 0.4)
+                    * threat_weight
+                    * defensive_threat_scale;
             }
             if lethal_threat {
                 scored.score += 18.0 * threat_weight;
@@ -2003,6 +2052,34 @@ fn status_pressure(status_ids: &[String], has_aura: bool, has_cleansable_debuff:
     damaging_statuses * 8.0
         + if has_aura { 4.0 } else { 0.0 }
         + if has_cleansable_debuff { 6.0 } else { 0.0 }
+}
+
+fn best_switch_reaction_plan_value(
+    candidate: &EnemySwitchCandidate,
+    current_ap: i32,
+    ctx: &EnemyAiContext,
+    dbs: &BattleDbs,
+) -> f32 {
+    if candidate.hp <= 0 || current_ap <= 0 {
+        return 0.0;
+    }
+
+    candidate
+        .skill_ids
+        .iter()
+        .copied()
+        .take(candidate.skill_count)
+        .filter_map(|skill_id| dbs.skills.get(&skill_id))
+        .filter(|skill| current_ap >= skill.cost_ap)
+        .filter_map(|skill| skill.element.map(|element| (skill, element)))
+        .map(|(skill, element)| {
+            let immediate = estimate_reaction_value(element, ctx, dbs).max(0.0);
+            let attack_value =
+                estimate_attack_value_with_atk(skill, candidate.atk, ctx, dbs).max(0.0);
+            let setup = estimate_aura_setup_value(element, attack_value.max(1.0), ctx, dbs);
+            immediate + setup * 0.75
+        })
+        .fold(0.0, f32::max)
 }
 
 fn score_switch_candidate(
@@ -2049,6 +2126,16 @@ fn score_switch_candidate(
     );
     let candidate_action = best_action_value(candidate, current_ap - 1, dbs, ctx, weights);
     let action_gain = (candidate_action - current_best_action) * 0.42;
+    let current_reaction_plan = best_switch_reaction_plan_value(current, current_ap, ctx, dbs);
+    let candidate_reaction_plan =
+        best_switch_reaction_plan_value(candidate, current_ap - 1, ctx, dbs);
+    let reaction_gain = (candidate_reaction_plan - current_reaction_plan * 0.6).max(0.0)
+        * (0.85 + weights.reaction_value * 0.55);
+    let reaction_commit_bonus = if candidate_reaction_plan > 0.0 && weights.reaction_value > 1.0 {
+        (weights.reaction_value - 1.0) * 10.0
+    } else {
+        0.0
+    };
     let current_threat = player_threat_score(current, player_threat, dbs);
     let candidate_threat = player_threat_score(candidate, player_threat, dbs);
     let threat_relief = (current_threat - candidate_threat) * 0.55 * weights.player_threat;
@@ -2067,6 +2154,8 @@ fn score_switch_candidate(
         + shield_gain
         + pressure_relief
         + action_gain
+        + reaction_gain
+        + reaction_commit_bonus
         + threat_relief
         + danger_bonus
         - key_reserve_penalty
@@ -2134,7 +2223,9 @@ fn enemy_skill_candidates(
             let skill = dbs.skills.get(&skill_id)?;
             let has_uses = ctx.skill_uses_remaining.get(slot).copied().unwrap_or(0) > 0;
             (has_uses && current_ap >= skill.cost_ap).then(|| {
-                apply_skill_weight(score_enemy_skill(slot, skill_id, skill, ctx, dbs), weights)
+                let scored =
+                    apply_skill_weight(score_enemy_skill(slot, skill_id, skill, ctx, dbs), weights);
+                apply_offensive_pressure(scored, skill, ctx, dbs, weights)
             })
         })
         .collect()
@@ -2315,6 +2406,7 @@ pub(crate) fn enemy_skill_candidate_report(
             }
             let scored =
                 apply_skill_weight(score_enemy_skill(slot, skill_id, skill, ctx, dbs), weights);
+            let scored = apply_offensive_pressure(scored, skill, ctx, dbs, weights);
             format!(
                 "槽位{}：{}；cost={}；{}",
                 slot,
@@ -2363,6 +2455,8 @@ pub(crate) fn enemy_switch_candidate_report(
                 );
             }
             let candidate_action = best_action_value(candidate, current_ap - 1, dbs, ctx, weights);
+            let reaction_plan =
+                best_switch_reaction_plan_value(candidate, current_ap - 1, ctx, dbs);
             let current_threat = player_threat_score(current, player_threat, dbs);
             let candidate_threat = player_threat_score(candidate, player_threat, dbs);
             let score = score_switch_candidate(
@@ -2376,7 +2470,7 @@ pub(crate) fn enemy_switch_candidate_report(
                 player_threat,
             ) * weights.switch_value;
             format!(
-                "#{} HP {}/{} 护盾 {} ATK {} DEF {} 元素 {:?}；出场行动={:.2}；玩家威胁 {:.2}->{:.2}；换人评分={:.2}；{}",
+                "#{} HP {}/{} 护盾 {} ATK {} DEF {} 元素 {:?}；出场行动={:.2}；反应潜力={:.2}；玩家威胁 {:.2}->{:.2}；换人评分={:.2}；{}",
                 candidate.index + 1,
                 candidate.hp,
                 candidate.max_hp,
@@ -2385,6 +2479,7 @@ pub(crate) fn enemy_switch_candidate_report(
                 candidate.def,
                 candidate.element,
                 candidate_action,
+                reaction_plan,
                 current_threat,
                 candidate_threat,
                 score,
@@ -2657,6 +2752,93 @@ mod tests {
         .expect("post-switch action value should make an active striker worth switching to");
 
         assert_eq!(chosen.index, 2);
+    }
+
+    #[test]
+    fn enemy_switch_values_reaction_setup_candidate() {
+        let fire_attack = SkillDef {
+            id: SkillId::FirePunch,
+            name: "火拳".to_string(),
+            category: SkillCategory::ElementAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 26,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Fire),
+            base_accuracy: None,
+            uses_per_turn: None,
+        };
+        let water_attack = SkillDef {
+            id: SkillId::WaterBlade,
+            name: "水刃".to_string(),
+            category: SkillCategory::ElementAttack,
+            cost_ap: 1,
+            effect: SkillEffect::Attack {
+                power: 8,
+                lifesteal_ratio: None,
+                ignore_shield: false,
+            },
+            element: Some(ElementType::Water),
+            base_accuracy: None,
+            uses_per_turn: None,
+        };
+        let dbs = BattleDbs {
+            skills: HashMap::from([
+                (fire_attack.id, fire_attack),
+                (water_attack.id, water_attack),
+            ]),
+            cards: HashMap::new(),
+            elements: ElementDb::from_default_config(),
+            statuses: StatusDb::default(),
+            reactions: ReactionDb {
+                reactions: vec![ReactionDef {
+                    id: "vaporize".to_string(),
+                    name: "蒸发".to_string(),
+                    required_elements: vec![ElementType::Fire, ElementType::Water],
+                    required_statuses: Vec::new(),
+                    trigger_element: ElementType::Water,
+                    fixed_damage: 18,
+                    heal_attacker: 0,
+                    apply_statuses: Vec::new(),
+                    clear_statuses: Vec::new(),
+                    clear_elements: Vec::new(),
+                    preserve_current_auras: false,
+                    aura_results: Vec::new(),
+                }],
+            },
+        };
+        let mut ctx = test_ai_context(Vec::new());
+        ctx.player_hp = 60;
+        ctx.player_def = 5;
+        ctx.target_attached_auras = [Some(ElementType::Fire), None];
+        let mut current = test_switch_candidate(0, 34, 40, 0, ElementType::Fire);
+        current.skill_ids = [SkillId::FirePunch; 4];
+        let mut reactor = test_switch_candidate(1, 34, 40, 0, ElementType::Water);
+        reactor.skill_ids = [SkillId::WaterBlade; 4];
+        let weights = EnemyAiWeights {
+            reaction_value: 1.65,
+            switch_value: 1.05,
+            ..EnemyAiWeights::default()
+        };
+        let current_best = best_action_value(&current, 3, &dbs, &ctx, &weights);
+
+        let chosen = choose_enemy_switch(
+            &current,
+            &[current.clone(), reactor],
+            current_best,
+            3,
+            &dbs,
+            &ctx,
+            false,
+            10.0,
+            &weights,
+            None,
+        )
+        .expect("reaction-aware high difficulty AI should switch into the reaction attacker");
+
+        assert_eq!(chosen.index, 1);
     }
 
     #[test]
