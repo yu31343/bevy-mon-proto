@@ -27,10 +27,10 @@ pub(crate) use roster::{
 };
 pub(crate) use text::{
     hide_result_ui_system, update_action_points_text_system, update_active_panel_text_system,
-    update_active_panel_tokens_system, update_ap_gems_system, update_battle_action_text_system,
-    update_element_icon_system, update_latency_indicator_system, update_phase_text_system,
-    update_portrait_images_system, update_result_ui_system, update_skill_text_system,
-    update_skill_uses_system,
+    update_active_panel_tokens_system, update_ai_difficulty_top_bar_system, update_ap_gems_system,
+    update_battle_action_text_system, update_element_icon_system, update_latency_indicator_system,
+    update_phase_text_system, update_portrait_images_system, update_result_ui_system,
+    update_skill_text_system, update_skill_uses_system,
 };
 pub(crate) use visuals::{
     action_dial_visual_state_system, battle_action_cooldown_visual_system,

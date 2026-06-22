@@ -155,6 +155,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         Update,
         (
             update_phase_text_system,
+            update_ai_difficulty_top_bar_system,
             update_active_panel_text_system,
             update_element_icon_system,
             update_portrait_images_system,

@@ -465,12 +465,12 @@ mod tests {
 
         assert_eq!(easy.player_info_visibility, AiPlayerInfoVisibility::None);
         assert_eq!(easy.search_depth, 1);
-        assert_eq!(easy.max_attack_actions_per_turn, Some(1));
+        assert_eq!(easy.max_attack_actions_per_turn, Some(2));
         assert_eq!(
             normal.player_info_visibility,
             AiPlayerInfoVisibility::Public
         );
-        assert_eq!(normal.max_attack_actions_per_turn, Some(2));
+        assert_eq!(normal.max_attack_actions_per_turn, Some(3));
         assert_eq!(hard.search_depth, 2);
         assert_eq!(hard.player_info_visibility, AiPlayerInfoVisibility::Public);
         assert_eq!(hard.max_attack_actions_per_turn, None);

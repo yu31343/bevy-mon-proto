@@ -100,6 +100,9 @@ pub(crate) struct ResultInviteRejectButton;
 pub(crate) struct BattlePhaseText;
 
 #[derive(Component)]
+pub(crate) struct AiDifficultyTopBarText;
+
+#[derive(Component)]
 pub(crate) struct BattleTurnOrderText;
 
 #[derive(Component, Default)]

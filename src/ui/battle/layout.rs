@@ -1262,6 +1262,25 @@ pub(crate) fn setup_ui_system(
                 theme.panel_shadow(),
             ))
             .with_children(|bar| {
+                bar.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(16.0),
+                        justify_content: JustifyContent::FlexStart,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|difficulty| {
+                    difficulty.spawn((
+                        Text::new("AI难度：普通"),
+                        meta_font.clone(),
+                        TextColor(theme.text_secondary),
+                        theme.title_text_shadow(),
+                        Visibility::Hidden,
+                        AiDifficultyTopBarText,
+                    ));
+                });
                 bar.spawn((Node {
                     width: Val::Px(176.0),
                     justify_content: JustifyContent::FlexEnd,

@@ -8,9 +8,10 @@ use crate::{
         InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS, RoundOrder, Shield,
         Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team, TurnCount, UiControlSide,
     },
-    data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType},
+    data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType, EnemyAiConfig},
     game_state::BattlePhase,
     pvp,
+    team_selection::ai_difficulty_label,
 };
 
 fn element_icon_path(element: ElementType) -> &'static str {
@@ -220,6 +221,29 @@ pub(crate) fn update_phase_text_system(
             top_bar_side_label(round_order.second),
             marker(round_order.second)
         );
+    }
+}
+
+pub(crate) fn update_ai_difficulty_top_bar_system(
+    battle_mode: Res<BattleControlMode>,
+    ai_config: Option<Res<EnemyAiConfig>>,
+    mut text_q: Query<(&mut Text, &mut Visibility), With<AiDifficultyTopBarText>>,
+) {
+    let visible = *battle_mode == BattleControlMode::PlayerVsAi;
+    let label = ai_config
+        .as_deref()
+        .map(|config| ai_difficulty_label(config.difficulty))
+        .unwrap_or("普通");
+
+    for (mut text, mut visibility) in &mut text_q {
+        *visibility = if visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if visible {
+            text.0 = format!("AI难度：{label}");
+        }
     }
 }
 
