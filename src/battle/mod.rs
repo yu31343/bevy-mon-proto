@@ -103,7 +103,11 @@ impl Plugin for BattlePlugin {
                 systems::start_battle_action_cooldown_system,
                 systems::consume_battle_events_system,
             )
-                .chain(),
+                .chain()
+                .after(systems::player_turn_input_system)
+                .after(systems::hand_discard_phase_system)
+                .after(systems::enemy_turn_ai_system)
+                .after(systems::enemy_turn_input_system),
         );
     }
 }

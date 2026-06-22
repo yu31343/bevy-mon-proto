@@ -2237,7 +2237,7 @@ pub fn enemy_turn_ai_system(
         }
     }
 
-    if acted_this_update && action_points.enemy > 0 {
+    if acted_this_update {
         ai_state.0 = ENEMY_AI_ACTION_DELAY;
         return;
     }
