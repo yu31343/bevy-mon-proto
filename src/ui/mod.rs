@@ -65,6 +65,7 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
         .init_resource::<PendingSwitchOverlayToggle>()
         .init_resource::<RetreatConfirmState>()
         .init_resource::<BattleHintOverlayState>()
+        .init_resource::<CheatMenuState>()
         .init_resource::<HandFullEndTurnWarning>()
         .init_resource::<HandDrawAnimTracker>()
         .init_resource::<HandExitAnimTracker>()
@@ -100,6 +101,11 @@ pub(crate) fn register_legacy_battle_ui(app: &mut App) {
                 update_battle_hint_overlay_system
                     .run_if(in_state(GameState::Battle))
                     .after(button_battle_hint_system),
+                button_toggle_cheat_menu_system.run_if(in_state(GameState::Battle)),
+                button_cheat_action_system.run_if(in_state(GameState::Battle)),
+                update_cheat_menu_visibility_system
+                    .run_if(in_state(GameState::Battle))
+                    .after(button_toggle_cheat_menu_system),
                 apply_pending_switch_overlay_toggle_system
                     .run_if(in_state(GameState::Battle))
                     .after(button_toggle_switch_overlay_system)

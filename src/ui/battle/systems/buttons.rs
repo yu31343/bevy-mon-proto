@@ -4,10 +4,11 @@ use crate::{
     battle::{
         ActionPoints, BattleControlMode, BattleEvent, BattleResultAction, EnemyTeam, Hand,
         InBattle, PendingBattleResultAction, PendingHandDiscard, PendingTacticalDiscard,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard,
-        TurnContext, UiControlSide, transfer_status_by_id,
+        PlayerTeam, SelectedCards, Shield, Side, SkillCount, SkillList, SkillUses, Stats,
+        StatusBoard, StatusInstance, StatusStageModifier, TurnContext, TurnCount, UiControlSide,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
-    data::{BattleDbs, BattleRules, MapBattleContext},
+    data::{AttributeType, BattleDbs, BattleRules, MapBattleContext, StatusCategory},
     game_state::{BattlePhase, GameState},
     map::components::CurrentMap,
     pvp,
@@ -25,6 +26,11 @@ pub(crate) struct RetreatConfirmState {
 
 #[derive(Resource, Default)]
 pub(crate) struct BattleHintOverlayState {
+    pub open: bool,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct CheatMenuState {
     pub open: bool,
 }
 
@@ -986,6 +992,257 @@ pub(crate) fn update_battle_hint_overlay_system(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+pub(crate) fn button_toggle_cheat_menu_system(
+    battle_mode: Res<BattleControlMode>,
+    mut state: ResMut<CheatMenuState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, With<CheatModeButton>)>,
+) {
+    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+        state.open = false;
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = !state.open;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_cheat_menu_visibility_system(
+    battle_mode: Res<BattleControlMode>,
+    mut state: ResMut<CheatMenuState>,
+    mut buttons: Query<&mut Node, With<CheatModeButton>>,
+    mut menus: Query<&mut Node, (With<CheatMenuRoot>, Without<CheatModeButton>)>,
+) {
+    let debug_mode = *battle_mode == BattleControlMode::DebugPlayerControlsBoth;
+    if !debug_mode {
+        state.open = false;
+    }
+
+    for mut node in &mut buttons {
+        node.display = if debug_mode {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut node in &mut menus {
+        node.display = if debug_mode && state.open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
+fn active_entity_for_side(
+    side: Side,
+    player_team: Option<&PlayerTeam>,
+    enemy_team: Option<&EnemyTeam>,
+) -> Option<Entity> {
+    match side {
+        Side::Player => player_team.and_then(|team| team.0.active_combatant()),
+        Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
+    }
+}
+
+fn hand_for_side(side: Side, hand: &mut Hand) -> &mut Vec<crate::data::CardId> {
+    match side {
+        Side::Player => &mut hand.player,
+        Side::Enemy => &mut hand.enemy,
+    }
+}
+
+fn ap_for_side(side: Side, action_points: &mut ActionPoints) -> &mut i32 {
+    match side {
+        Side::Player => &mut action_points.player,
+        Side::Enemy => &mut action_points.enemy,
+    }
+}
+
+fn attribute_label(attribute: AttributeType) -> &'static str {
+    match attribute {
+        AttributeType::Atk => "Atk",
+        AttributeType::Def => "Def",
+        AttributeType::Spd => "Spd",
+        AttributeType::Acc => "Acc",
+    }
+}
+
+fn apply_cheat_stage_modifier(
+    stats: &mut Stats,
+    status_board: &mut StatusBoard,
+    attribute: AttributeType,
+    amount: i32,
+    current_round: u32,
+) {
+    let id = format!(
+        "debug_cheat_{}",
+        attribute_label(attribute).to_ascii_lowercase()
+    );
+    if let Some(entry) = status_board.entries.iter_mut().find(|entry| entry.id == id) {
+        if let Some(modifier) = entry
+            .stage_modifiers
+            .iter_mut()
+            .find(|modifier| modifier.attribute == attribute)
+        {
+            modifier.amount += amount;
+        } else {
+            entry
+                .stage_modifiers
+                .push(StatusStageModifier { attribute, amount });
+        }
+        entry.remaining_turns = 99;
+        entry.applied_round = current_round;
+    } else {
+        status_board.entries.push(StatusInstance {
+            id,
+            name: format!("作弊{}", attribute_label(attribute)),
+            category: StatusCategory::Buff,
+            remaining_turns: 99,
+            applied_round: current_round,
+            source_side: None,
+            tick_timing: None,
+            stage_modifiers: vec![StatusStageModifier { attribute, amount }],
+            fixed_damage_on_tick: 0,
+            heal_on_tick: 0,
+            heal_taken_multiplier: None,
+            evade_charges: 0,
+        });
+    }
+    recalculate_stage_modifiers(stats, status_board);
+}
+
+pub(crate) fn button_cheat_action_system(
+    battle_mode: Res<BattleControlMode>,
+    ui_control_side: Res<UiControlSide>,
+    mut interaction_query: Query<
+        (&Interaction, &CheatActionButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut action_points: ResMut<ActionPoints>,
+    mut hand: ResMut<Hand>,
+    battle_rules: Res<BattleRules>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    turn_count: Res<TurnCount>,
+    mut combat_query: Query<(&mut Stats, &mut Shield, &mut StatusBoard), With<InBattle>>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
+) {
+    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+        return;
+    }
+
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let side = ui_control_side.0;
+        match button.action {
+            CheatAction::GainAp(amount) => {
+                *ap_for_side(side, &mut action_points) += amount;
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：AP增加",
+                });
+            }
+            CheatAction::GainCard(card_id) => {
+                hand_for_side(side, &mut hand).push(card_id);
+                event_writer.write(BattleEvent::CardsDrawn { side, count: 1 });
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：获得技能牌",
+                });
+            }
+            CheatAction::Heal(amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((mut stats, _, _)) = combat_query.get_mut(active_entity) else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let before = stats.hp;
+                stats.hp = (stats.hp + amount).clamp(0, stats.max_hp);
+                let healed = (stats.hp - before).max(0);
+                if healed > 0 {
+                    event_writer.write(BattleEvent::Healed {
+                        side,
+                        amount: healed,
+                    });
+                }
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：回复生命",
+                });
+            }
+            CheatAction::GainShield(amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((stats, mut shield, _)) = combat_query.get_mut(active_entity) else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let gained =
+                    shield.gain_capped(amount, stats.max_hp, battle_rules.max_shield_hp_ratio);
+                if gained > 0 {
+                    event_writer.write(BattleEvent::ShieldGained {
+                        side,
+                        amount: gained,
+                    });
+                }
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：获得护盾",
+                });
+            }
+            CheatAction::RaiseStage(attribute, amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((mut stats, _, mut status_board)) = combat_query.get_mut(active_entity)
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                apply_cheat_stage_modifier(
+                    &mut stats,
+                    &mut status_board,
+                    attribute,
+                    amount,
+                    turn_count.0,
+                );
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：属性提升",
+                });
+            }
+        }
+        return;
     }
 }
 

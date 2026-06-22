@@ -2,7 +2,10 @@ use bevy::prelude::*;
 
 use super::{components::*, resources::UiFontHandle, theme::UiTheme};
 
-use crate::battle::Side;
+use crate::{
+    battle::Side,
+    data::{AttributeType, CardId},
+};
 
 const BATTLE_BACKGROUND_IMAGE: &str = "images/icons/background/bg1.png";
 const BATTLE_BACKGROUND_SIZE: Vec2 = Vec2::new(1920.0, 1080.0);
@@ -227,6 +230,36 @@ fn spawn_stat_chip_compact<ValueMarker, StageBadgeMarker, StageTextMarker>(
                     badge.spawn((Text::new(""), font, TextColor(Color::WHITE), text_marker));
                 });
             }
+        });
+}
+
+fn spawn_cheat_action_button(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    font: TextFont,
+    label: &'static str,
+    action: CheatAction,
+) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                min_width: Val::Px(92.0),
+                min_height: Val::Px(32.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(theme.radius_button),
+                ..default()
+            },
+            BackgroundColor(theme.button_idle),
+            BorderColor::all(theme.button_border_idle),
+            theme.button_shadow(),
+            CheatActionButton { action },
+        ))
+        .with_children(|button| {
+            button.spawn((Text::new(label), font, TextColor(theme.text_primary)));
         });
 }
 
@@ -1984,6 +2017,163 @@ pub(crate) fn setup_ui_system(
                         color: Color::srgba(0.0, 0.0, 0.0, 0.35),
                     },
                 ));
+            });
+
+            // === Debug Cheat Menu ===
+            root.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(24.0),
+                    bottom: Val::Px(16.0),
+                    width: Val::Px(136.0),
+                    min_height: Val::Px(36.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_button),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
+                CheatModeButton,
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("作弊模式"),
+                    meta_font.clone(),
+                    TextColor(theme.text_primary),
+                    TextShadow {
+                        offset: Vec2::new(1.0, 1.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.35),
+                    },
+                ));
+            });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(24.0),
+                    bottom: Val::Px(226.0),
+                    width: Val::Px(430.0),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    border: border_1,
+                    border_radius: BorderRadius::all(radius_panel),
+                    display: Display::None,
+                    ..default()
+                },
+                theme.lacquer_panel_bg(),
+                BorderColor::all(theme.gold),
+                theme.panel_shadow(),
+                ZIndex(76),
+                CheatMenuRoot,
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new("当前控制侧"),
+                    meta_font.clone(),
+                    TextColor(theme.gold_bright),
+                    theme.title_text_shadow(),
+                ));
+                panel
+                    .spawn((Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(8.0),
+                        row_gap: Val::Px(8.0),
+                        ..default()
+                    },))
+                    .with_children(|buttons| {
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "+1 AP",
+                            CheatAction::GainAp(1),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "+3 AP",
+                            CheatAction::GainAp(3),
+                        );
+                        for (label, card_id) in [
+                            ("元素预热", CardId::ElementWarmup),
+                            ("反应催化", CardId::ReactionCatalyst),
+                            ("扩散气流", CardId::WindSpreadFlow),
+                            ("反应读秒", CardId::ReactionCountdown),
+                            ("行动充能", CardId::GainAp),
+                            ("战术整理", CardId::TacticalRefresh),
+                            ("蓄势待发", CardId::ReadyToAct),
+                            ("乘胜追击", CardId::Pursuit),
+                            ("坚如磐石", CardId::NextShieldBoost),
+                            ("应急护幕", CardId::EmergencyShield),
+                            ("以守为攻", CardId::GuardCounter),
+                            ("稳固阵线", CardId::FortifiedLine),
+                            ("净化转化", CardId::CleanseConversion),
+                            ("火力全开", CardId::NextAttackBoost),
+                            ("良药苦口", CardId::NextHealBoost),
+                            ("连携指令", CardId::TeamCommand),
+                            ("轮换掩护", CardId::RotationCover),
+                        ] {
+                            spawn_cheat_action_button(
+                                buttons,
+                                &theme,
+                                small_font.clone(),
+                                label,
+                                CheatAction::GainCard(card_id),
+                            );
+                        }
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "回复20",
+                            CheatAction::Heal(20),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "护盾10",
+                            CheatAction::GainShield(10),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "Atk+1",
+                            CheatAction::RaiseStage(AttributeType::Atk, 1),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "Def+1",
+                            CheatAction::RaiseStage(AttributeType::Def, 1),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "Spd+1",
+                            CheatAction::RaiseStage(AttributeType::Spd, 1),
+                        );
+                        spawn_cheat_action_button(
+                            buttons,
+                            &theme,
+                            small_font.clone(),
+                            "Acc+1",
+                            CheatAction::RaiseStage(AttributeType::Acc, 1),
+                        );
+                    });
             });
 
             root.spawn((

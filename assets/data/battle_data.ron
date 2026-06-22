@@ -81,7 +81,7 @@
                     healing_value: 1.0,
                     shield_value: 0.85,
                     status_value: 0.95,
-                    reaction_value: 1.0,
+                    reaction_value: 0.7,
                     switch_value: 1.0,
                     card_value: 1.0,
                     discard_value: 1.0,

@@ -2,10 +2,11 @@ use bevy::prelude::*;
 
 use super::super::components::{
     ActionDialButton, ActionDialHighlight, BattleHintButton, BattleHintCloseButton, BattleUiNotice,
-    DiscardButton, EndTurnButton, HandFullHintRoot, HandFullHintText, PlayerCardButton,
-    ResultInviteAcceptButton, ResultInviteRejectButton, ResultRematchButton, ResultRestartButton,
-    ResultReturnButton, RetreatButton, RetreatConfirmCancelButton, RetreatConfirmProceedButton,
-    SkillButton, SkillButtonExhausted, SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
+    CheatActionButton, CheatModeButton, DiscardButton, EndTurnButton, HandFullHintRoot,
+    HandFullHintText, PlayerCardButton, ResultInviteAcceptButton, ResultInviteRejectButton,
+    ResultRematchButton, ResultRestartButton, ResultReturnButton, RetreatButton,
+    RetreatConfirmCancelButton, RetreatConfirmProceedButton, SkillButton, SkillButtonExhausted,
+    SwitchCancelButton, SwitchMonsterButton, TeamMemberButton,
 };
 use super::super::fx::{ButtonClickFlash, SkillFlashTimer};
 use super::super::theme::UiTheme;
@@ -100,6 +101,8 @@ pub(crate) fn button_visual_state_system(
                 With<ResultRematchButton>,
                 With<ResultInviteAcceptButton>,
                 With<ResultInviteRejectButton>,
+                With<CheatModeButton>,
+                With<CheatActionButton>,
             )>,
             Without<ButtonClickFlash>,
             Without<SkillButton>,

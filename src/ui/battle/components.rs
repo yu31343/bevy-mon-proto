@@ -127,6 +127,26 @@ pub(crate) struct BattleHintOverlayRoot;
 pub(crate) struct BattleHintText;
 
 #[derive(Component)]
+pub(crate) struct CheatModeButton;
+
+#[derive(Component)]
+pub(crate) struct CheatMenuRoot;
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct CheatActionButton {
+    pub action: CheatAction,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CheatAction {
+    GainAp(i32),
+    GainCard(crate::data::CardId),
+    Heal(i32),
+    GainShield(i32),
+    RaiseStage(crate::data::AttributeType, i32),
+}
+
+#[derive(Component)]
 pub(crate) struct BattleActionText {
     pub remaining: f32,
 }

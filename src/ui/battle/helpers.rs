@@ -395,6 +395,7 @@ pub(crate) fn is_status_line_visible(status_id: &str, category: StatusCategory) 
     category != StatusCategory::Aura
         && !status_id.starts_with("stage_shift_")
         && !status_id.starts_with("card_stage_")
+        && !status_id.starts_with("debug_cheat_")
 }
 
 #[allow(dead_code)]
