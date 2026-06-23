@@ -3,16 +3,16 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
-        BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        PendingKoResolution, PendingTacticalDiscard, RoundOrder, Shield, Side, SkillCount,
-        SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
-        next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        BattleResult, BattleStatusEvent, CardPiles, Combatant, ElementAura, Hand, InBattle,
+        PendingBoosts, PendingKoResolution, PendingTacticalDiscard, RoundOrder, Shield, Side,
+        SkillCount, SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext,
+        TurnCount, next_phase_after_side_end, note_action_phase, push_named_action_trace,
         push_turn_action_trace, transfer_status_by_id,
     },
     console_log::{ConsoleLogCategory, log as console_log, log_enabled},
     data::{
         AiDifficulty, AiPlayerInfoVisibility, BattleDbs, BattleRules, CardDef, CardEffect,
-        EnemyAiConfig, StatusCategory,
+        EnemyAiConfig, EnemyAiPolicyFallback, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
     ui::battle::{components::BattleUiNotice, systems::HandFullEndTurnWarning},
@@ -25,10 +25,13 @@ use super::{
 };
 
 use crate::battle::ai::{
-    EnemyAiContext, EnemyAiPlan, EnemyAiSkillKind, EnemyPlannedAction, EnemySwitchCandidate,
-    ScoredEnemySkill, best_action_value, build_player_threat_context, choose_enemy_discard_card,
+    AiCombatantObservation, AiDecisionLog, AiDecisionSample, AiDecisionSource, AiObservation,
+    AiPolicyRuntime, AiSideObservation, EnemyAiContext, EnemyAiPlan, EnemyAiSkillKind,
+    EnemyPlannedAction, EnemySwitchCandidate, ScoredEnemySkill, best_action_value,
+    build_action_features, build_player_threat_context, choose_enemy_discard_card,
     choose_enemy_plan_candidates, choose_enemy_skill_with_threat, enemy_skill_candidate_report,
-    enemy_switch_candidate_report, score_card_for_skill,
+    enemy_switch_candidate_report, score_candidates, score_card_for_skill,
+    should_collect_decision_samples,
 };
 
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
@@ -66,13 +69,46 @@ fn plan_uses_attack(plan: &EnemyAiPlan) -> bool {
     }
 }
 
+fn end_turn_plan_index(plans: &[EnemyAiPlan]) -> Option<usize> {
+    plans
+        .iter()
+        .position(|plan| matches!(plan.action, EnemyPlannedAction::EndTurn))
+}
+
+fn build_combatant_observation(
+    combatant: &Combatant,
+    stats: &Stats,
+    shield: &Shield,
+    aura: &ElementAura,
+    statuses: &crate::battle::StatusBoard,
+) -> AiCombatantObservation {
+    AiCombatantObservation {
+        hp: stats.hp,
+        max_hp: stats.max_hp,
+        shield: shield.0,
+        atk: stats.atk,
+        def: stats.def,
+        atk_stage: stats.atk_stage,
+        def_stage: stats.def_stage,
+        spd_stage: stats.spd_stage,
+        acc_stage: stats.acc_stage,
+        element: combatant.element,
+        attached_auras: aura.slots,
+        status_ids: statuses
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect(),
+    }
+}
+
 fn choose_enemy_plan_with_jitter(
     plans: &[EnemyAiPlan],
     random_score_jitter: f32,
     rng: &mut crate::battle::AccuracyRng,
-) -> Option<EnemyAiPlan> {
+) -> Option<(usize, EnemyAiPlan)> {
     if random_score_jitter <= 0.0 || plans.len() <= 1 {
-        return plans.first().cloned();
+        return plans.first().cloned().map(|plan| (0, plan));
     }
 
     plans
@@ -89,7 +125,7 @@ fn choose_enemy_plan_with_jitter(
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| index_b.cmp(index_a))
         })
-        .map(|(_, plan, _)| plan)
+        .map(|(index, plan, _)| (index, plan))
 }
 
 #[derive(SystemParam)]
@@ -118,12 +154,15 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
+    card_piles: Res<'w, CardPiles>,
     player_team: Res<'w, crate::battle::PlayerTeam>,
     enemy_team: ResMut<'w, crate::battle::EnemyTeam>,
     battle_log: ResMut<'w, BattleLog>,
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     ai_config: Res<'w, EnemyAiConfig>,
+    ai_policy_runtime: ResMut<'w, AiPolicyRuntime>,
+    ai_decision_log: ResMut<'w, AiDecisionLog>,
 }
 
 fn finalize_enemy_turn(
@@ -1182,12 +1221,15 @@ pub fn enemy_turn_ai_system(
     let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
+    let card_piles = &runtime.card_piles;
     let player_team = &runtime.player_team;
     let enemy_team = &mut runtime.enemy_team;
     let battle_log = &mut runtime.battle_log;
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
     let ai_config = &runtime.ai_config;
+    let ai_policy_runtime = &mut runtime.ai_policy_runtime;
+    let ai_decision_log = &mut runtime.ai_decision_log;
 
     if ai_state.delay > 0.0 {
         ai_state.delay = (ai_state.delay - time.delta_secs()).max(0.0);
@@ -1628,11 +1670,121 @@ pub fn enemy_turn_ai_system(
         if attack_limit_reached(&ai_state, ai_config) {
             plan_candidates.retain(|plan| !plan_uses_attack(plan));
         }
-        let planned_action = choose_enemy_plan_with_jitter(
-            &plan_candidates,
-            ai_config.random_score_jitter,
-            accuracy_rng,
-        );
+        if let Some(limit) = ai_config.max_policy_candidates {
+            plan_candidates.truncate(limit);
+        }
+        let player_alive_count = player_team
+            .0
+            .combatants
+            .iter()
+            .copied()
+            .filter(|entity| {
+                exec_query
+                    .get(*entity)
+                    .map(|(_, _, stats, _, _, _, _, _, _)| stats.hp > 0)
+                    .unwrap_or(false)
+            })
+            .count();
+        let enemy_alive_count = enemy_switch_candidates
+            .iter()
+            .filter(|candidate| candidate.hp > 0)
+            .count();
+        let observation = AiObservation {
+            round: logs.turn_count.0,
+            battle_seed: card_piles.shuffle_seed,
+            difficulty: ai_config.difficulty,
+            enemy: AiSideObservation {
+                active_index: enemy_team.0.active_index,
+                alive_count: enemy_alive_count,
+                member_count: enemy_team.0.combatants.len(),
+                ap: action_points.enemy,
+                active: build_combatant_observation(
+                    e_combatant,
+                    e_stats,
+                    e_shield,
+                    e_aura,
+                    e_statuses,
+                ),
+            },
+            player: AiSideObservation {
+                active_index: player_team.0.active_index,
+                alive_count: player_alive_count,
+                member_count: player_team.0.combatants.len(),
+                ap: action_points.player,
+                active: build_combatant_observation(
+                    p_combatant,
+                    p_stats,
+                    p_shield,
+                    p_aura,
+                    p_statuses,
+                ),
+            },
+            enemy_hand: hand.enemy.clone(),
+            player_hand_count: hand.player.len(),
+            player_hand: matches!(
+                ai_config.player_info_visibility,
+                AiPlayerInfoVisibility::Full
+            )
+            .then(|| hand.player.clone()),
+            enemy_skill_uses_remaining: e_skill_uses,
+        };
+        let action_features = build_action_features(&plan_candidates, &hand.enemy);
+        let model_selection =
+            score_candidates(ai_config, ai_policy_runtime, &observation, &action_features);
+        let (planned_index, planned_action, decision_source, model_scores) =
+            if let Some(selection) = model_selection {
+                (
+                    Some(selection.index),
+                    plan_candidates.get(selection.index).cloned(),
+                    AiDecisionSource::ModelRanker,
+                    Some(selection.scores),
+                )
+            } else if ai_config.policy_mode == crate::data::EnemyAiPolicyMode::ModelRanker
+                && ai_config.policy_fallback == EnemyAiPolicyFallback::EndTurn
+                && let Some(index) = end_turn_plan_index(&plan_candidates)
+            {
+                (
+                    Some(index),
+                    plan_candidates.get(index).cloned(),
+                    AiDecisionSource::Fallback,
+                    None,
+                )
+            } else {
+                let chosen = choose_enemy_plan_with_jitter(
+                    &plan_candidates,
+                    ai_config.random_score_jitter,
+                    accuracy_rng,
+                );
+                let source = if ai_config.policy_mode == crate::data::EnemyAiPolicyMode::ModelRanker
+                {
+                    AiDecisionSource::Fallback
+                } else {
+                    AiDecisionSource::Heuristic
+                };
+                match chosen {
+                    Some((index, plan)) => (Some(index), Some(plan), source, None),
+                    None => (None, None, source, None),
+                }
+            };
+        if should_collect_decision_samples(ai_config)
+            && let Some(chosen_index) = planned_index
+        {
+            ai_decision_log.record(AiDecisionSample {
+                seq: 0,
+                round: logs.turn_count.0,
+                battle_seed: card_piles.shuffle_seed,
+                difficulty: ai_config.difficulty,
+                policy_mode: ai_config.policy_mode,
+                decision_source,
+                observation: observation.clone(),
+                candidates: action_features.clone(),
+                heuristic_scores: plan_candidates.iter().map(|plan| plan.score).collect(),
+                model_scores: model_scores.clone(),
+                chosen_index,
+                outcome: None,
+                reward: None,
+            });
+        }
         if log_enabled(ConsoleLogCategory::AiDetail) {
             console_log(
                 ConsoleLogCategory::AiDetail,
@@ -1652,6 +1804,22 @@ pub fn enemy_turn_ai_system(
                         .join(" | ")
                 ),
             );
+            if let Some(scores) = model_scores.as_ref() {
+                console_log(
+                    ConsoleLogCategory::AiDetail,
+                    format!(
+                        "[round {}][enemy] ML排序：来源={:?}；选择={:?}；分数={:?}",
+                        logs.turn_count.0, decision_source, planned_index, scores
+                    ),
+                );
+            } else if decision_source == AiDecisionSource::Fallback
+                && let Some(error) = ai_policy_runtime.last_error()
+            {
+                console_log(
+                    ConsoleLogCategory::AiDetail,
+                    format!("[round {}][enemy] ML排序回退：{}", logs.turn_count.0, error),
+                );
+            }
         }
 
         let planned_card_skill = match planned_action.as_ref().map(|plan| &plan.action) {

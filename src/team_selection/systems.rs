@@ -4,16 +4,20 @@ use rand::seq::SliceRandom;
 use crate::{
     battle::BattleControlMode,
     console_log::{ConsoleLogCategory, log as console_log},
-    data::{BattleRules, EnemyAiPresets, MapBattleContext, MonsterPool, TeamSelections},
+    data::{
+        BattleRules, EnemyAiPolicyMode, EnemyAiPresets, MapBattleContext, MonsterPool,
+        TeamSelections,
+    },
     game_state::GameState,
     pvp::{PvpConnection, PvpIncomingIntents, PvpStatus, PvpTeamState, submit_local_team},
     team_selection::{
         AiDifficultyButton, AiDifficultyButtonText, AiDifficultySelectorRoot,
-        AiDifficultySummaryText, BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        AiDifficultySummaryText, AiPolicyButton, AiPolicyButtonText, AiPolicySummaryText,
+        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
-        SelectedAiDifficulty, SelectionCountText, SelectionEntryMode, SelectionInstructionsText,
-        SelectionOrderText, SelectionStage, SelectionState, SelectionTitleText,
-        ai_difficulty_description, ai_difficulty_label,
+        SelectedAiDifficulty, SelectedAiPolicy, SelectionCountText, SelectionEntryMode,
+        SelectionInstructionsText, SelectionOrderText, SelectionStage, SelectionState,
+        SelectionTitleText, ai_difficulty_description, ai_difficulty_label, ai_policy_label,
     },
     ui::battle::theme::UiTheme,
 };
@@ -74,6 +78,24 @@ pub fn button_select_ai_difficulty_system(
     }
 }
 
+pub fn button_select_ai_policy_system(
+    mut interaction_query: Query<
+        (&Interaction, &AiPolicyButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    entry_mode: Res<SelectionEntryMode>,
+    mut selected_policy: ResMut<SelectedAiPolicy>,
+) {
+    if *entry_mode != SelectionEntryMode::VsAi {
+        return;
+    }
+    for (interaction, button) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            selected_policy.mode = button.mode;
+        }
+    }
+}
+
 /// System to handle confirm button click.
 pub fn button_confirm_selection_system(
     mut interaction_query: Query<
@@ -89,6 +111,7 @@ pub fn button_confirm_selection_system(
     monster_pool: Res<MonsterPool>,
     rules: Res<BattleRules>,
     selected_ai: Res<SelectedAiDifficulty>,
+    selected_policy: Res<SelectedAiPolicy>,
     ai_presets: Res<EnemyAiPresets>,
     mut map_battle_context: ResMut<MapBattleContext>,
     mut commands: Commands,
@@ -149,9 +172,13 @@ pub fn button_confirm_selection_system(
                     ConsoleLogCategory::Selection,
                     format!("AI难度：{}", ai_difficulty_label(selected_ai.difficulty)),
                 );
+                console_log(
+                    ConsoleLogCategory::Selection,
+                    format!("AI策略：{}", ai_policy_label(selected_policy.mode)),
+                );
                 console_log(ConsoleLogCategory::Selection, "================");
 
-                commands.insert_resource(selected_ai.config(&ai_presets));
+                commands.insert_resource(selected_ai.config(&ai_presets, *selected_policy));
                 commands.insert_resource(BattleControlMode::PlayerVsAi);
                 commands.insert_resource(TeamSelections {
                     player_indices: selection_state.selected_indices.clone(),
@@ -432,6 +459,7 @@ pub fn update_selection_ui_system(
 pub fn update_ai_difficulty_ui_system(
     entry_mode: Res<SelectionEntryMode>,
     selected_ai: Res<SelectedAiDifficulty>,
+    selected_policy: Res<SelectedAiPolicy>,
     ai_presets: Res<EnemyAiPresets>,
     theme: Res<UiTheme>,
     mut root_query: Query<&mut Visibility, With<AiDifficultySelectorRoot>>,
@@ -452,6 +480,33 @@ pub fn update_ai_difficulty_ui_system(
         &mut Text,
         (
             With<AiDifficultySummaryText>,
+            Without<AiDifficultyButtonText>,
+            Without<AiPolicyButtonText>,
+            Without<AiPolicySummaryText>,
+        ),
+    >,
+    mut policy_button_query: Query<
+        (
+            &Interaction,
+            &AiPolicyButton,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        (With<Button>, Without<AiDifficultyButton>),
+    >,
+    mut policy_text_query: Query<
+        (&AiPolicyButtonText, &mut Text),
+        (
+            Without<AiDifficultySummaryText>,
+            Without<AiDifficultyButtonText>,
+            Without<AiPolicySummaryText>,
+        ),
+    >,
+    mut policy_summary_query: Query<
+        &mut Text,
+        (
+            With<AiPolicySummaryText>,
+            Without<AiDifficultySummaryText>,
             Without<AiDifficultyButtonText>,
         ),
     >,
@@ -488,7 +543,7 @@ pub fn update_ai_difficulty_ui_system(
     }
 
     for mut text in &mut summary_query {
-        let config = selected_ai.config(&ai_presets);
+        let config = selected_ai.base_config(&ai_presets);
         **text = format!(
             "当前：{} — {} 深度={}；候选={}；信息={:?}",
             ai_difficulty_label(selected_ai.difficulty),
@@ -496,6 +551,40 @@ pub fn update_ai_difficulty_ui_system(
             config.search_depth,
             config.top_candidates,
             config.player_info_visibility
+        );
+    }
+
+    for (interaction, button, mut bg, mut border) in &mut policy_button_query {
+        let selected = button.mode == selected_policy.mode;
+        if selected {
+            *bg = BackgroundColor(Color::srgb(0.18, 0.42, 0.74));
+            *border = BorderColor::all(Color::srgb(0.45, 0.72, 1.0));
+        } else if *interaction == Interaction::None {
+            *bg = BackgroundColor(theme.button_idle);
+            *border = BorderColor::all(theme.button_border_idle);
+        }
+    }
+
+    for (button_text, mut text) in &mut policy_text_query {
+        **text = if button_text.mode == selected_policy.mode {
+            format!("✓ {}", ai_policy_label(button_text.mode))
+        } else {
+            ai_policy_label(button_text.mode).to_string()
+        };
+    }
+
+    for mut text in &mut policy_summary_query {
+        let mut config = selected_ai.base_config(&ai_presets);
+        selected_policy.apply_to_config(&mut config);
+        **text = format!(
+            "策略：{}；样本={}；模型={}",
+            ai_policy_label(selected_policy.mode),
+            if config.export_decision_samples {
+                "开"
+            } else {
+                "关"
+            },
+            config.policy_model_path.as_deref().unwrap_or("无")
         );
     }
 }
@@ -517,4 +606,8 @@ pub fn reset_selected_ai_difficulty_system(
     ai_presets: Res<EnemyAiPresets>,
 ) {
     selected_ai.difficulty = ai_presets.default_difficulty;
+}
+
+pub fn reset_selected_ai_policy_system(mut selected_policy: ResMut<SelectedAiPolicy>) {
+    selected_policy.mode = EnemyAiPolicyMode::Heuristic;
 }

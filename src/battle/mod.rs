@@ -27,6 +27,8 @@ impl Plugin for BattlePlugin {
             .init_resource::<BattleResult>()
             .init_resource::<BattlePerformanceStats>()
             .init_resource::<BattlePerformanceReport>()
+            .init_resource::<ai::AiDecisionLog>()
+            .init_resource::<ai::AiPolicyRuntime>()
             .init_resource::<PendingBattleResultAction>()
             .init_resource::<BattleResultNotice>()
             .init_resource::<PendingKoResolution>()

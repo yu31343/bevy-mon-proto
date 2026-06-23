@@ -1,0 +1,13 @@
+(
+    bias: 0.0,
+    heuristic_score_weight: 1.0,
+    estimated_value_weight: 0.0,
+    use_card_for_skill_weight: 0.0,
+    use_skill_weight: 0.0,
+    switch_weight: 0.0,
+    immediate_card_weight: 0.0,
+    discard_weight: 0.0,
+    end_turn_weight: 0.0,
+    low_enemy_hp_weight: 0.0,
+    low_player_hp_weight: 0.0,
+)

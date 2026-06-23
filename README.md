@@ -184,6 +184,42 @@ Vs AI 模式下，敌方 AI 使用“评分启发式 + 轻量行动规划”的�
 | Hard | Public | 2 | 6 | 14.0 | 更深规划，增强卡牌、反应、换人和玩家威胁评分。 |
 | Expert | Full | 3 | 8 | 10.0 | 可使用完整玩家信息投影，决策更激进也更会防守。 |
 
+AI 预设还支持机器学习接入模式：
+
+- `policy_mode: Heuristic`：默认行为，只使用当前启发式规划。
+- `policy_mode: CollectOnly`：行为不变，但战斗结束时导出 AI 决策样本。
+- `policy_mode: ModelRanker`：读取 `policy_model_path` 指向的 RON 线性排序模型，对合法候选行动重排序；模型缺失或异常时按 `policy_fallback` 回退。
+- `policy_mode: SelfPlayTraining`：预留给批量自对战入口；当前等价于采集训练样本。
+
+Vs AI 队伍选择界面可直接切换“启发式 / 采样 / 模型”策略；模型策略默认读取 `assets/data/ai_ranker_default.ron`，采样和模型策略都会自动导出决策样本。
+
+采样与训练的最小流程：
+
+```ron
+policy_mode: CollectOnly,
+export_decision_samples: true,
+decision_sample_export_dir: "battle_logs/ai_decisions",
+```
+
+打一局 Vs AI 后会生成 `.ron` 和 `.jsonl` 样本。训练轻量排序模型：
+
+```bash
+python tools/train_ai_ranker.py battle_logs/ai_decisions -o assets/data/ai_ranker_trained.ron
+```
+
+样本中的 `reward` 以敌方 AI 视角记录：胜利 / 失败 / 平局是主信号，伤害、击倒、元素反应和存活情况只提供小幅 shaping，避免 AI 为刷分牺牲胜负。
+
+启用训练后的模型：
+
+```ron
+policy_mode: ModelRanker,
+policy_model_path: Some("assets/data/ai_ranker_trained.ron"),
+policy_fallback: Heuristic,
+export_decision_samples: true,
+```
+
+仓库内置 `assets/data/ai_ranker_default.ron` 可用于验证 `ModelRanker` 加载链路；它默认只保留启发式分数权重。
+
 ---
 
 # 四、架构概览
@@ -233,7 +269,7 @@ assets/data/battle_data.ron
 AI 相关配置位于数据层：
 
 - `EnemyAiPresets`：从 `assets/data/battle_data.ron` 读取默认难度和 Easy / Normal / Hard / Expert 预设。
-- `EnemyAiConfig`：单个难度预设的完整配置，包含难度、搜索深度、候选数、换人阈值、玩家信息可见度和权重。
+- `EnemyAiConfig`：单个难度预设的完整配置，包含难度、搜索深度、候选数、换人阈值、玩家信息可见度、策略模式、模型路径、样本导出和权重。
 - `EnemyAiWeights`：攻击、击杀、治疗、护盾、状态、反应、换人、卡牌、弃牌、玩家威胁等评分权重。
 
 真实战斗结算仍由现有技能、卡牌和事件系统负责；AI 只做轻量预测与行动选择，避免复制一套独立战斗规则。
@@ -359,6 +395,8 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 - `ActionTrace`：行动链路追踪，记录回合、阵营、动作和细节。
 
 结果页按 `L` 可导出 replay 与 action trace，文件会写入仓库根目录下的 `battle_logs/`，用于复盘战斗顺序、排查状态或卡牌效果问题。
+
+当 AI 预设启用 `CollectOnly`、`SelfPlayTraining` 或 `export_decision_samples` 时，每局结束还会自动导出 AI 决策样本到 `battle_logs/ai_decisions/`，供 `tools/train_ai_ranker.py` 训练排序模型。
 
 ---
 

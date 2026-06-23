@@ -8,6 +8,7 @@ build = "build.rs"
 bevy = {version = "0.18.1", features = ["dynamic_linking"]}
 ron = "0.12.1"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 rand = "0.8"
 bevy_spine = { git = "https://github.com/jabuwu/bevy_spine", branch = "main", features = ["ui"] }
 bevy_egui = "0.39.1"

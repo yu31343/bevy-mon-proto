@@ -39,6 +39,7 @@ pub(crate) struct InitBattleRuntime<'w> {
     structured_log: ResMut<'w, StructuredBattleLog>,
     replay_log: ResMut<'w, ReplayEventLog>,
     action_trace: ResMut<'w, ActionTrace>,
+    ai_decision_log: ResMut<'w, crate::battle::ai::AiDecisionLog>,
     performance_stats: ResMut<'w, BattlePerformanceStats>,
     performance_report: ResMut<'w, BattlePerformanceReport>,
     result: ResMut<'w, BattleResult>,
@@ -69,6 +70,7 @@ pub fn init_battle_system(
     let structured_log = &mut runtime.structured_log;
     let replay_log = &mut runtime.replay_log;
     let action_trace = &mut runtime.action_trace;
+    let ai_decision_log = &mut runtime.ai_decision_log;
     let performance_stats = &mut runtime.performance_stats;
     let performance_report = &mut runtime.performance_report;
     let result = &mut runtime.result;
@@ -90,6 +92,7 @@ pub fn init_battle_system(
     clear_turn_context(turn_ctx);
     action_cooldown.reset();
     clear_runtime_battle_logs(battle_log, structured_log, replay_log, action_trace);
+    ai_decision_log.clear();
     **performance_stats = BattlePerformanceStats::default();
     performance_report.summary = None;
     result.message.clear();

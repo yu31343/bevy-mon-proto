@@ -2,13 +2,14 @@ use bevy::prelude::*;
 
 use crate::{
     console_log::{ConsoleLogCategory, log as console_log},
-    data::{AiDifficulty, BattleRules, MonsterPool},
+    data::{AiDifficulty, BattleRules, EnemyAiPolicyMode, MonsterPool},
     team_selection::{
         AiDifficultyButton, AiDifficultyButtonText, AiDifficultySelectorRoot,
-        AiDifficultySummaryText, BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        AiDifficultySummaryText, AiPolicyButton, AiPolicyButtonText, AiPolicySummaryText,
+        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
         SelectionCountText, SelectionInstructionsText, SelectionOrderText, SelectionTitleText,
-        SelectionUiRoot, ai_difficulty_label,
+        SelectionUiRoot, ai_difficulty_label, ai_policy_label,
     },
     ui::battle::{resources::UiFontHandle, theme::UiTheme},
 };
@@ -159,6 +160,59 @@ pub fn setup_selection_ui(
                     make_text_font(13.0, font_handle.as_ref()),
                     TextColor(Color::srgb(0.78, 0.82, 0.9)),
                     AiDifficultySummaryText,
+                ));
+                panel.spawn((
+                    Text::new("AI 策略"),
+                    make_text_font(16.0, font_handle.as_ref()),
+                    TextColor(Color::srgb(0.85, 0.92, 1.0)),
+                    Node {
+                        margin: UiRect::top(Val::Px(8.0)),
+                        ..default()
+                    },
+                ));
+                panel
+                    .spawn((Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },))
+                    .with_children(|row| {
+                        for mode in [
+                            EnemyAiPolicyMode::Heuristic,
+                            EnemyAiPolicyMode::CollectOnly,
+                            EnemyAiPolicyMode::ModelRanker,
+                        ] {
+                            row.spawn((
+                                Button,
+                                Node {
+                                    width: Val::Px(96.0),
+                                    height: Val::Px(34.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(theme.radius_button),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.button_idle),
+                                BorderColor::all(theme.button_border_idle),
+                                theme.button_shadow(),
+                                AiPolicyButton { mode },
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new(ai_policy_label(mode)),
+                                    make_text_font(15.0, font_handle.as_ref()),
+                                    TextColor(Color::WHITE),
+                                    AiPolicyButtonText { mode },
+                                ));
+                            });
+                        }
+                    });
+                panel.spawn((
+                    Text::new("策略：启发式；样本=关；模型=无"),
+                    make_text_font(13.0, font_handle.as_ref()),
+                    TextColor(Color::srgb(0.78, 0.82, 0.9)),
+                    AiPolicySummaryText,
                 ));
             });
 

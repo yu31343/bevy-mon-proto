@@ -11,11 +11,13 @@ use crate::{
         BattlePerformanceReport, BattlePerformanceStats, BattleResult, BattleResultAction,
         BattleResultNotice, Combatant, ElementAura, InBattle, PendingBattleResultAction,
         PendingKoResolution, PerformanceTeamSnapshot, ReplayEventLog, RoundOrder, Shield, Side,
-        Stats, StructuredBattleLog, TurnContext, TurnCount, battle_phase_for_side,
-        build_performance_report, format_performance_report, note_action_phase,
-        note_structured_phase, push_battle_line, push_named_action_trace, transfer_status_by_id,
+        Stats, StructuredBattleLog, TurnContext, TurnCount,
+        ai::{AiBattleOutcome, reward_for_outcome},
+        battle_phase_for_side, build_performance_report, format_performance_report,
+        note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
+        transfer_status_by_id,
     },
-    data::TeamSelections,
+    data::{EnemyAiConfig, TeamSelections},
     game_state::{BattlePhase, GameState},
     pvp,
 };
@@ -247,6 +249,8 @@ pub struct ResolveKoPerformance<'w> {
     battle_mode: Res<'w, BattleControlMode>,
     stats: Res<'w, BattlePerformanceStats>,
     report: ResMut<'w, BattlePerformanceReport>,
+    ai_config: Option<Res<'w, EnemyAiConfig>>,
+    ai_decision_log: Option<ResMut<'w, crate::battle::ai::AiDecisionLog>>,
 }
 
 pub fn resolve_ko_system(
@@ -365,6 +369,20 @@ pub fn resolve_ko_system(
     }
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
+        let ai_outcome = if pending_ko.player_defeated && pending_ko.enemy_defeated {
+            AiBattleOutcome::Draw
+        } else if pending_ko.enemy_defeated {
+            AiBattleOutcome::EnemyDefeat
+        } else {
+            AiBattleOutcome::EnemyVictory
+        };
+        let (player_snapshot, enemy_snapshot) = performance_team_snapshots(&mut query);
+        let ai_reward = enemy_ai_reward(
+            ai_outcome,
+            &performance.stats,
+            player_snapshot,
+            enemy_snapshot,
+        );
         if *performance.battle_mode == BattleControlMode::PlayerVsRemote {
             performance.report.summary = None;
         } else {
@@ -375,7 +393,6 @@ pub fn resolve_ko_system(
             } else {
                 BattlePerformanceOutcome::Defeat
             };
-            let (player_snapshot, enemy_snapshot) = performance_team_snapshots(&mut query);
             performance.report.summary = Some(build_performance_report(
                 &performance.stats,
                 outcome,
@@ -383,6 +400,9 @@ pub fn resolve_ko_system(
                 player_snapshot,
                 enemy_snapshot,
             ));
+        }
+        if let Some(ai_decision_log) = performance.ai_decision_log.as_mut() {
+            ai_decision_log.finalize_with_reward(ai_outcome, ai_reward);
         }
 
         battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
@@ -398,6 +418,20 @@ pub fn resolve_ko_system(
             "战斗结束",
             battle_result.message.clone(),
         );
+        if let (Some(ai_config), Some(ai_decision_log)) = (
+            performance.ai_config.as_ref(),
+            performance.ai_decision_log.as_ref(),
+        ) {
+            match ai_decision_log.export_if_enabled(ai_config) {
+                Ok(Some(path)) => {
+                    battle_result.export_status = Some(format!("AI 决策样本已导出：{path}"));
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    battle_result.export_status = Some(format!("AI 决策样本导出失败：{err}"));
+                }
+            }
+        }
         push_named_action_trace(
             &mut action_trace,
             turn_count.0,
@@ -465,6 +499,36 @@ fn performance_team_snapshots(
         }
     }
     (player, enemy)
+}
+
+fn enemy_ai_reward(
+    outcome: AiBattleOutcome,
+    stats: &BattlePerformanceStats,
+    player: PerformanceTeamSnapshot,
+    enemy: PerformanceTeamSnapshot,
+) -> f32 {
+    let terminal = reward_for_outcome(outcome);
+    let damage_balance =
+        ((stats.enemy.damage_dealt - stats.player.damage_dealt) as f32 / 100.0).clamp(-0.12, 0.12);
+    let knockout_balance = ((stats.enemy.knockouts as i32 - stats.player.knockouts as i32) as f32
+        * 0.08)
+        .clamp(-0.12, 0.12);
+    let reaction_bonus = (stats.enemy.two_element_reactions as f32 * 0.01
+        + stats.enemy.advanced_reactions as f32 * 0.03)
+        .min(0.08);
+    let survival_balance =
+        ((team_hp_ratio(enemy) - team_hp_ratio(player)) * 0.15).clamp(-0.10, 0.10);
+    let shaping =
+        (damage_balance + knockout_balance + reaction_bonus + survival_balance).clamp(-0.25, 0.25);
+    (terminal + shaping).clamp(-1.25, 1.25)
+}
+
+fn team_hp_ratio(snapshot: PerformanceTeamSnapshot) -> f32 {
+    if snapshot.max_hp <= 0 {
+        0.0
+    } else {
+        (snapshot.current_hp.max(0) as f32 / snapshot.max_hp as f32).clamp(0.0, 1.0)
+    }
 }
 
 fn sanitize_filename_segment(input: &str) -> String {
@@ -811,6 +875,32 @@ mod tests {
         app.insert_resource(NextState::<GameState>::default());
         app.add_systems(Update, resolve_ko_system);
         app
+    }
+
+    #[test]
+    fn enemy_ai_reward_keeps_terminal_outcome_dominant() {
+        let mut stats = BattlePerformanceStats::default();
+        stats.enemy.damage_dealt = 200;
+        stats.enemy.knockouts = 2;
+        stats.enemy.advanced_reactions = 3;
+        let enemy = PerformanceTeamSnapshot {
+            current_hp: 40,
+            max_hp: 60,
+            alive_count: 2,
+            member_count: 3,
+        };
+        let player = PerformanceTeamSnapshot {
+            current_hp: 5,
+            max_hp: 60,
+            alive_count: 1,
+            member_count: 3,
+        };
+
+        let defeat_reward = enemy_ai_reward(AiBattleOutcome::EnemyDefeat, &stats, player, enemy);
+        let victory_reward = enemy_ai_reward(AiBattleOutcome::EnemyVictory, &stats, player, enemy);
+
+        assert!((-1.25..=-0.75).contains(&defeat_reward));
+        assert!((0.75..=1.25).contains(&victory_reward));
     }
 
     #[test]

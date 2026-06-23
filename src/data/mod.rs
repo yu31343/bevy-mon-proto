@@ -734,7 +734,7 @@ impl Default for BattleRules {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize, Default)]
 pub enum AiDifficulty {
     Easy,
     #[default]
@@ -743,12 +743,28 @@ pub enum AiDifficulty {
     Expert,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum AiPlayerInfoVisibility {
     None,
     #[default]
     Public,
     Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum EnemyAiPolicyMode {
+    #[default]
+    Heuristic,
+    CollectOnly,
+    ModelRanker,
+    SelfPlayTraining,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum EnemyAiPolicyFallback {
+    #[default]
+    Heuristic,
+    EndTurn,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -812,6 +828,10 @@ fn default_ai_random_score_jitter() -> f32 {
     0.0
 }
 
+fn default_ai_decision_sample_export_dir() -> String {
+    "battle_logs/ai_decisions".to_string()
+}
+
 #[derive(Resource, Debug, Clone, Deserialize)]
 pub struct EnemyAiConfig {
     #[serde(default)]
@@ -829,6 +849,18 @@ pub struct EnemyAiConfig {
     #[serde(default)]
     pub max_attack_actions_per_turn: Option<u8>,
     #[serde(default)]
+    pub policy_mode: EnemyAiPolicyMode,
+    #[serde(default)]
+    pub policy_model_path: Option<String>,
+    #[serde(default)]
+    pub export_decision_samples: bool,
+    #[serde(default = "default_ai_decision_sample_export_dir")]
+    pub decision_sample_export_dir: String,
+    #[serde(default)]
+    pub max_policy_candidates: Option<usize>,
+    #[serde(default)]
+    pub policy_fallback: EnemyAiPolicyFallback,
+    #[serde(default)]
     pub weights: EnemyAiWeights,
 }
 
@@ -842,6 +874,12 @@ impl Default for EnemyAiConfig {
             switch_score_threshold: default_ai_switch_score_threshold(),
             random_score_jitter: default_ai_random_score_jitter(),
             max_attack_actions_per_turn: None,
+            policy_mode: EnemyAiPolicyMode::Heuristic,
+            policy_model_path: None,
+            export_decision_samples: false,
+            decision_sample_export_dir: default_ai_decision_sample_export_dir(),
+            max_policy_candidates: None,
+            policy_fallback: EnemyAiPolicyFallback::Heuristic,
             weights: EnemyAiWeights::default(),
         }
     }
@@ -1186,6 +1224,15 @@ fn validate_ai_config(config: &EnemyAiConfig, field_prefix: &str) -> Result<(), 
         | AiPlayerInfoVisibility::Public
         | AiPlayerInfoVisibility::Full => {}
     }
+    match config.policy_mode {
+        EnemyAiPolicyMode::Heuristic
+        | EnemyAiPolicyMode::CollectOnly
+        | EnemyAiPolicyMode::ModelRanker
+        | EnemyAiPolicyMode::SelfPlayTraining => {}
+    }
+    match config.policy_fallback {
+        EnemyAiPolicyFallback::Heuristic | EnemyAiPolicyFallback::EndTurn => {}
+    }
     if config.search_depth == 0 || config.search_depth > 3 {
         return Err(format!(
             "{field_prefix}.{:?}.search_depth 必须在 1..=3 之间，当前为 {}",
@@ -1213,6 +1260,28 @@ fn validate_ai_config(config: &EnemyAiConfig, field_prefix: &str) -> Result<(), 
     if config.max_attack_actions_per_turn == Some(0) {
         return Err(format!(
             "{field_prefix}.{:?}.max_attack_actions_per_turn 必须为 None 或 >= 1",
+            config.difficulty
+        ));
+    }
+    if config.max_policy_candidates == Some(0) {
+        return Err(format!(
+            "{field_prefix}.{:?}.max_policy_candidates 必须为 None 或 >= 1",
+            config.difficulty
+        ));
+    }
+    if config.decision_sample_export_dir.trim().is_empty() {
+        return Err(format!(
+            "{field_prefix}.{:?}.decision_sample_export_dir 不能为空",
+            config.difficulty
+        ));
+    }
+    if config
+        .policy_model_path
+        .as_ref()
+        .is_some_and(|path| path.trim().is_empty())
+    {
+        return Err(format!(
+            "{field_prefix}.{:?}.policy_model_path 不能是空字符串",
             config.difficulty
         ));
     }

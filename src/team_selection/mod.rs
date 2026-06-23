@@ -17,6 +17,7 @@ impl Plugin for TeamSelectionPlugin {
         app.init_resource::<SelectionState>()
             .init_resource::<SelectionEntryMode>()
             .init_resource::<SelectedAiDifficulty>()
+            .init_resource::<SelectedAiPolicy>()
             .init_resource::<MapBattleContext>()
             .add_systems(
                 Update,
@@ -28,7 +29,11 @@ impl Plugin for TeamSelectionPlugin {
             )
             .add_systems(
                 OnEnter(GameState::TeamSelection),
-                (clear_selection_state, reset_selected_ai_difficulty_system),
+                (
+                    clear_selection_state,
+                    reset_selected_ai_difficulty_system,
+                    reset_selected_ai_policy_system,
+                ),
             )
             .add_systems(OnExit(GameState::TeamSelection), cleanup_selection_ui)
             .add_systems(
@@ -36,6 +41,7 @@ impl Plugin for TeamSelectionPlugin {
                 (
                     button_select_monster_system,
                     button_select_ai_difficulty_system,
+                    button_select_ai_policy_system,
                     button_confirm_selection_system,
                     button_back_to_lobby_system,
                     update_selection_ui_system,
