@@ -13,6 +13,7 @@
 )]
 
 //! 程序入口：注册插件与状态机，启动 Bevy App。
+mod ai_selfplay;
 mod battle;
 pub(crate) mod console_log;
 mod data;
@@ -30,6 +31,10 @@ use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
 use game_state::{BattlePhase, GameState};
 
 fn main() {
+    if let Some(code) = ai_selfplay::maybe_run_from_args() {
+        std::process::exit(code);
+    }
+
     // 只在入口组装应用，业务逻辑全部放在各自插件中。
     App::new()
         .add_plugins(DefaultPlugins)

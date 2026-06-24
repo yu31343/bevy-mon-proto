@@ -412,6 +412,19 @@ mod tests {
     }
 
     #[test]
+    fn load_battle_data_from_path_builds_runtime_resources() {
+        let loaded = load_battle_data_from_path("assets/data/battle_data.ron")
+            .expect("battle_data.ron should load into runtime resources");
+
+        assert_eq!(loaded.dbs.skills.len(), 28);
+        assert_eq!(loaded.dbs.cards.len(), 17);
+        assert_eq!(loaded.monster_pool.monsters.len(), 7);
+        assert_eq!(loaded.card_deck.0.len(), 140);
+        assert_eq!(loaded.rules.max_ap, 9);
+        assert_eq!(loaded.ai_config.difficulty, AiDifficulty::Normal);
+    }
+
+    #[test]
     fn battle_dbs_resolves_skill_uses_per_turn() {
         // 全局默认（BattleRules::default 走 RON 默认值 2）。
         let rules = BattleRules::default();
@@ -939,6 +952,96 @@ struct BattleConfig {
     deck: Vec<CardId>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadedBattleData {
+    pub dbs: BattleDbs,
+    pub monster_pool: MonsterPool,
+    pub card_deck: CardDeck,
+    pub rules: BattleRules,
+    pub formulas: BattleFormulaRules,
+    pub rules_bundle: BattleRulesBundle,
+    pub ai_presets: EnemyAiPresets,
+    pub ai_config: EnemyAiConfig,
+    pub used_default_matrix: bool,
+}
+
+pub fn load_battle_data_from_path(path: &str) -> Result<LoadedBattleData, String> {
+    let raw =
+        fs::read_to_string(path).map_err(|err| format!("读取战斗配置失败: {path} ({err})"))?;
+    let config: BattleConfig =
+        ron::from_str(&raw).map_err(|err| format!("解析战斗配置失败: {path} ({err})"))?;
+    validate_battle_config(&config).map_err(|reason| format!("战斗配置非法: {reason}"))?;
+
+    let rules = BattleRules::from_config(&config.rules);
+    let formulas = BattleFormulaRules::from_config(&config.formulas);
+    let ai_presets = config.ai.clone();
+    let ai_config = ai_presets.default_config();
+    let rules_bundle = BattleRulesBundle {
+        battle: rules.clone(),
+        formulas,
+    };
+
+    let statuses = StatusDb {
+        statuses: config
+            .statuses
+            .iter()
+            .cloned()
+            .map(|status| (status.id.clone(), status))
+            .collect(),
+    };
+    let reactions = ReactionDb {
+        reactions: config.reactions.clone(),
+    };
+
+    let BattleConfig {
+        element_matrix,
+        rules: _,
+        formulas: _,
+        ai: _,
+        statuses: _,
+        reactions: _,
+        skills: config_skills,
+        monsters,
+        cards: config_cards,
+        deck,
+    } = config;
+
+    let mut skills = HashMap::new();
+    for skill in config_skills {
+        skills.insert(skill.id, skill);
+    }
+
+    let mut cards = HashMap::new();
+    for def in config_cards {
+        cards.insert(def.id, def);
+    }
+
+    let used_default_matrix = element_matrix.relations.is_empty();
+    let elements = if used_default_matrix {
+        ElementDb::from_default_config()
+    } else {
+        ElementDb::from_config(&element_matrix)
+    };
+
+    Ok(LoadedBattleData {
+        dbs: BattleDbs {
+            skills,
+            cards,
+            elements,
+            statuses,
+            reactions,
+        },
+        monster_pool: MonsterPool { monsters },
+        card_deck: CardDeck(deck),
+        rules: rules_bundle.battle.clone(),
+        formulas: rules_bundle.formulas,
+        rules_bundle,
+        ai_presets,
+        ai_config,
+        used_default_matrix,
+    })
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct BattleRulesBundle {
     pub battle: BattleRules,
@@ -1011,9 +1114,9 @@ impl Plugin for DataPlugin {
 fn load_battle_data(mut commands: Commands) {
     // 从 RON 配置加载战斗数据，便于后续扩展为纯数据驱动。
     let path = "assets/data/battle_data.ron";
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(e) => {
+    let loaded = match load_battle_data_from_path(path) {
+        Ok(loaded) => loaded,
+        Err(reason) => {
             commands.insert_resource(BattleDbs {
                 skills: HashMap::new(),
                 cards: HashMap::new(),
@@ -1030,133 +1133,26 @@ fn load_battle_data(mut commands: Commands) {
             commands.insert_resource(EnemyAiConfig::default());
             console_log(
                 ConsoleLogCategory::Data,
-                format!("[error] 读取战斗配置失败：{path}（{e}）"),
+                format!("[error] 加载战斗配置失败：{reason}"),
             );
             commands.insert_resource(BattleDataStatus {
-                error: Some(format!("读取战斗配置失败: {path} ({e})")),
+                error: Some(reason),
             });
             return;
         }
-    };
-    let config: BattleConfig = match ron::from_str(&raw) {
-        Ok(config) => config,
-        Err(e) => {
-            commands.insert_resource(BattleDbs {
-                skills: HashMap::new(),
-                cards: HashMap::new(),
-                elements: ElementDb::from_default_config(),
-                statuses: StatusDb::default(),
-                reactions: ReactionDb::default(),
-            });
-            commands.insert_resource(MonsterPool { monsters: vec![] });
-            commands.insert_resource(CardDeck::default());
-            commands.insert_resource(BattleRules::default());
-            commands.insert_resource(BattleFormulaRules::default());
-            commands.insert_resource(BattleRulesBundle::default());
-            commands.insert_resource(EnemyAiPresets::default());
-            commands.insert_resource(EnemyAiConfig::default());
-            console_log(
-                ConsoleLogCategory::Data,
-                format!("[error] 解析战斗配置失败：{path}（{e}）"),
-            );
-            commands.insert_resource(BattleDataStatus {
-                error: Some(format!("解析战斗配置失败: {path} ({e})")),
-            });
-            return;
-        }
-    };
-
-    if let Err(reason) = validate_battle_config(&config) {
-        commands.insert_resource(BattleDbs {
-            skills: HashMap::new(),
-            cards: HashMap::new(),
-            elements: ElementDb::from_default_config(),
-            statuses: StatusDb::default(),
-            reactions: ReactionDb::default(),
-        });
-        commands.insert_resource(MonsterPool { monsters: vec![] });
-        commands.insert_resource(CardDeck::default());
-        commands.insert_resource(BattleRules::default());
-        commands.insert_resource(BattleFormulaRules::default());
-        commands.insert_resource(BattleRulesBundle::default());
-        commands.insert_resource(EnemyAiPresets::default());
-        commands.insert_resource(EnemyAiConfig::default());
-        console_log(
-            ConsoleLogCategory::Data,
-            format!("[error] 战斗配置非法：{reason}"),
-        );
-        commands.insert_resource(BattleDataStatus {
-            error: Some(format!("战斗配置非法: {reason}")),
-        });
-        return;
-    }
-
-    let rules = BattleRules::from_config(&config.rules);
-    let formulas = BattleFormulaRules::from_config(&config.formulas);
-    let ai_presets = config.ai.clone();
-    let ai_config = ai_presets.default_config();
-    let rules_bundle = BattleRulesBundle {
-        battle: rules.clone(),
-        formulas,
-    };
-
-    let statuses = StatusDb {
-        statuses: config
-            .statuses
-            .iter()
-            .cloned()
-            .map(|status| (status.id.clone(), status))
-            .collect(),
-    };
-    let reactions = ReactionDb {
-        reactions: config.reactions.clone(),
-    };
-
-    let BattleConfig {
-        element_matrix,
-        rules: _,
-        formulas: _,
-        ai: _,
-        statuses: _,
-        reactions: _,
-        skills: config_skills,
-        monsters,
-        cards: config_cards,
-        deck,
-    } = config;
-
-    let rules = rules_bundle.battle.clone();
-    let formulas = rules_bundle.formulas;
-
-    let mut skills = HashMap::new();
-    for skill in config_skills {
-        skills.insert(skill.id, skill);
-    }
-
-    let mut cards = HashMap::new();
-    for def in config_cards {
-        cards.insert(def.id, def);
-    }
-
-    // 加载元素克制矩阵：若配置为空则使用默认值
-    let used_default_matrix = element_matrix.relations.is_empty();
-    let elements = if used_default_matrix {
-        ElementDb::from_default_config()
-    } else {
-        ElementDb::from_config(&element_matrix)
     };
 
     console_log(
         ConsoleLogCategory::Data,
         format!(
             "[ok] battle_data.ron 加载完成：skills={} cards={} monsters={} statuses={} reactions={} deck={} element_matrix={}",
-            skills.len(),
-            cards.len(),
-            monsters.len(),
-            statuses.statuses.len(),
-            reactions.reactions.len(),
-            deck.len(),
-            if used_default_matrix {
+            loaded.dbs.skills.len(),
+            loaded.dbs.cards.len(),
+            loaded.monster_pool.monsters.len(),
+            loaded.dbs.statuses.statuses.len(),
+            loaded.dbs.reactions.reactions.len(),
+            loaded.card_deck.0.len(),
+            if loaded.used_default_matrix {
                 "default"
             } else {
                 "config"
@@ -1164,20 +1160,14 @@ fn load_battle_data(mut commands: Commands) {
         ),
     );
 
-    commands.insert_resource(BattleDbs {
-        skills,
-        cards,
-        elements,
-        statuses,
-        reactions,
-    });
-    commands.insert_resource(MonsterPool { monsters });
-    commands.insert_resource(CardDeck(deck));
-    commands.insert_resource(rules);
-    commands.insert_resource(formulas);
-    commands.insert_resource(rules_bundle);
-    commands.insert_resource(ai_presets);
-    commands.insert_resource(ai_config);
+    commands.insert_resource(loaded.dbs);
+    commands.insert_resource(loaded.monster_pool);
+    commands.insert_resource(loaded.card_deck);
+    commands.insert_resource(loaded.rules);
+    commands.insert_resource(loaded.formulas);
+    commands.insert_resource(loaded.rules_bundle);
+    commands.insert_resource(loaded.ai_presets);
+    commands.insert_resource(loaded.ai_config);
     commands.insert_resource(BattleDataStatus::default());
 }
 

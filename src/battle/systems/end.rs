@@ -12,7 +12,9 @@ use crate::{
         BattleResultNotice, Combatant, ElementAura, InBattle, PendingBattleResultAction,
         PendingKoResolution, PerformanceTeamSnapshot, ReplayEventLog, RoundOrder, Shield, Side,
         Stats, StructuredBattleLog, TurnContext, TurnCount,
-        ai::{AiBattleOutcome, reward_for_outcome},
+        ai::{
+            AiBattleOutcome, AiEpisodeStats, AiSideEpisodeStats, AiTeamSnapshot, reward_for_episode,
+        },
         battle_phase_for_side, build_performance_report, format_performance_report,
         note_action_phase, note_structured_phase, push_battle_line, push_named_action_trace,
         transfer_status_by_id,
@@ -377,12 +379,9 @@ pub fn resolve_ko_system(
             AiBattleOutcome::EnemyVictory
         };
         let (player_snapshot, enemy_snapshot) = performance_team_snapshots(&mut query);
-        let ai_reward = enemy_ai_reward(
-            ai_outcome,
-            &performance.stats,
-            player_snapshot,
-            enemy_snapshot,
-        );
+        let ai_episode_stats =
+            ai_episode_stats(&performance.stats, player_snapshot, enemy_snapshot);
+        let ai_reward = reward_for_episode(ai_outcome, ai_episode_stats);
         if *performance.battle_mode == BattleControlMode::PlayerVsRemote {
             performance.report.summary = None;
         } else {
@@ -501,33 +500,36 @@ fn performance_team_snapshots(
     (player, enemy)
 }
 
-fn enemy_ai_reward(
-    outcome: AiBattleOutcome,
+fn ai_episode_stats(
     stats: &BattlePerformanceStats,
     player: PerformanceTeamSnapshot,
     enemy: PerformanceTeamSnapshot,
-) -> f32 {
-    let terminal = reward_for_outcome(outcome);
-    let damage_balance =
-        ((stats.enemy.damage_dealt - stats.player.damage_dealt) as f32 / 100.0).clamp(-0.12, 0.12);
-    let knockout_balance = ((stats.enemy.knockouts as i32 - stats.player.knockouts as i32) as f32
-        * 0.08)
-        .clamp(-0.12, 0.12);
-    let reaction_bonus = (stats.enemy.two_element_reactions as f32 * 0.01
-        + stats.enemy.advanced_reactions as f32 * 0.03)
-        .min(0.08);
-    let survival_balance =
-        ((team_hp_ratio(enemy) - team_hp_ratio(player)) * 0.15).clamp(-0.10, 0.10);
-    let shaping =
-        (damage_balance + knockout_balance + reaction_bonus + survival_balance).clamp(-0.25, 0.25);
-    (terminal + shaping).clamp(-1.25, 1.25)
-}
-
-fn team_hp_ratio(snapshot: PerformanceTeamSnapshot) -> f32 {
-    if snapshot.max_hp <= 0 {
-        0.0
-    } else {
-        (snapshot.current_hp.max(0) as f32 / snapshot.max_hp as f32).clamp(0.0, 1.0)
+) -> AiEpisodeStats {
+    AiEpisodeStats {
+        enemy: AiSideEpisodeStats {
+            damage_dealt: stats.enemy.damage_dealt,
+            knockouts: stats.enemy.knockouts,
+            two_element_reactions: stats.enemy.two_element_reactions,
+            advanced_reactions: stats.enemy.advanced_reactions,
+        },
+        player: AiSideEpisodeStats {
+            damage_dealt: stats.player.damage_dealt,
+            knockouts: stats.player.knockouts,
+            two_element_reactions: stats.player.two_element_reactions,
+            advanced_reactions: stats.player.advanced_reactions,
+        },
+        enemy_team: AiTeamSnapshot {
+            current_hp: enemy.current_hp,
+            max_hp: enemy.max_hp,
+            alive_count: enemy.alive_count,
+            member_count: enemy.member_count,
+        },
+        player_team: AiTeamSnapshot {
+            current_hp: player.current_hp,
+            max_hp: player.max_hp,
+            alive_count: player.alive_count,
+            member_count: player.member_count,
+        },
     }
 }
 
@@ -896,8 +898,9 @@ mod tests {
             member_count: 3,
         };
 
-        let defeat_reward = enemy_ai_reward(AiBattleOutcome::EnemyDefeat, &stats, player, enemy);
-        let victory_reward = enemy_ai_reward(AiBattleOutcome::EnemyVictory, &stats, player, enemy);
+        let episode_stats = ai_episode_stats(&stats, player, enemy);
+        let defeat_reward = reward_for_episode(AiBattleOutcome::EnemyDefeat, episode_stats);
+        let victory_reward = reward_for_episode(AiBattleOutcome::EnemyVictory, episode_stats);
 
         assert!((-1.25..=-0.75).contains(&defeat_reward));
         assert!((0.75..=1.25).contains(&victory_reward));

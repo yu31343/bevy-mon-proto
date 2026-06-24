@@ -9,6 +9,7 @@ pub(crate) use evaluation::{
 };
 pub(crate) use policy::{
     AiBattleOutcome, AiCombatantObservation, AiDecisionLog, AiDecisionSample, AiDecisionSource,
-    AiObservation, AiPolicyRuntime, AiSideObservation, build_action_features, reward_for_outcome,
-    score_candidates, should_collect_decision_samples,
+    AiEpisodeStats, AiObservation, AiPolicyRuntime, AiSideEpisodeStats, AiSideObservation,
+    AiTeamSnapshot, build_action_features, reward_for_episode, score_candidates,
+    should_collect_decision_samples,
 };

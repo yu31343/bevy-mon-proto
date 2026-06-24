@@ -1783,6 +1783,7 @@ pub fn enemy_turn_ai_system(
                 chosen_index,
                 outcome: None,
                 reward: None,
+                episode_stats: None,
             });
         }
         if log_enabled(ConsoleLogCategory::AiDetail) {

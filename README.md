@@ -209,6 +209,32 @@ python tools/train_ai_ranker.py battle_logs/ai_decisions -o assets/data/ai_ranke
 
 样本中的 `reward` 以敌方 AI 视角记录：胜利 / 失败 / 平局是主信号，伤害、击倒、元素反应和存活情况只提供小幅 shaping，避免 AI 为刷分牺牲胜负。
 
+也可以不启动窗口，直接批量生成 headless AI 采样数据：
+
+```bash
+cargo run -- --ai-selfplay 200 --ai-selfplay-output battle_logs/ai_selfplay/selfplay_samples.jsonl
+python tools/train_ai_ranker.py battle_logs/ai_selfplay/selfplay_samples.jsonl -o assets/data/ai_ranker_trained.ron
+cargo run -- --ai-eval 200 --ai-eval-model assets/data/ai_ranker_trained.ron --ai-eval-output battle_logs/ai_eval/eval_report.json
+```
+
+可选参数包括 `--ai-selfplay-seed <u64>`、`--ai-selfplay-rounds <N>`、`--ai-selfplay-difficulty easy|normal|hard|expert`、`--ai-selfplay-model <path>`。该入口使用战斗数据和 AI 候选规划器进行轻量模拟，适合批量生成/回归排序模型样本；完整 ECS 战斗仍以正常 Vs AI 对局为准。
+
+训练脚本默认启用 reward-weighted ranking：胜局 / 高 reward 样本会加强当前选择，负 reward 样本会把概率推向其它候选。可用 `--reward-weighting off` 回到纯行为克隆；可用 `--min-abs-reward <value>` 过滤低信号样本。
+
+评估入口会用同一批固定 seed 对比 Heuristic 与 ModelRanker，并输出 JSON 报告，包含胜负平、平均 reward、平均回合数、样本数、模型选择次数和 fallback 次数。常用参数包括 `--ai-eval-seed <u64>`、`--ai-eval-rounds <N>`、`--ai-eval-difficulty easy|normal|hard|expert`。
+
+也可以运行完整轻量闭环，产物默认写入 `battle_logs/ai_runs/<timestamp>/`，不会覆盖仓库内模型：
+
+```bash
+python tools/run_ai_training_loop.py --battles 5000 --eval-battles 1000
+```
+
+如评估结果确认可用，再显式提升模型产物：
+
+```bash
+python tools/run_ai_training_loop.py --battles 5000 --eval-battles 1000 --promote-output assets/data/ai_ranker_trained.ron
+```
+
 启用训练后的模型：
 
 ```ron

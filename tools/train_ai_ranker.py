@@ -114,7 +114,39 @@ def softmax(scores: list[float]) -> list[float]:
     return [value / total for value in exps]
 
 
-def train(samples: list[dict], epochs: int, learning_rate: float, l2: float, seed: int) -> list[float]:
+def sample_targets(sample: dict, reward_weighting: bool) -> tuple[list[float], float] | None:
+    candidates = sample["candidates"]
+    chosen_index = sample["chosen_index"]
+    if not reward_weighting:
+        return (
+            [1.0 if index == chosen_index else 0.0 for index in range(len(candidates))],
+            1.0,
+        )
+
+    reward = float(sample.get("reward", 0.0) or 0.0)
+    weight = abs(reward)
+    if weight <= 0.0:
+        return None
+
+    if reward > 0.0 or len(candidates) == 1:
+        targets = [1.0 if index == chosen_index else 0.0 for index in range(len(candidates))]
+    else:
+        alternative_count = len(candidates) - 1
+        targets = [
+            0.0 if index == chosen_index else 1.0 / alternative_count
+            for index in range(len(candidates))
+        ]
+    return targets, weight
+
+
+def train(
+    samples: list[dict],
+    epochs: int,
+    learning_rate: float,
+    l2: float,
+    seed: int,
+    reward_weighting: bool,
+) -> list[float]:
     weights = [0.0] * len(FEATURES)
     weights[FEATURES.index("heuristic_score_weight")] = 1.0
     rng = random.Random(seed)
@@ -122,16 +154,18 @@ def train(samples: list[dict], epochs: int, learning_rate: float, l2: float, see
     for _epoch in range(epochs):
         rng.shuffle(samples)
         for sample in samples:
+            target_info = sample_targets(sample, reward_weighting)
+            if target_info is None:
+                continue
+            targets, sample_weight = target_info
             candidate_vectors = [
                 candidate_features(sample, candidate) for candidate in sample["candidates"]
             ]
             scores = [dot(weights, vector) for vector in candidate_vectors]
             probabilities = softmax(scores)
-            chosen_index = sample["chosen_index"]
 
             for index, vector in enumerate(candidate_vectors):
-                target = 1.0 if index == chosen_index else 0.0
-                error = probabilities[index] - target
+                error = (probabilities[index] - targets[index]) * sample_weight
                 for feature_index, value in enumerate(vector):
                     weights[feature_index] -= learning_rate * error * value
 
@@ -141,6 +175,26 @@ def train(samples: list[dict], epochs: int, learning_rate: float, l2: float, see
                         weights[index] = weight * (1.0 - learning_rate * l2)
 
     return weights
+
+
+def filter_by_min_abs_reward(samples: list[dict], min_abs_reward: float) -> list[dict]:
+    if min_abs_reward <= 0.0:
+        return samples
+    return [
+        sample
+        for sample in samples
+        if abs(float(sample.get("reward", 0.0) or 0.0)) >= min_abs_reward
+    ]
+
+
+def reward_summary(samples: list[dict]) -> tuple[float, int, int, int]:
+    if not samples:
+        return 0.0, 0, 0, 0
+    rewards = [float(sample.get("reward", 0.0) or 0.0) for sample in samples]
+    positive = sum(1 for reward in rewards if reward > 0.0)
+    negative = sum(1 for reward in rewards if reward < 0.0)
+    neutral = len(rewards) - positive - negative
+    return sum(rewards) / len(rewards), positive, negative, neutral
 
 
 def write_ron_model(path: pathlib.Path, weights: list[float]) -> None:
@@ -173,6 +227,18 @@ def main() -> int:
     parser.add_argument("--l2", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument(
+        "--reward-weighting",
+        choices=("on", "off"),
+        default="on",
+        help="Use final reward to weight or reverse ranking updates.",
+    )
+    parser.add_argument(
+        "--min-abs-reward",
+        type=float,
+        default=0.0,
+        help="Drop samples whose absolute reward is below this value.",
+    )
+    parser.add_argument(
         "--positive-outcomes-only",
         action="store_true",
         help="Train only from samples whose final reward is positive.",
@@ -181,20 +247,29 @@ def main() -> int:
 
     input_path = pathlib.Path(args.input)
     samples = load_samples(input_path, args.positive_outcomes_only)
+    samples = filter_by_min_abs_reward(samples, max(args.min_abs_reward, 0.0))
     if not samples:
         print(f"no usable samples found under {input_path}", file=sys.stderr)
         return 1
 
+    avg_reward, positive_count, negative_count, neutral_count = reward_summary(samples)
     weights = train(
         samples,
         epochs=max(args.epochs, 1),
         learning_rate=args.learning_rate,
         l2=max(args.l2, 0.0),
         seed=args.seed,
+        reward_weighting=args.reward_weighting == "on",
     )
     output_path = pathlib.Path(args.output)
     write_ron_model(output_path, weights)
-    print(f"trained {len(samples)} samples -> {output_path}")
+    print(
+        "trained "
+        f"{len(samples)} samples -> {output_path} "
+        f"(avg_reward={avg_reward:.4f}, positive={positive_count}, "
+        f"negative={negative_count}, neutral={neutral_count}, "
+        f"reward_weighting={args.reward_weighting})"
+    )
     return 0
 
 

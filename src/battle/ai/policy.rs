@@ -92,6 +92,30 @@ impl AiBattleOutcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct AiTeamSnapshot {
+    pub(crate) current_hp: i32,
+    pub(crate) max_hp: i32,
+    pub(crate) alive_count: usize,
+    pub(crate) member_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct AiSideEpisodeStats {
+    pub(crate) damage_dealt: i32,
+    pub(crate) knockouts: u32,
+    pub(crate) two_element_reactions: u32,
+    pub(crate) advanced_reactions: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct AiEpisodeStats {
+    pub(crate) enemy: AiSideEpisodeStats,
+    pub(crate) player: AiSideEpisodeStats,
+    pub(crate) enemy_team: AiTeamSnapshot,
+    pub(crate) player_team: AiTeamSnapshot,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AiDecisionSample {
     pub(crate) seq: u64,
@@ -107,6 +131,8 @@ pub(crate) struct AiDecisionSample {
     pub(crate) chosen_index: usize,
     pub(crate) outcome: Option<AiBattleOutcome>,
     pub(crate) reward: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) episode_stats: Option<AiEpisodeStats>,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -303,6 +329,32 @@ pub(crate) fn reward_for_outcome(outcome: AiBattleOutcome) -> f32 {
         AiBattleOutcome::EnemyVictory => 1.0,
         AiBattleOutcome::EnemyDefeat => -1.0,
         AiBattleOutcome::Draw => 0.0,
+    }
+}
+
+pub(crate) fn reward_for_episode(outcome: AiBattleOutcome, stats: AiEpisodeStats) -> f32 {
+    let terminal = reward_for_outcome(outcome);
+    let damage_balance =
+        ((stats.enemy.damage_dealt - stats.player.damage_dealt) as f32 / 100.0).clamp(-0.12, 0.12);
+    let knockout_balance = ((stats.enemy.knockouts as i32 - stats.player.knockouts as i32) as f32
+        * 0.08)
+        .clamp(-0.12, 0.12);
+    let reaction_bonus = (stats.enemy.two_element_reactions as f32 * 0.01
+        + stats.enemy.advanced_reactions as f32 * 0.03)
+        .min(0.08);
+    let survival_balance = ((team_hp_ratio(stats.enemy_team) - team_hp_ratio(stats.player_team))
+        * 0.15)
+        .clamp(-0.10, 0.10);
+    let shaping =
+        (damage_balance + knockout_balance + reaction_bonus + survival_balance).clamp(-0.25, 0.25);
+    (terminal + shaping).clamp(-1.25, 1.25)
+}
+
+fn team_hp_ratio(snapshot: AiTeamSnapshot) -> f32 {
+    if snapshot.max_hp <= 0 {
+        0.0
+    } else {
+        (snapshot.current_hp.max(0) as f32 / snapshot.max_hp as f32).clamp(0.0, 1.0)
     }
 }
 
@@ -515,6 +567,37 @@ mod tests {
     }
 
     #[test]
+    fn episode_reward_keeps_terminal_outcome_dominant() {
+        let stats = AiEpisodeStats {
+            enemy: AiSideEpisodeStats {
+                damage_dealt: 200,
+                knockouts: 2,
+                two_element_reactions: 0,
+                advanced_reactions: 3,
+            },
+            player: AiSideEpisodeStats::default(),
+            enemy_team: AiTeamSnapshot {
+                current_hp: 40,
+                max_hp: 60,
+                alive_count: 1,
+                member_count: 1,
+            },
+            player_team: AiTeamSnapshot {
+                current_hp: 5,
+                max_hp: 60,
+                alive_count: 1,
+                member_count: 1,
+            },
+        };
+
+        let defeat_reward = reward_for_episode(AiBattleOutcome::EnemyDefeat, stats);
+        let victory_reward = reward_for_episode(AiBattleOutcome::EnemyVictory, stats);
+
+        assert!((-1.25..=-0.75).contains(&defeat_reward));
+        assert!((0.75..=1.25).contains(&victory_reward));
+    }
+
+    #[test]
     fn model_ranker_scores_candidates_from_ron_model() {
         let path = temp_model_path("linear_ranker");
         fs::write(
@@ -590,6 +673,7 @@ mod tests {
             chosen_index: 0,
             outcome: None,
             reward: None,
+            episode_stats: None,
         });
         log.finalize_with_reward(
             AiBattleOutcome::EnemyVictory,
