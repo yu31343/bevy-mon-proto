@@ -635,21 +635,66 @@ fn apply_stage_modifiers_to_target(
         return;
     }
 
-    let has_debuff = modifiers.iter().any(|modifier| modifier.amount < 0);
-    let status_prefix = if has_debuff {
-        "stage_shift_debuff"
-    } else {
-        "stage_shift_buff"
-    };
+    let buff_modifiers: Vec<AttributeStageModifier> = modifiers
+        .iter()
+        .copied()
+        .filter(|modifier| modifier.amount >= 0)
+        .collect();
+    let debuff_modifiers: Vec<AttributeStageModifier> = modifiers
+        .iter()
+        .copied()
+        .filter(|modifier| modifier.amount < 0)
+        .collect();
+
+    apply_stage_modifier_group(
+        &buff_modifiers,
+        StatusCategory::Buff,
+        "stage_shift_buff",
+        duration_turns,
+        source_side,
+        target_side,
+        target_stats,
+        target_statuses,
+        status_writer.as_deref_mut(),
+        structured_log.as_deref_mut(),
+        round,
+    );
+    apply_stage_modifier_group(
+        &debuff_modifiers,
+        StatusCategory::Debuff,
+        "stage_shift_debuff",
+        duration_turns,
+        source_side,
+        target_side,
+        target_stats,
+        target_statuses,
+        status_writer.as_deref_mut(),
+        structured_log.as_deref_mut(),
+        round,
+    );
+}
+
+fn apply_stage_modifier_group(
+    modifiers: &[AttributeStageModifier],
+    category: StatusCategory,
+    status_prefix: &str,
+    duration_turns: i32,
+    source_side: Side,
+    target_side: Side,
+    target_stats: &mut Stats,
+    target_statuses: &mut StatusBoard,
+    mut status_writer: Option<&mut MessageWriter<BattleStatusEvent>>,
+    mut structured_log: Option<&mut StructuredBattleLog>,
+    round: Option<u32>,
+) {
+    if modifiers.is_empty() {
+        return;
+    }
 
     let status = StatusInstance {
         id: next_status_id_with_prefix(target_statuses, status_prefix),
         name: "属性变化".to_string(),
-        category: if has_debuff {
-            StatusCategory::Debuff
-        } else {
-            StatusCategory::Buff
-        },
+        category,
         remaining_turns: duration_turns,
         applied_round: round.unwrap_or(0),
         source_side: Some(source_side),
@@ -676,7 +721,10 @@ fn apply_stage_modifiers_to_target(
                 target_side,
                 "stage_shift",
                 if refreshed { "refreshed" } else { "applied" },
-                format!("duration={} modifiers={:?}", duration_turns, modifiers),
+                format!(
+                    "category={:?} duration={} modifiers={:?}",
+                    category, duration_turns, modifiers
+                ),
             ));
         }
         if let Some(log) = structured_log.as_deref_mut() {
@@ -686,13 +734,14 @@ fn apply_stage_modifiers_to_target(
                 source_side,
                 "属性变化",
                 format!(
-                    "{}{}属性变化；持续={}回合；修正={:?}",
+                    "{}{}{:?}属性变化；持续={}回合；修正={:?}",
                     if refreshed { "刷新" } else { "施加" },
                     if target_side == Side::Player {
                         "玩家"
                     } else {
                         "敌方"
                     },
+                    category,
                     duration_turns,
                     modifiers
                 ),
@@ -3547,6 +3596,50 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    #[test]
+    fn mixed_stage_modifiers_are_split_into_buff_and_debuff_statuses() {
+        let mut stats = base_stats(30);
+        let mut statuses = StatusBoard::default();
+        let modifiers = vec![
+            AttributeStageModifier {
+                attribute: AttributeType::Atk,
+                amount: 1,
+            },
+            AttributeStageModifier {
+                attribute: AttributeType::Def,
+                amount: -1,
+            },
+        ];
+
+        apply_stage_modifiers_to_target(
+            &modifiers,
+            2,
+            Side::Player,
+            Side::Player,
+            &mut stats,
+            &mut statuses,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(statuses.entries.len(), 2);
+        assert!(statuses.entries.iter().any(|status| {
+            status.category == StatusCategory::Buff
+                && status.stage_modifiers.iter().any(|modifier| {
+                    modifier.attribute == AttributeType::Atk && modifier.amount == 1
+                })
+        }));
+        assert!(statuses.entries.iter().any(|status| {
+            status.category == StatusCategory::Debuff
+                && status.stage_modifiers.iter().any(|modifier| {
+                    modifier.attribute == AttributeType::Def && modifier.amount == -1
+                })
+        }));
+        assert_eq!(stats.atk_stage, 1);
+        assert_eq!(stats.def_stage, -1);
     }
 
     fn status_board_with(status_id: &str) -> StatusBoard {

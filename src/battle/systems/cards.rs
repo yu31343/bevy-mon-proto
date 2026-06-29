@@ -1454,6 +1454,8 @@ fn skill_name_from_event(event: &BattleEvent) -> &str {
 mod tests {
     use std::collections::HashMap;
 
+    use bevy::ecs::system::SystemState;
+
     use super::*;
     use crate::{
         battle::{EnemyTeam, PlayerTeam, Team},
@@ -1489,6 +1491,28 @@ mod tests {
                 ElementAura::default(),
             ))
             .id()
+    }
+
+    fn stage_status(
+        id: &str,
+        category: StatusCategory,
+        attribute: AttributeType,
+        amount: i32,
+    ) -> StatusInstance {
+        StatusInstance {
+            id: id.to_string(),
+            name: "属性变化".to_string(),
+            category,
+            remaining_turns: 2,
+            applied_round: 1,
+            source_side: Some(Side::Player),
+            tick_timing: None,
+            stage_modifiers: vec![crate::battle::StatusStageModifier { attribute, amount }],
+            fixed_damage_on_tick: 0,
+            heal_on_tick: 0,
+            heal_taken_multiplier: None,
+            evade_charges: 0,
+        }
     }
 
     fn test_dbs() -> BattleDbs {
@@ -1529,6 +1553,75 @@ mod tests {
         app.insert_resource(NextState::<BattlePhase>::default());
         app.add_systems(Update, card_trigger_event_system);
         app
+    }
+
+    #[test]
+    fn cleanse_debuff_keeps_split_buff_status() {
+        let mut app = App::new();
+        let player = spawn_test_combatant(&mut app, Side::Player, 30);
+        let player_team = PlayerTeam(Team {
+            combatants: vec![player],
+            active_index: 0,
+        });
+        {
+            let mut entity = app.world_mut().entity_mut(player);
+            let mut stats = entity.get_mut::<Stats>().expect("stats exist");
+            stats.atk_stage = 1;
+            stats.def_stage = -1;
+        }
+        {
+            let mut entity = app.world_mut().entity_mut(player);
+            let mut statuses = entity
+                .get_mut::<StatusBoard>()
+                .expect("status board exists");
+            statuses.entries = vec![
+                stage_status(
+                    "stage_shift_buff_1",
+                    StatusCategory::Buff,
+                    AttributeType::Atk,
+                    1,
+                ),
+                stage_status(
+                    "stage_shift_debuff_1",
+                    StatusCategory::Debuff,
+                    AttributeType::Def,
+                    -1,
+                ),
+            ];
+        }
+
+        let cleaned = {
+            let mut system_state = SystemState::<CardCombatQuery>::new(app.world_mut());
+            let mut query = system_state.get_mut(app.world_mut());
+            cleanse_one(
+                Side::Player,
+                &[StatusCategory::Debuff],
+                Some(&player_team),
+                None,
+                &mut query,
+            )
+        };
+
+        assert!(cleaned);
+        let (_, stats, _, statuses, _) = app
+            .world_mut()
+            .query::<(&Combatant, &Stats, &Shield, &StatusBoard, &ElementAura)>()
+            .get(app.world(), player)
+            .expect("player combatant exists");
+        assert_eq!(stats.atk_stage, 1);
+        assert_eq!(stats.def_stage, 0);
+        assert!(
+            statuses
+                .entries
+                .iter()
+                .any(|status| status.id == "stage_shift_buff_1")
+        );
+        assert!(
+            statuses
+                .entries
+                .iter()
+                .all(|status| status.category != StatusCategory::Debuff)
+        );
     }
 
     #[test]
