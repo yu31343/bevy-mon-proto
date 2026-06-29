@@ -19,6 +19,7 @@ mod data;
 mod game_state;
 mod lobby;
 mod map; // 新增
+mod online;
 mod pvp;
 mod spine_anim;
 mod team_selection;
@@ -43,6 +44,7 @@ fn main() {
             ui::UiPlugin,
             lobby::LobbyPlugin,
             map::MapPlugin, // 新增
+            online::OnlinePlugin,
             pvp::PvpPlugin,
             team_selection::TeamSelectionPlugin,
             battle::BattlePlugin,

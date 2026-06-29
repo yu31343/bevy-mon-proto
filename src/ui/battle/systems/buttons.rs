@@ -1303,6 +1303,7 @@ pub(crate) fn button_retreat_confirm_system(
     mut map_battle_context: ResMut<MapBattleContext>,
     mut current_map: ResMut<CurrentMap>,
     pvp_connection: Option<Res<pvp::PvpConnection>>,
+    online_connection: Option<Res<crate::online::OnlineConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
@@ -1330,6 +1331,10 @@ pub(crate) fn button_retreat_confirm_system(
             if let Some(map) = return_map {
                 *current_map = map;
                 next_game_state.set(GameState::Map);
+            } else if *battle_mode == BattleControlMode::PlayerVsRemote
+                && online_connection.map_or(false, |c| c.user_id.is_some())
+            {
+                next_game_state.set(GameState::OnlineHome);
             } else {
                 next_game_state.set(GameState::Lobby);
             }

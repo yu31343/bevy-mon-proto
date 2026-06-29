@@ -12,6 +12,9 @@ pub enum GameState {
     TeamSelection,
     Battle,
     Result,
+    OnlineLogin,
+    OnlineHome,
+    OnlineChat,
 }
 
 /// 战斗子状态：用于驱动 1v1 回合流程。

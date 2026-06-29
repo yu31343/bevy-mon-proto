@@ -555,6 +555,7 @@ pub struct ResultRuntime<'w> {
     result_notice: ResMut<'w, BattleResultNotice>,
     pending_action: ResMut<'w, PendingBattleResultAction>,
     pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+    online_connection: Option<Res<'w, crate::online::OnlineConnection>>,
     next_phase: ResMut<'w, NextState<BattlePhase>>,
     next_game_state: ResMut<'w, NextState<GameState>>,
 }
@@ -614,6 +615,7 @@ pub fn restart_from_result_system(
                 &mut runtime.selected_cards,
                 &mut runtime.battle_result,
                 runtime.pvp_connection.as_deref_mut(),
+                runtime.online_connection.as_deref(),
                 &mut runtime.next_phase,
                 &mut runtime.next_game_state,
             );
@@ -668,6 +670,7 @@ fn return_from_result(
     selected_cards: &mut crate::battle::SelectedCards,
     battle_result: &mut BattleResult,
     pvp_connection: Option<&mut pvp::PvpConnection>,
+    online_connection: Option<&crate::online::OnlineConnection>,
     next_phase: &mut NextState<BattlePhase>,
     next_game_state: &mut NextState<GameState>,
 ) {
@@ -700,7 +703,12 @@ fn return_from_result(
             return;
         }
     }
-    next_game_state.set(GameState::Lobby);
+    // 如果是从在线系统进入的对战，返回在线主页
+    if is_pvp && online_connection.map_or(false, |c| c.user_id.is_some()) {
+        next_game_state.set(GameState::OnlineHome);
+    } else {
+        next_game_state.set(GameState::Lobby);
+    }
 }
 
 fn rematch_from_result(
