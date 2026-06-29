@@ -73,6 +73,38 @@ pub(crate) struct ResultPopupRoot;
 pub(crate) struct ResultTitleText;
 
 #[derive(Component)]
+pub(crate) struct ResultPerformanceRoot;
+
+#[derive(Component)]
+pub(crate) struct ResultGradeText;
+
+#[derive(Component)]
+pub(crate) struct ResultTotalScoreText;
+
+#[derive(Component)]
+pub(crate) struct ResultScoreDetailText;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResultScoreDimension {
+    Coordination,
+    Resource,
+    Offense,
+    Tempo,
+    Survival,
+}
+
+#[derive(Component)]
+pub(crate) struct ResultScoreValueText {
+    pub dimension: ResultScoreDimension,
+}
+
+#[derive(Component)]
+pub(crate) struct ResultScoreRingSegment {
+    pub dimension: ResultScoreDimension,
+    pub index: u8,
+}
+
+#[derive(Component)]
 pub(crate) struct ResultNoticeRoot;
 
 #[derive(Component)]

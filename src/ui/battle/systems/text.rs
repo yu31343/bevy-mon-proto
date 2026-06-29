@@ -7,7 +7,7 @@ use crate::{
         BattleControlMode, BattleEvent, BattlePerformanceReport, BattleResultNotice, Combatant,
         ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS,
         RoundOrder, Shield, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team,
-        TurnCount, UiControlSide, format_performance_report,
+        TurnCount, UiControlSide,
     },
     data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType, EnemyAiConfig},
     game_state::BattlePhase,
@@ -1372,14 +1372,87 @@ pub(crate) fn update_battle_action_text_system(
     }
 }
 
+fn grade_art_color(grade: &str) -> Color {
+    match grade {
+        "S" => Color::srgb(1.0, 0.82, 0.26),
+        "A" => Color::srgb(0.48, 0.84, 1.0),
+        "B" => Color::srgb(0.48, 0.92, 0.58),
+        "C" => Color::srgb(0.96, 0.64, 0.30),
+        _ => Color::srgb(0.62, 0.62, 0.66),
+    }
+}
+
+fn dimension_score(
+    summary: &crate::battle::BattlePerformanceSummary,
+    dimension: ResultScoreDimension,
+) -> (u32, u32) {
+    match dimension {
+        ResultScoreDimension::Coordination => (summary.dimensions.chain, 30),
+        ResultScoreDimension::Resource => (summary.dimensions.resource, 25),
+        ResultScoreDimension::Offense => (summary.dimensions.offense, 20),
+        ResultScoreDimension::Tempo => (summary.dimensions.tempo, 10),
+        ResultScoreDimension::Survival => (summary.dimensions.survival, 15),
+    }
+}
+
+fn dimension_color(dimension: ResultScoreDimension) -> Color {
+    match dimension {
+        ResultScoreDimension::Coordination => Color::srgb(0.95, 0.58, 1.0),
+        ResultScoreDimension::Resource => Color::srgb(0.55, 0.82, 1.0),
+        ResultScoreDimension::Offense => Color::srgb(1.0, 0.48, 0.35),
+        ResultScoreDimension::Tempo => Color::srgb(1.0, 0.78, 0.32),
+        ResultScoreDimension::Survival => Color::srgb(0.46, 0.92, 0.58),
+    }
+}
+
+fn active_ring_segments(score: u32, max: u32) -> u8 {
+    if max == 0 {
+        return 0;
+    }
+    ((score as f32 / max as f32) * 12.0)
+        .round()
+        .clamp(0.0, 12.0) as u8
+}
+
+fn result_score_detail(summary: &crate::battle::BattlePerformanceSummary) -> String {
+    format!(
+        "连携构成：元素 {} · 战术 {} · 续航 {} · 混合 +{}    关键表现：反应 {}+{} · 卡技 {} · 有效大招 {} · 换人 {} · AP {} · {}回合",
+        summary.coordination.element,
+        summary.coordination.tactical,
+        summary.coordination.sustain,
+        summary.coordination.bonus,
+        summary.counters.two_element_reactions,
+        summary.counters.advanced_reactions,
+        summary.counters.card_skill_links,
+        summary.counters.high_cost_effective_skills,
+        summary.counters.post_switch_contributions,
+        summary.counters.ap_spent,
+        summary.counters.rounds
+    )
+}
+
 pub(crate) fn update_result_ui_system(
     mut root_q: Query<&mut Visibility, With<ResultPopupRoot>>,
     mut text_queries: ParamSet<(
         Query<&mut Text, With<ResultTitleText>>,
         Query<&mut Text, With<ResultText>>,
         Query<&mut Text, With<ResultNoticeText>>,
+        Query<(&mut Text, &mut TextColor), With<ResultGradeText>>,
+        Query<&mut Text, With<ResultTotalScoreText>>,
+        Query<(&ResultScoreValueText, &mut Text)>,
+        Query<&mut Text, With<ResultScoreDetailText>>,
     )>,
     mut notice_root_q: Query<&mut Visibility, (With<ResultNoticeRoot>, Without<ResultPopupRoot>)>,
+    mut performance_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultPerformanceRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+            Without<ResultInvitePromptRoot>,
+        ),
+    >,
+    mut ring_segments_q: Query<(&ResultScoreRingSegment, &mut BackgroundColor)>,
     mut restart_button_q: Query<&mut Node, With<ResultRestartButton>>,
     mut prompt_q: Query<
         &mut Visibility,
@@ -1411,14 +1484,44 @@ pub(crate) fn update_result_ui_system(
     for mut title in &mut text_queries.p0() {
         title.0 = result_title(&battle_result.message).to_string();
     }
+    let base_message = clean_result_message(&battle_result.message);
     for mut result_text in &mut text_queries.p1() {
-        let base_message = clean_result_message(&battle_result.message);
-        result_text.0 = if let Some(summary) = performance_report.summary.as_ref() {
-            format!("{base_message}\n{}", format_performance_report(summary))
-        } else {
-            base_message
-        };
+        result_text.0 = base_message.clone();
     }
+
+    if let Some(summary) = performance_report.summary.as_ref() {
+        for mut visibility in &mut performance_root_q {
+            *visibility = Visibility::Visible;
+        }
+        for (mut grade_text, mut grade_color) in &mut text_queries.p3() {
+            grade_text.0 = summary.grade.to_string();
+            grade_color.0 = grade_art_color(summary.grade);
+        }
+        for mut total_text in &mut text_queries.p4() {
+            total_text.0 = format!("{}/100", summary.total_score);
+        }
+        for (score_text, mut text) in &mut text_queries.p5() {
+            let (score, max) = dimension_score(summary, score_text.dimension);
+            text.0 = format!("{score}\n/{max}");
+        }
+        for mut text in &mut text_queries.p6() {
+            text.0 = result_score_detail(summary);
+        }
+        for (segment, mut bg) in &mut ring_segments_q {
+            let (score, max) = dimension_score(summary, segment.dimension);
+            let active_segments = active_ring_segments(score, max);
+            bg.0 = if segment.index < active_segments {
+                dimension_color(segment.dimension)
+            } else {
+                Color::srgba(1.0, 1.0, 1.0, 0.14)
+            };
+        }
+    } else {
+        for mut visibility in &mut performance_root_q {
+            *visibility = Visibility::Hidden;
+        }
+    }
+
     for mut node in &mut restart_button_q {
         node.display = if is_pvp { Display::None } else { Display::Flex };
     }
@@ -1457,9 +1560,26 @@ pub(crate) fn hide_result_ui_system(
             With<ResultInvitePromptRoot>,
             Without<ResultPopupRoot>,
             Without<ResultNoticeRoot>,
+            Without<ResultPerformanceRoot>,
         ),
     >,
-    mut notice_root_q: Query<&mut Visibility, (With<ResultNoticeRoot>, Without<ResultPopupRoot>)>,
+    mut notice_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultNoticeRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultPerformanceRoot>,
+        ),
+    >,
+    mut performance_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultPerformanceRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+            Without<ResultInvitePromptRoot>,
+        ),
+    >,
 ) {
     for mut visibility in &mut root_q {
         *visibility = Visibility::Hidden;
@@ -1468,6 +1588,9 @@ pub(crate) fn hide_result_ui_system(
         *visibility = Visibility::Hidden;
     }
     for mut visibility in &mut notice_root_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut performance_root_q {
         *visibility = Visibility::Hidden;
     }
 }

@@ -47,6 +47,92 @@ pub(crate) fn load_cjk_font_system(mut commands: Commands, mut fonts: ResMut<Ass
     commands.insert_resource(UiFontHandle(handle));
 }
 
+fn spawn_result_dimension_card(
+    parent: &mut ChildSpawnerCommands,
+    theme: &UiTheme,
+    label: &'static str,
+    dimension: ResultScoreDimension,
+    value_font: TextFont,
+    label_font: TextFont,
+) {
+    const RING_DOT_POSITIONS: [(f32, f32); 12] = [
+        (36.0, 0.0),
+        (54.0, 5.0),
+        (67.0, 18.0),
+        (72.0, 36.0),
+        (67.0, 54.0),
+        (54.0, 67.0),
+        (36.0, 72.0),
+        (18.0, 67.0),
+        (5.0, 54.0),
+        (0.0, 36.0),
+        (5.0, 18.0),
+        (18.0, 5.0),
+    ];
+
+    parent
+        .spawn((
+            Node {
+                width: Val::Px(104.0),
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(10.0)),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(8.0),
+                border_radius: BorderRadius::all(Val::Px(18.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.18, 0.105, 0.045, 0.70)),
+            BorderColor::all(Color::srgba(0.94, 0.72, 0.34, 0.42)),
+        ))
+        .with_children(|card| {
+            card.spawn((
+                Node {
+                    width: Val::Px(82.0),
+                    height: Val::Px(82.0),
+                    position_type: PositionType::Relative,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|ring| {
+                for (index, (left, top)) in RING_DOT_POSITIONS.iter().enumerate() {
+                    ring.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(*left),
+                            top: Val::Px(*top),
+                            width: Val::Px(10.0),
+                            height: Val::Px(10.0),
+                            border_radius: BorderRadius::all(Val::Px(10.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.16)),
+                        ResultScoreRingSegment {
+                            dimension,
+                            index: index as u8,
+                        },
+                    ));
+                }
+                ring.spawn((
+                    Text::new("--"),
+                    value_font,
+                    TextColor(theme.text_primary),
+                    TextLayout::new_with_justify(Justify::Center),
+                    ResultScoreValueText { dimension },
+                ));
+            });
+            card.spawn((
+                Text::new(label),
+                label_font,
+                TextColor(Color::srgb(0.95, 0.78, 0.45)),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+        });
+}
+
 fn spawn_hp_bar(
     parent: &mut ChildSpawnerCommands,
     theme: &UiTheme,
@@ -3021,9 +3107,108 @@ pub(crate) fn setup_ui_system(
                                 offset: Vec2::new(1.0, 1.0),
                                 color: Color::srgba(0.0, 0.0, 0.0, 0.45),
                             },
-                            TextLayout::new_with_justify(Justify::Left),
+                            TextLayout::new_with_justify(Justify::Center),
                             ResultText,
                         ));
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(14.0),
+                                    ..default()
+                                },
+                                Visibility::Hidden,
+                                ResultPerformanceRoot,
+                            ))
+                            .with_children(|performance| {
+                                performance
+                                    .spawn((Node {
+                                        width: Val::Percent(100.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(18.0),
+                                        ..default()
+                                    },))
+                                    .with_children(|score_row| {
+                                        score_row.spawn((
+                                            Text::new("S"),
+                                            super::helpers::make_text_font(58.0, ui_font.as_deref()),
+                                            TextColor(Color::srgb(1.0, 0.82, 0.35)),
+                                            theme.result_text_shadow(),
+                                            TextLayout::new_with_justify(Justify::Center),
+                                            ResultGradeText,
+                                        ));
+                                        score_row.spawn((
+                                            Text::new("-- / 100"),
+                                            title_font.clone(),
+                                            TextColor(theme.text_primary),
+                                            theme.title_text_shadow(),
+                                            TextLayout::new_with_justify(Justify::Center),
+                                            ResultTotalScoreText,
+                                        ));
+                                    });
+                                performance
+                                    .spawn((Node {
+                                        width: Val::Percent(100.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(10.0),
+                                        row_gap: Val::Px(10.0),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        ..default()
+                                    },))
+                                    .with_children(|rings| {
+                                        spawn_result_dimension_card(
+                                            rings,
+                                            &theme,
+                                            "连携",
+                                            ResultScoreDimension::Coordination,
+                                            meta_font.clone(),
+                                            small_font.clone(),
+                                        );
+                                        spawn_result_dimension_card(
+                                            rings,
+                                            &theme,
+                                            "资源",
+                                            ResultScoreDimension::Resource,
+                                            meta_font.clone(),
+                                            small_font.clone(),
+                                        );
+                                        spawn_result_dimension_card(
+                                            rings,
+                                            &theme,
+                                            "进攻",
+                                            ResultScoreDimension::Offense,
+                                            meta_font.clone(),
+                                            small_font.clone(),
+                                        );
+                                        spawn_result_dimension_card(
+                                            rings,
+                                            &theme,
+                                            "节奏",
+                                            ResultScoreDimension::Tempo,
+                                            meta_font.clone(),
+                                            small_font.clone(),
+                                        );
+                                        spawn_result_dimension_card(
+                                            rings,
+                                            &theme,
+                                            "生存",
+                                            ResultScoreDimension::Survival,
+                                            meta_font.clone(),
+                                            small_font.clone(),
+                                        );
+                                    });
+                                performance.spawn((
+                                    Text::new(""),
+                                    small_font.clone(),
+                                    TextColor(Color::srgb(0.88, 0.80, 0.68)),
+                                    TextLayout::new_with_justify(Justify::Center),
+                                    ResultScoreDetailText,
+                                ));
+                            });
                         panel
                             .spawn((
                                 Node {
