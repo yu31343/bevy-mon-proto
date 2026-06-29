@@ -28,6 +28,9 @@ pub struct SidePerformanceStats {
     pub cards_used: u32,
     pub cards_discarded: u32,
     pub high_cost_skills: u32,
+    pub high_cost_effective_skills: u32,
+    pub card_skill_links: u32,
+    pub post_switch_contributions: u32,
     pub damage_dealt: i32,
     pub healing_done: i32,
     pub shield_absorbed: i32,
@@ -37,11 +40,19 @@ pub struct SidePerformanceStats {
     pub knockouts: u32,
     pub misses: u32,
     reaction_names: HashSet<String>,
+    skill_names: HashSet<String>,
+    pending_card_link: bool,
+    pending_high_cost_skill: bool,
+    pending_switch_contribution: bool,
 }
 
 impl SidePerformanceStats {
     pub fn unique_reaction_count(&self) -> u32 {
         self.reaction_names.len() as u32
+    }
+
+    pub fn unique_skill_count(&self) -> u32 {
+        self.skill_names.len() as u32
     }
 }
 
@@ -55,6 +66,7 @@ pub struct BattlePerformanceSummary {
     pub grade: &'static str,
     pub total_score: u32,
     pub dimensions: PerformanceDimensions,
+    pub coordination: CoordinationBreakdown,
     pub counters: PerformanceCounters,
 }
 
@@ -71,8 +83,19 @@ pub struct PerformanceDimensions {
 pub struct PerformanceCounters {
     pub two_element_reactions: u32,
     pub advanced_reactions: u32,
+    pub card_skill_links: u32,
+    pub high_cost_effective_skills: u32,
+    pub post_switch_contributions: u32,
     pub ap_spent: i32,
     pub rounds: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoordinationBreakdown {
+    pub element: u32,
+    pub tactical: u32,
+    pub sustain: u32,
+    pub bonus: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,32 +129,55 @@ pub fn record_performance_event(
     event: &BattleEvent,
 ) {
     match event {
-        BattleEvent::SkillUsed { side, cost_ap, .. } => {
+        BattleEvent::SkillUsed {
+            side,
+            skill_name,
+            cost_ap,
+            ..
+        } => {
             let side_stats = stats.side_mut(*side);
             side_stats.ap_spent += (*cost_ap).max(0);
+            side_stats.skill_names.insert(skill_name.clone());
+            if side_stats.pending_card_link {
+                side_stats.card_skill_links += 1;
+                side_stats.pending_card_link = false;
+            }
             if *cost_ap >= 3 {
                 side_stats.high_cost_skills += 1;
+                side_stats.pending_high_cost_skill = true;
             }
         }
         BattleEvent::CardUsed { side, cost_ap, .. } => {
             let side_stats = stats.side_mut(*side);
             side_stats.ap_spent += (*cost_ap).max(0);
             side_stats.cards_used += 1;
+            side_stats.pending_card_link = true;
         }
         BattleEvent::CardDiscarded { side, .. } => {
             stats.side_mut(*side).cards_discarded += 1;
         }
         BattleEvent::DamageDealt { source, amount, .. } if *amount > 0 => {
-            stats.side_mut(*source).damage_dealt += *amount;
+            let side_stats = stats.side_mut(*source);
+            side_stats.damage_dealt += *amount;
+            note_effective_contribution(side_stats);
         }
         BattleEvent::AttackMissed { source, .. } => {
-            stats.side_mut(*source).misses += 1;
+            let side_stats = stats.side_mut(*source);
+            side_stats.misses += 1;
+            side_stats.pending_high_cost_skill = false;
         }
         BattleEvent::ShieldAbsorbed { side, amount } if *amount > 0 => {
-            stats.side_mut(*side).shield_absorbed += *amount;
+            let side_stats = stats.side_mut(*side);
+            side_stats.shield_absorbed += *amount;
+            note_switch_contribution(side_stats);
         }
         BattleEvent::Healed { side, amount } if *amount > 0 => {
-            stats.side_mut(*side).healing_done += *amount;
+            let side_stats = stats.side_mut(*side);
+            side_stats.healing_done += *amount;
+            note_effective_contribution(side_stats);
+        }
+        BattleEvent::ShieldGained { side, amount } if *amount > 0 => {
+            note_effective_contribution(stats.side_mut(*side));
         }
         BattleEvent::ReactionTriggered {
             source,
@@ -162,9 +208,31 @@ pub fn record_performance_event(
                 Side::Player => Side::Enemy,
                 Side::Enemy => Side::Player,
             };
-            stats.side_mut(scorer).knockouts += 1;
+            let side_stats = stats.side_mut(scorer);
+            side_stats.knockouts += 1;
+            note_effective_contribution(side_stats);
+        }
+        BattleEvent::Switched { side, .. } => {
+            let side_stats = stats.side_mut(*side);
+            side_stats.pending_switch_contribution = true;
+            side_stats.pending_card_link = false;
         }
         _ => {}
+    }
+}
+
+fn note_effective_contribution(stats: &mut SidePerformanceStats) {
+    if stats.pending_high_cost_skill {
+        stats.high_cost_effective_skills += 1;
+        stats.pending_high_cost_skill = false;
+    }
+    note_switch_contribution(stats);
+}
+
+fn note_switch_contribution(stats: &mut SidePerformanceStats) {
+    if stats.pending_switch_contribution {
+        stats.post_switch_contributions += 1;
+        stats.pending_switch_contribution = false;
     }
 }
 
@@ -176,7 +244,7 @@ pub fn build_performance_report(
     enemy: PerformanceTeamSnapshot,
 ) -> BattlePerformanceSummary {
     let player_stats = &stats.player;
-    let chain = chain_score(player_stats);
+    let (chain, coordination) = coordination_score(player_stats);
     let resource = resource_score(player_stats, rounds);
     let offense = offense_score(player_stats, enemy);
     let tempo = tempo_score(outcome, rounds, enemy.member_count);
@@ -194,9 +262,13 @@ pub fn build_performance_report(
         grade: grade_for_score(total_score),
         total_score,
         dimensions,
+        coordination,
         counters: PerformanceCounters {
             two_element_reactions: player_stats.two_element_reactions,
             advanced_reactions: player_stats.advanced_reactions,
+            card_skill_links: player_stats.card_skill_links,
+            high_cost_effective_skills: player_stats.high_cost_effective_skills,
+            post_switch_contributions: player_stats.post_switch_contributions,
             ap_spent: player_stats.ap_spent,
             rounds,
         },
@@ -205,18 +277,49 @@ pub fn build_performance_report(
 
 pub fn format_performance_report(summary: &BattlePerformanceSummary) -> String {
     format!(
-        "操作评级：{} {}\n连锁 {}/30 · 资源 {}/25 · 进攻 {}/20 · 节奏 {}/10 · 生存 {}/15\n二元素反应 {} · 进阶反应 {} · AP消耗 {} · {}回合",
+        "操作评级  {}  {}/100\n{}\n{}\n{}\n{}\n{}\n连携构成 元素{} · 战术{} · 续航{} · 混合+{}\n元素反应 {}+{} · 卡技连携 {} · 有效大招 {} · 换人贡献 {} · AP {} · {}回合",
         summary.grade,
         summary.total_score,
-        summary.dimensions.chain,
-        summary.dimensions.resource,
-        summary.dimensions.offense,
-        summary.dimensions.tempo,
-        summary.dimensions.survival,
+        score_line("连携", summary.dimensions.chain, 30),
+        score_line("资源", summary.dimensions.resource, 25),
+        score_line("进攻", summary.dimensions.offense, 20),
+        score_line("节奏", summary.dimensions.tempo, 10),
+        score_line("生存", summary.dimensions.survival, 15),
+        summary.coordination.element,
+        summary.coordination.tactical,
+        summary.coordination.sustain,
+        summary.coordination.bonus,
         summary.counters.two_element_reactions,
         summary.counters.advanced_reactions,
+        summary.counters.card_skill_links,
+        summary.counters.high_cost_effective_skills,
+        summary.counters.post_switch_contributions,
         summary.counters.ap_spent,
         summary.counters.rounds
+    )
+}
+
+fn score_line(label: &str, score: u32, max: u32) -> String {
+    format!(
+        "{label:<4} {:>2}/{:<2} {}",
+        score,
+        max,
+        score_bar(score, max, 10)
+    )
+}
+
+fn score_bar(score: u32, max: u32, width: u32) -> String {
+    let filled = if max == 0 {
+        0
+    } else {
+        ((score as f32 / max as f32) * width as f32).round() as u32
+    }
+    .min(width);
+    let empty = width.saturating_sub(filled);
+    format!(
+        "[{}{}]",
+        "▰".repeat(filled as usize),
+        "▱".repeat(empty as usize)
     )
 }
 
@@ -237,12 +340,49 @@ fn reaction_performance_kind(reaction: &ReactionDef) -> ReactionPerformanceKind 
     }
 }
 
-fn chain_score(stats: &SidePerformanceStats) -> u32 {
+fn coordination_score(stats: &SidePerformanceStats) -> (u32, CoordinationBreakdown) {
+    let element = element_coordination_score(stats);
+    let tactical = tactical_coordination_score(stats);
+    let sustain = sustain_coordination_score(stats);
+    let mut tracks = [element, tactical, sustain];
+    tracks.sort_unstable_by(|a, b| b.cmp(a));
+    let bonus = (tracks[1] / 3).min(6);
+    let total = (tracks[0] + bonus).min(30);
+    (
+        total,
+        CoordinationBreakdown {
+            element,
+            tactical,
+            sustain,
+            bonus,
+        },
+    )
+}
+
+fn element_coordination_score(stats: &SidePerformanceStats) -> u32 {
     let reaction_score = (stats.two_element_reactions * 4).min(16)
         + (stats.advanced_reactions * 8).min(16)
         + (stats.wind_spreads * 3).min(6)
         + stats.unique_reaction_count().min(4);
     reaction_score.min(30)
+}
+
+fn tactical_coordination_score(stats: &SidePerformanceStats) -> u32 {
+    let card_skill = (stats.card_skill_links * 4).min(8);
+    let skill_variety = (stats.unique_skill_count() * 2).min(6);
+    let high_cost_effective = (stats.high_cost_effective_skills * 4).min(8);
+    let switch_followup = (stats.post_switch_contributions * 3).min(6);
+    let finishers = (stats.knockouts * 2).min(4);
+    (card_skill + skill_variety + high_cost_effective + switch_followup + finishers).min(30)
+}
+
+fn sustain_coordination_score(stats: &SidePerformanceStats) -> u32 {
+    let shielding = ((stats.shield_absorbed.max(0) as f32 / 10.0).round() as u32).min(8);
+    let healing = ((stats.healing_done.max(0) as f32 / 10.0).round() as u32).min(6);
+    let safe_switches = (stats.post_switch_contributions * 2).min(4);
+    let high_cost_support = (stats.high_cost_effective_skills * 2).min(4);
+    let card_setup = (stats.card_skill_links * 2).min(4);
+    (shielding + healing + safe_switches + high_cost_support + card_setup).min(30)
 }
 
 fn resource_score(stats: &SidePerformanceStats, rounds: u32) -> u32 {
@@ -536,5 +676,71 @@ mod tests {
         assert_eq!(stats.player.damage_dealt, 12);
         assert_eq!(stats.player.shield_absorbed, 8);
         assert_eq!(stats.player.knockouts, 1);
+        assert_eq!(stats.player.high_cost_effective_skills, 1);
+        assert_eq!(stats.player.unique_skill_count(), 1);
+    }
+
+    #[test]
+    fn non_reaction_tactical_play_can_fill_coordination_score() {
+        let mut stats = BattlePerformanceStats::default();
+        stats.player.card_skill_links = 2;
+        stats.player.high_cost_effective_skills = 2;
+        stats.player.post_switch_contributions = 2;
+        stats.player.knockouts = 1;
+        stats.player.skill_names.insert("重击".to_string());
+        stats.player.skill_names.insert("守护".to_string());
+        stats.player.skill_names.insert("终结".to_string());
+
+        let report = build_performance_report(
+            &stats,
+            BattlePerformanceOutcome::Victory,
+            3,
+            PerformanceTeamSnapshot {
+                current_hp: 80,
+                max_hp: 100,
+                alive_count: 3,
+                member_count: 3,
+            },
+            PerformanceTeamSnapshot {
+                current_hp: 0,
+                max_hp: 100,
+                alive_count: 0,
+                member_count: 3,
+            },
+        );
+
+        assert_eq!(report.coordination.element, 0);
+        assert_eq!(report.coordination.tactical, 30);
+        assert_eq!(report.dimensions.chain, 30);
+    }
+
+    #[test]
+    fn performance_report_uses_visual_bars_and_coordination_label() {
+        let mut stats = BattlePerformanceStats::default();
+        stats.player.card_skill_links = 1;
+        stats.player.ap_spent = 6;
+
+        let report = build_performance_report(
+            &stats,
+            BattlePerformanceOutcome::Victory,
+            1,
+            PerformanceTeamSnapshot {
+                current_hp: 10,
+                max_hp: 10,
+                alive_count: 1,
+                member_count: 1,
+            },
+            PerformanceTeamSnapshot {
+                current_hp: 5,
+                max_hp: 10,
+                alive_count: 1,
+                member_count: 1,
+            },
+        );
+        let text = format_performance_report(&report);
+
+        assert!(text.contains("连携"));
+        assert!(text.contains("["));
+        assert!(text.contains("连携构成"));
     }
 }

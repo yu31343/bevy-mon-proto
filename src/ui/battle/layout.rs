@@ -2992,10 +2992,10 @@ pub(crate) fn setup_ui_system(
                 overlay
                     .spawn((
                         Node {
-                            width: Val::Px(520.0),
+                            width: Val::Px(620.0),
                             padding: UiRect::all(Val::Px(24.0)),
                             flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(18.0),
+                            row_gap: Val::Px(16.0),
                             border: border_1,
                             border_radius: BorderRadius::all(radius_panel),
                             ..default()
@@ -3021,7 +3021,7 @@ pub(crate) fn setup_ui_system(
                                 offset: Vec2::new(1.0, 1.0),
                                 color: Color::srgba(0.0, 0.0, 0.0, 0.45),
                             },
-                            TextLayout::new_with_justify(Justify::Center),
+                            TextLayout::new_with_justify(Justify::Left),
                             ResultText,
                         ));
                         panel
