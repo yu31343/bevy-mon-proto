@@ -21,6 +21,14 @@ impl CurrentMap {
             Self::Map3 => "map/map3.png",
         }
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Map1 => "翠熔流彩溪",
+            Self::Map2 => "晶光浅湾",
+            Self::Map3 => "暗雷深渊",
+        }
+    }
 }
 
 #[derive(Component)]
@@ -54,4 +62,27 @@ pub struct EnterLobbyButton;
 #[derive(Component)]
 pub struct MapNavigationButton {
     pub target: CurrentMap,
+}
+
+#[derive(Component)]
+pub struct MapNameBannerRoot;
+
+#[derive(Component)]
+pub struct MapNameBannerText;
+
+#[derive(Component)]
+pub struct MapNameBannerLine;
+
+/// 地图名横幅动画计时器（总时长 2.0 秒：渐入 0.5 + 保持 1.0 + 渐出 0.5）。
+#[derive(Resource)]
+pub struct MapNameBannerTimer {
+    pub timer: Timer,
+}
+
+impl Default for MapNameBannerTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(2.0, TimerMode::Once),
+        }
+    }
 }

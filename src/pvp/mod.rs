@@ -1369,6 +1369,7 @@ fn pvp_lobby_button_system(
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut input: ResMut<PvpLobbyInput>,
+    online_connection: Option<Res<crate::online::OnlineConnection>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut host_buttons {
@@ -1487,7 +1488,11 @@ fn pvp_lobby_button_system(
                 connection.stop_with_leave(Some("对方已返回大厅，联机已取消。".to_string()));
                 reset_session_state(&mut team_state, &mut incoming_intents);
                 connection.status = PvpStatus::Idle;
-                next_state.set(GameState::Lobby);
+                if online_connection.as_ref().map_or(false, |c| c.user_id.is_some()) {
+                    next_state.set(GameState::OnlineHome);
+                } else {
+                    next_state.set(GameState::Lobby);
+                }
             }
             return;
         }

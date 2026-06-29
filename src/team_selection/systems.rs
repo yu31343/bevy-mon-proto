@@ -232,6 +232,7 @@ pub fn button_back_to_lobby_system(
     mut pvp_connection: Option<ResMut<PvpConnection>>,
     mut pvp_team_state: Option<ResMut<PvpTeamState>>,
     mut pvp_incoming_intents: Option<ResMut<PvpIncomingIntents>>,
+    online_connection: Option<Res<crate::online::OnlineConnection>>,
 ) {
     for interaction in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -257,7 +258,13 @@ pub fn button_back_to_lobby_system(
                 incoming_intents.0.clear();
             }
         }
-        next_state.set(GameState::Lobby);
+        if *entry_mode == SelectionEntryMode::Pvp
+            && online_connection.as_ref().map_or(false, |c| c.user_id.is_some())
+        {
+            next_state.set(GameState::OnlineHome);
+        } else {
+            next_state.set(GameState::Lobby);
+        }
     }
 }
 
