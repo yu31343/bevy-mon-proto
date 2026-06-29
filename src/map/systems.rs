@@ -2,7 +2,8 @@ use crate::console_log::{ConsoleLogCategory, log as console_log};
 use crate::data::{MapBattleContext, MonsterPool};
 use crate::game_state::GameState;
 use crate::map::components::{
-    Character, CurrentMap, EnterLobbyButton, Map, MapNavigationButton, MapSpriteOutline, MapUiRoot,
+    Character, CurrentMap, EnterLobbyButton, Map, MapNameBannerLine, MapNameBannerRoot,
+    MapNameBannerText, MapNameBannerTimer, MapNavigationButton, MapSpriteOutline, MapUiRoot,
     SpriteEntity, SpriteNameLabel,
 };
 use crate::team_selection::SelectionEntryMode;
@@ -192,10 +193,14 @@ pub fn setup_map_ui(
     ui_font: Option<Res<UiFontHandle>>,
     current_map: Res<CurrentMap>,
     existing_ui: Query<(), With<MapUiRoot>>,
+    mut banner_timer: ResMut<MapNameBannerTimer>,
 ) {
     if !existing_ui.is_empty() {
         return;
     }
+
+    // 进入地图系统时触发地图名横幅
+    banner_timer.timer.reset();
 
     commands
         .spawn((
@@ -262,7 +267,7 @@ pub fn setup_map_ui(
             ))
             .with_children(|btn| {
                 btn.spawn((
-                    Text::new("← map1"),
+                    Text::new(CurrentMap::Map1.name()),
                     make_text_font(24.0, ui_font.as_deref()),
                     TextColor(theme.text_primary),
                 ));
@@ -296,7 +301,7 @@ pub fn setup_map_ui(
             ))
             .with_children(|btn| {
                 btn.spawn((
-                    Text::new("→ map2"),
+                    Text::new(CurrentMap::Map2.name()),
                     make_text_font(24.0, ui_font.as_deref()),
                     TextColor(theme.text_primary),
                 ));
@@ -330,9 +335,59 @@ pub fn setup_map_ui(
             ))
             .with_children(|btn| {
                 btn.spawn((
-                    Text::new("↘ map3"),
+                    Text::new(CurrentMap::Map3.name()),
                     make_text_font(24.0, ui_font.as_deref()),
                     TextColor(theme.text_primary),
+                ));
+            });
+
+            // === 地图名横幅：透明背景，横线+文字+横线，从顶部滑入 ===
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(0.0),
+                    right: Val::Percent(0.0),
+                    top: Val::Percent(-15.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(24.0),
+                    display: Display::None,
+                    ..default()
+                },
+                MapNameBannerRoot,
+                ZIndex(100),
+            ))
+            .with_children(|banner| {
+                // 左侧横线
+                banner.spawn((
+                    Node {
+                        width: Val::Px(0.0),
+                        height: Val::Px(3.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    MapNameBannerLine,
+                ));
+                // 地图名文字（浅金色系，非纯白）
+                banner.spawn((
+                    Text::new(current_map.name()),
+                    make_text_font(72.0, ui_font.as_deref()),
+                    TextColor(Color::NONE),
+                    TextShadow {
+                        offset: Vec2::new(3.0, 3.0),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.65),
+                    },
+                    MapNameBannerText,
+                ));
+                // 右侧横线
+                banner.spawn((
+                    Node {
+                        width: Val::Px(0.0),
+                        height: Val::Px(3.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    MapNameBannerLine,
                 ));
             });
         });
@@ -451,6 +506,7 @@ pub fn map_enter_lobby_button_system(
 
 pub fn map_navigation_button_system(
     mut current_map: ResMut<CurrentMap>,
+    mut banner_timer: ResMut<MapNameBannerTimer>,
     mut button_query: Query<
         (&Interaction, &MapNavigationButton),
         (Changed<Interaction>, With<Button>),
@@ -459,6 +515,8 @@ pub fn map_navigation_button_system(
     for (interaction, button) in &mut button_query {
         if *interaction == Interaction::Pressed {
             *current_map = button.target;
+            // 切换到另一张地图时重新触发地图名横幅
+            banner_timer.timer.reset();
         }
     }
 }
@@ -526,6 +584,94 @@ pub fn map_button_visual_system(
             Interaction::None => BorderColor::all(theme.button_border_idle),
         };
     }
+}
+
+pub fn map_name_banner_system(
+    time: Res<Time>,
+    current_map: Res<CurrentMap>,
+    mut banner_timer: ResMut<MapNameBannerTimer>,
+    mut root_q: Query<&mut Node, With<MapNameBannerRoot>>,
+    mut text_q: Query<(&mut Text, &mut TextColor), With<MapNameBannerText>>,
+    mut line_q: Query<
+        (&mut Node, &mut BackgroundColor),
+        (With<MapNameBannerLine>, Without<MapNameBannerRoot>),
+    >,
+) {
+    if banner_timer.timer.elapsed() >= banner_timer.timer.duration() {
+        for mut node in &mut root_q {
+            node.display = Display::None;
+        }
+        return;
+    }
+
+    banner_timer.timer.tick(time.delta());
+
+    // 总时长 2.0s：0.0~0.5 滑入，0.5~1.5 保持，1.5~2.0 滑出
+    let elapsed = banner_timer.timer.elapsed().as_secs_f32();
+    let total = banner_timer.timer.duration().as_secs_f32();
+
+    // 位置：渐入时 top 从 -15% 滑到 18%，渐出时从 18% 滑到 -15%
+    let target_top = 18.0;
+    let offscreen_top = -15.0;
+    let top = if elapsed <= 0.5 {
+        let t = smoothstep(0.0, 0.5, elapsed);
+        offscreen_top + (target_top - offscreen_top) * t
+    } else if elapsed <= 1.5 {
+        target_top
+    } else if elapsed < total {
+        let t = smoothstep(1.5, 2.0, elapsed);
+        target_top + (offscreen_top - target_top) * t
+    } else {
+        offscreen_top
+    };
+
+    // 透明度：渐入 0→1，保持 1，渐出 1→0
+    let alpha = if elapsed <= 0.5 {
+        smoothstep(0.0, 0.5, elapsed)
+    } else if elapsed <= 1.5 {
+        1.0
+    } else if elapsed < total {
+        smoothstep(2.0, 1.5, elapsed)
+    } else {
+        0.0
+    };
+
+    // 横线宽度：渐入 0→120，保持 120，渐出 120→0
+    let line_width = if elapsed <= 0.5 {
+        120.0 * smoothstep(0.0, 0.5, elapsed)
+    } else if elapsed <= 1.5 {
+        120.0
+    } else if elapsed < total {
+        120.0 * smoothstep(2.0, 1.5, elapsed)
+    } else {
+        0.0
+    };
+
+    // 浅金色系文字颜色（非纯白）
+    let text_color = Color::srgba(0.96, 0.90, 0.76, alpha);
+    let line_color = Color::srgba(0.96, 0.90, 0.76, alpha * 0.8);
+
+    for mut node in &mut root_q {
+        node.display = Display::Flex;
+        node.top = Val::Percent(top);
+    }
+
+    for (mut text, mut color) in &mut text_q {
+        if text.as_str() != current_map.name() {
+            *text = Text::new(current_map.name());
+        }
+        *color = TextColor(text_color);
+    }
+
+    for (mut line_node, mut line_bg) in &mut line_q {
+        line_node.width = Val::Px(line_width);
+        *line_bg = BackgroundColor(line_color);
+    }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 pub fn cleanup_map(
