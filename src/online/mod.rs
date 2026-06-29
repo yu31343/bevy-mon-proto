@@ -246,6 +246,8 @@ struct FriendListEntry {
     username: String,
     #[serde(default)]
     unread: usize,
+    #[serde(default)]
+    online: bool,
 }
 
 #[derive(Clone)]
@@ -259,6 +261,7 @@ struct FriendEntry {
     user_id: String,
     username: String,
     unread: usize,
+    online: bool,
 }
 
 #[derive(Clone)]
@@ -511,12 +514,16 @@ fn handle_server_response(
         }
         "friends_list" | "updates" => {
             if let Some(friends) = resp.friends {
+                for f in &friends {
+                    println!("[client-debug] friend={} online={}", f.username, f.online);
+                }
                 home.friends = friends
                     .into_iter()
                     .map(|f| FriendEntry {
                         user_id: f.user_id,
                         username: f.username,
                         unread: f.unread,
+                        online: f.online,
                     })
                     .collect();
             }
@@ -527,6 +534,7 @@ fn handle_server_response(
                         user_id: r.user_id,
                         username: r.username,
                         unread: 0,
+                        online: false,
                     })
                     .collect();
             }
@@ -540,6 +548,7 @@ fn handle_server_response(
                     user_id: r.user_id,
                     username: r.username,
                     unread: 0,
+                    online: false,
                 })
                 .collect();
         }
@@ -768,6 +777,7 @@ fn online_home_egui_system(
     mut home: ResMut<OnlineHomeState>,
     mut invite: ResMut<OnlineBattleInvite>,
     mut pvp_conn: ResMut<PvpConnection>,
+    mut lobby_input: ResMut<crate::pvp::PvpLobbyInput>,
     mut entry_mode: ResMut<SelectionEntryMode>,
     mut font_flag: ResMut<EguiFontRegistered>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -782,6 +792,7 @@ fn online_home_egui_system(
         invite.pending_host_target = None;
         invite.room_code = None;
         *entry_mode = SelectionEntryMode::Pvp;
+        lobby_input.screen = crate::pvp::PvpLobbyScreen::RelayHostRoom;
         next_state.set(GameState::PvpLobby);
         return;
     }
@@ -894,6 +905,11 @@ fn online_home_egui_system(
                 for friend in home.friends.clone() {
                     ui.horizontal(|ui| {
                         ui.label(&friend.username);
+                        if friend.online {
+                            ui.colored_label(egui::Color32::from_rgb(100, 220, 100), "[在线]");
+                        } else {
+                            ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "[离线]");
+                        }
                         if friend.unread > 0 {
                             ui.colored_label(
                                 egui::Color32::from_rgb(255, 80, 80),
@@ -903,13 +919,16 @@ fn online_home_egui_system(
                         if ui.button("聊天").clicked() {
                             home.pending_chat = Some(friend.clone());
                         }
-                        if ui.button("邀请对战").clicked() {
-                            // 通过 relay 创建房间
-                            let relay_addr = "127.0.0.1:42043".to_string();
-                            pvp::start_relay_host(&mut pvp_conn, relay_addr);
-                            invite.pending_host_target = Some(friend.user_id.clone());
-                            invite.room_code = None;
-                            *entry_mode = SelectionEntryMode::Pvp;
+                        if friend.online {
+                            if ui.button("邀请对战").clicked() {
+                                // 通过 relay 创建房间
+                                let relay_addr = "127.0.0.1:42043".to_string();
+                                pvp::start_relay_host(&mut pvp_conn, relay_addr);
+                                invite.pending_host_target = Some(friend.user_id.clone());
+                                invite.room_code = None;
+                                *entry_mode = SelectionEntryMode::Pvp;
+                                lobby_input.screen = crate::pvp::PvpLobbyScreen::RelayHostRoom;
+                            }
                         }
                     });
                 }
@@ -967,6 +986,7 @@ fn online_home_egui_system(
                                     text: "BATTLE_ACCEPT",
                                 });
                                 *entry_mode = SelectionEntryMode::Pvp;
+                                lobby_input.screen = crate::pvp::PvpLobbyScreen::RelayJoinRoom;
                                 invite.incoming = None;
                                 next_state.set(GameState::PvpLobby);
                             }
@@ -1011,6 +1031,7 @@ fn online_chat_egui_system(
     mut chat: ResMut<OnlineChatState>,
     mut invite: ResMut<OnlineBattleInvite>,
     mut pvp_conn: ResMut<PvpConnection>,
+    mut lobby_input: ResMut<crate::pvp::PvpLobbyInput>,
     mut entry_mode: ResMut<SelectionEntryMode>,
     mut font_flag: ResMut<EguiFontRegistered>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -1025,6 +1046,7 @@ fn online_chat_egui_system(
         invite.pending_host_target = None;
         invite.room_code = None;
         *entry_mode = SelectionEntryMode::Pvp;
+        lobby_input.screen = crate::pvp::PvpLobbyScreen::RelayHostRoom;
         next_state.set(GameState::PvpLobby);
         return;
     }

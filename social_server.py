@@ -18,6 +18,8 @@ users = {}  # user_id(str) -> {"username", "password", "friends": set(), "pendin
 username_index = {}  # username(lower) -> user_id
 messages = {}  # f"{min_id}_{max_id}" -> [{"from", "text", "ts"}]
 messages_lock = threading.Lock()
+online_users = set()  # user_id(str) set of currently connected+logged-in users
+online_lock = threading.Lock()
 
 
 def main():
@@ -52,11 +54,20 @@ def handle_client(conn, addr):
             resp = handle_request(req, session_user_id)
             if "session_user_id" in resp:
                 session_user_id = resp["session_user_id"]
+                if session_user_id is not None:
+                    with online_lock:
+                        online_users.add(str(session_user_id))
             send_message(conn, json.dumps(resp).encode("utf-8"))
-            print(f"[sent] {addr}: {resp.get('type', '?')}", flush=True)
+            if resp.get("type") == "updates":
+                print(f"[sent] {addr}: updates | {json.dumps(resp, ensure_ascii=False)}", flush=True)
+            else:
+                print(f"[sent] {addr}: {resp.get('type', '?')}", flush=True)
     except Exception as exc:
         print(f"[error] {addr}: {exc}", flush=True)
     finally:
+        if session_user_id is not None:
+            with online_lock:
+                online_users.discard(str(session_user_id))
         conn.close()
 
 
@@ -264,6 +275,9 @@ def do_get_updates(uid):
         ]
         last_read = u.get("last_read", {})
         friends = []
+        with online_lock:
+            current_online = set(online_users)
+        print(f"[debug] uid={uid} online_users={current_online} friends_of_uid={u['friends']}", flush=True)
         for fid in u["friends"]:
             if fid not in users:
                 continue
@@ -273,10 +287,13 @@ def do_get_updates(uid):
                 msgs = messages.get(key, [])
                 lr = last_read.get(fid, 0)
                 unread = sum(1 for m in msgs if m["from"] != uid and m["ts"] > lr)
+            is_online = fid in current_online
+            print(f"[debug]   fid={fid} is_online={is_online} (fid in online_users={fid in current_online})", flush=True)
             friends.append({
                 "user_id": fid,
                 "username": users[fid]["username"],
                 "unread": unread,
+                "online": is_online,
             })
     return {"type": "updates", "pending_requests": requests, "friends": friends}
 
