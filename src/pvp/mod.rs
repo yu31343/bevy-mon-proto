@@ -1488,7 +1488,10 @@ fn pvp_lobby_button_system(
                 connection.stop_with_leave(Some("对方已返回大厅，联机已取消。".to_string()));
                 reset_session_state(&mut team_state, &mut incoming_intents);
                 connection.status = PvpStatus::Idle;
-                if online_connection.as_ref().map_or(false, |c| c.user_id.is_some()) {
+                if online_connection
+                    .as_ref()
+                    .is_some_and(|c| c.user_id.is_some())
+                {
                     next_state.set(GameState::OnlineHome);
                 } else {
                     next_state.set(GameState::Lobby);

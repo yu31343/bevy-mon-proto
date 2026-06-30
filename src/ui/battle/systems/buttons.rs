@@ -1332,7 +1332,7 @@ pub(crate) fn button_retreat_confirm_system(
                 *current_map = map;
                 next_game_state.set(GameState::Map);
             } else if *battle_mode == BattleControlMode::PlayerVsRemote
-                && online_connection.map_or(false, |c| c.user_id.is_some())
+                && online_connection.is_some_and(|c| c.user_id.is_some())
             {
                 next_game_state.set(GameState::OnlineHome);
             } else {

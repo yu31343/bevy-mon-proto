@@ -704,7 +704,7 @@ fn return_from_result(
         }
     }
     // 如果是从在线系统进入的对战，返回在线主页
-    if is_pvp && online_connection.map_or(false, |c| c.user_id.is_some()) {
+    if is_pvp && online_connection.is_some_and(|c| c.user_id.is_some()) {
         next_game_state.set(GameState::OnlineHome);
     } else {
         next_game_state.set(GameState::Lobby);

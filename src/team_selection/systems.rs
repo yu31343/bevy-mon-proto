@@ -259,7 +259,9 @@ pub fn button_back_to_lobby_system(
             }
         }
         if *entry_mode == SelectionEntryMode::Pvp
-            && online_connection.as_ref().map_or(false, |c| c.user_id.is_some())
+            && online_connection
+                .as_ref()
+                .is_some_and(|c| c.user_id.is_some())
         {
             next_state.set(GameState::OnlineHome);
         } else {
