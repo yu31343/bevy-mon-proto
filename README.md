@@ -2,43 +2,6 @@
 
 ## 基于Rust语言与Bevy游戏引擎的开发实践
 
-## 写在项目前
-
-### 关于git的使用：
-
-当前项目开发主要在 `develop` 分支。建议每个开发者创建一个自己的分支，如 `dev-name` 并拉取develop的最新内容，在自己的分支上进行修改。注意，做任何修改前 **请确认你的本地文件与当前develop分支的内容同步！**
-
-你的分支当前阶段的修改完成后，请 **提交  pull requests** 合并到 `develop` 或提醒仓库拥有者进行合并更改。
-
-
-### 项目注意事项：
-本项目需要使用 bevy ，编译前 cargo 会自动下载
-如果cargo的下载速度较慢，可以使用以下镜像源加速下载：
-
-在linux： `~/.cargo/config.toml `文件或
-
-Windows下：`C:\Users\你的用户名\.cargo\config.toml`中，(没有请自行创建该文件)
-添加以下内容：
-
-```toml
-[source.crates-io]
-registry = "https://github.com/rust-lang/crates.io-index"
-replace-with = 'aliyun'
-[source.aliyun]
-registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
-```
-请注意，目前阿里云镜像仅支持稀疏索引配置，需要您的 cargo 版本 >=1.68。
-
-
-
-另外，本项目默认开启了  [dynamic_linking](https://bevy.org/learn/quick-start/getting-started/setup/#dynamic_linking) 特性，并同时启用了 [performance optimizations](https://bevy.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations)，以加速编译。
-
-这使得编译生成的exe可执行文件无法独立运行，如果需要release正式的独立可执行文件，请注意移除该特性，
-
-详情请自行阅读[bevy官方文档](https://bevy.org/learn/quick-start/getting-started/) 。
-
-
-
 # 一、项目当前状态
 
 本项目当前是一个基于 Rust + Bevy 的 2D 回合制精灵对战原型，已从早期 MVP 描述推进到较完整的“大厅 / 地图 / 队伍选择 / 本地战斗 / 局域网或中继 PVP / 日志导出”闭环。
