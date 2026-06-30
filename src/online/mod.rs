@@ -18,6 +18,7 @@ use crate::{
 };
 
 const SOCIAL_PORT: u16 = 42044;
+const SOCIAL_RELAY_PORT: &str = "42043";
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -61,6 +62,8 @@ pub struct OnlineConnection {
     event_rx: Option<Mutex<mpsc::Receiver<OnlineEvent>>>,
     pub user_id: Option<String>,
     pub username: String,
+    server_address: String,
+    relay_address: String,
 }
 
 #[derive(Debug)]
@@ -82,6 +85,8 @@ impl OnlineConnection {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (evt_tx, evt_rx) = mpsc::channel();
         let addr = address.to_string();
+        self.server_address = addr.clone();
+        self.relay_address.clear();
         thread::spawn(move || online_thread(addr, cmd_rx, evt_tx));
         self.command_tx = Some(cmd_tx);
         self.event_rx = Some(Mutex::new(evt_rx));
@@ -102,6 +107,29 @@ impl OnlineConnection {
         if let Some(tx) = &self.command_tx {
             let _ = tx.send(OnlineCommand::Send(json));
         }
+    }
+
+    fn relay_address(&self) -> String {
+        let configured = self.relay_address.trim();
+        if !configured.is_empty()
+            && !configured.starts_with("0.0.0.0:")
+            && !configured.starts_with(':')
+        {
+            return configured.to_string();
+        }
+
+        let port = configured
+            .rsplit_once(':')
+            .map(|(_, port)| port)
+            .filter(|port| !port.is_empty())
+            .unwrap_or(SOCIAL_RELAY_PORT);
+        let host = self
+            .server_address
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .filter(|host| !host.is_empty())
+            .unwrap_or("127.0.0.1");
+        format!("{host}:{port}")
     }
 }
 
@@ -178,6 +206,7 @@ struct OnlineLoginInput {
     info: String,
     is_register: bool,
     connecting: bool,
+    auth_request_sent: bool,
 }
 
 #[derive(Resource, Default)]
@@ -331,6 +360,14 @@ struct ReqSendMessage<'a> {
     text: &'a str,
 }
 
+#[derive(Serialize)]
+struct ReqGetMessages<'a> {
+    #[serde(rename = "type")]
+    req_type: &'a str,
+    user_id: &'a str,
+    mark_read: bool,
+}
+
 #[derive(Deserialize)]
 struct ServerResponse {
     #[serde(rename = "type")]
@@ -344,6 +381,7 @@ struct ServerResponse {
     requests: Option<Vec<FriendListEntry>>,
     messages: Option<Vec<ServerMessage>>,
     from_user_id: Option<String>,
+    relay_address: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -392,10 +430,12 @@ fn online_poll_system(
             OnlineEvent::Failed(msg) => {
                 login_input.info = msg;
                 login_input.connecting = false;
+                login_input.auth_request_sent = false;
             }
             OnlineEvent::Disconnected => {
                 login_input.info = "连接已断开".into();
                 login_input.connecting = false;
+                login_input.auth_request_sent = false;
             }
         }
     }
@@ -452,9 +492,10 @@ fn online_poll_system(
                     home.msg_poll_index += 1;
                     send_request(
                         &conn,
-                        &ReqWithId {
+                        &ReqGetMessages {
                             req_type: "get_messages",
                             user_id: &fid,
+                            mark_read: false,
                         },
                     );
                 }
@@ -468,9 +509,10 @@ fn online_poll_system(
                     let from = chat.target_user_id.clone();
                     send_request(
                         &conn,
-                        &ReqWithId {
+                        &ReqGetMessages {
                             req_type: "get_messages",
                             user_id: &from,
+                            mark_read: true,
                         },
                     );
                 }
@@ -492,6 +534,9 @@ fn handle_server_response(
     let Ok(mut resp) = serde_json::from_str::<ServerResponse>(json) else {
         return;
     };
+    if let Some(relay_address) = resp.relay_address.take() {
+        conn.relay_address = relay_address;
+    }
     match resp.resp_type.as_str() {
         "register_ok" | "login_ok" => {
             conn.user_id = resp.user_id.clone();
@@ -506,6 +551,7 @@ fn handle_server_response(
                 conn.username
             );
             login_input.connecting = false;
+            login_input.auth_request_sent = false;
             home.new_username = conn.username.clone();
             next_state.set(GameState::OnlineHome);
             send_request(
@@ -591,9 +637,10 @@ fn handle_server_response(
             let from = chat.target_user_id.clone();
             send_request(
                 conn,
-                &ReqWithId {
+                &ReqGetMessages {
                     req_type: "get_messages",
                     user_id: &from,
+                    mark_read: true,
                 },
             );
         }
@@ -666,9 +713,10 @@ fn handle_server_response(
         }
         "error" => {
             let msg = resp.message.unwrap_or("未知错误".into());
-            if login_input.connecting {
+            if login_input.connecting || login_input.auth_request_sent {
                 login_input.info = msg;
                 login_input.connecting = false;
+                login_input.auth_request_sent = false;
             } else if !home.info.is_empty() || home.refresh_timer > 0.0 {
                 home.info = msg;
             } else {
@@ -859,7 +907,8 @@ fn show_invite_feedback_windows(
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             if online_button(ui, "同意", theme).clicked() {
-                                let relay_addr = "127.0.0.1:42043".to_string();
+                                let relay_addr = conn.relay_address();
+                                lobby_input.relay_address = relay_addr.clone();
                                 pvp::start_relay_client(
                                     pvp_conn,
                                     relay_addr,
@@ -983,7 +1032,7 @@ fn online_login_egui_system(
 
                 if input.connecting {
                     // 连接建立后自动发送请求
-                    if conn.is_connected() {
+                    if conn.is_connected() && !input.auth_request_sent {
                         let req = if input.is_register {
                             serde_json::to_string(&ReqRegister {
                                 req_type: "register",
@@ -1000,12 +1049,17 @@ fn online_login_egui_system(
                         if let Ok(json) = req {
                             conn.send(json);
                             input.info = "请求中...".into();
+                            input.auth_request_sent = true;
                         }
-                        input.connecting = false;
-                    } else {
+                    } else if !conn.is_connected() {
                         ui.horizontal(|ui| {
                             ui.spinner();
                             show_status_message(ui, "正在连接服务器...", &theme);
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            show_status_message(ui, "请求中...", &theme);
                         });
                     }
                 } else if online_button(
@@ -1024,6 +1078,7 @@ fn online_login_egui_system(
                     } else if !conn.is_connected() {
                         conn.connect(&input.server_address);
                         input.connecting = true;
+                        input.auth_request_sent = false;
                         input.info = "正在连接服务器...".into();
                     } else {
                         let req = if input.is_register {
@@ -1041,6 +1096,8 @@ fn online_login_egui_system(
                         };
                         if let Ok(json) = req {
                             conn.send(json);
+                            input.connecting = true;
+                            input.auth_request_sent = true;
                             input.info = "请求中...".into();
                         }
                     }
@@ -1264,8 +1321,9 @@ fn online_home_egui_system(
                             }
                             if friend.online {
                                 if online_button(ui, "邀请对战", &theme).clicked() {
-                                    // 通过 relay 创建房间
-                                    let relay_addr = "127.0.0.1:42043".to_string();
+                                    // 通过社交服下发/继承的 relay 创建房间
+                                    let relay_addr = conn.relay_address();
+                                    lobby_input.relay_address = relay_addr.clone();
                                     pvp::start_relay_host(&mut pvp_conn, relay_addr);
                                     invite.pending_host_target = Some(friend.user_id.clone());
                                     invite.room_code = None;
@@ -1442,9 +1500,10 @@ fn online_chat_egui_system(
                     let from = chat.target_user_id.clone();
                     send_request(
                         &conn,
-                        &ReqWithId {
+                        &ReqGetMessages {
                             req_type: "get_messages",
                             user_id: &from,
+                            mark_read: true,
                         },
                     );
                     chat.info = "正在刷新聊天记录...".into();
@@ -1471,6 +1530,7 @@ fn online_chat_egui_system(
 fn cleanup_online_login(mut input: ResMut<OnlineLoginInput>) {
     input.info.clear();
     input.connecting = false;
+    input.auth_request_sent = false;
 }
 
 fn cleanup_online_home(mut home: ResMut<OnlineHomeState>) {

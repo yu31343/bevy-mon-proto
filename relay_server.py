@@ -32,12 +32,15 @@ def main():
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
+    serve(args.host, args.port)
 
+
+def serve(host=DEFAULT_HOST, port=DEFAULT_PORT):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind((args.host, args.port))
+        listener.bind((host, port))
         listener.listen()
-        print(f"relay listening on {args.host}:{args.port}", flush=True)
+        print(f"relay listening on {host}:{port}", flush=True)
         while True:
             conn, addr = listener.accept()
             thread = threading.Thread(target=handle_connection, args=(conn, addr), daemon=True)

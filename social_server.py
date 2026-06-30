@@ -5,10 +5,10 @@ import socket
 import struct
 import threading
 import time
-import secrets
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 42044
+DEFAULT_RELAY_PORT = 42043
 MAX_FRAME_LEN = 64 * 1024
 
 # 内存存储
@@ -18,8 +18,10 @@ users = {}  # user_id(str) -> {"username", "password", "friends": set(), "pendin
 username_index = {}  # username(lower) -> user_id
 messages = {}  # f"{min_id}_{max_id}" -> [{"from", "text", "ts"}]
 messages_lock = threading.Lock()
-online_users = set()  # user_id(str) set of currently connected+logged-in users
+online_sessions = {}  # user_id(str) -> active client socket
 online_lock = threading.Lock()
+relay_advertise_host = DEFAULT_HOST
+relay_advertise_port = DEFAULT_RELAY_PORT
 
 
 def main():
@@ -27,17 +29,63 @@ def main():
     parser = argparse.ArgumentParser(description="bevy-mon-proto social server")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--no-relay",
+        action="store_true",
+        help="不随社交服自动启动 PVP relay server",
+    )
+    parser.add_argument(
+        "--relay-bind-host",
+        default=None,
+        help="relay 监听地址；默认继承 --host",
+    )
+    parser.add_argument(
+        "--relay-host",
+        default=None,
+        help="下发给客户端的 relay 地址主机；默认继承 --host，0.0.0.0 时客户端会继承社交服地址",
+    )
+    parser.add_argument("--relay-port", type=int, default=DEFAULT_RELAY_PORT)
     args = parser.parse_args()
+
+    global relay_advertise_host, relay_advertise_port
+    relay_advertise_host = args.relay_host or args.host
+    relay_advertise_port = args.relay_port
+
+    if not args.no_relay:
+        start_relay_server(args.relay_bind_host or args.host, args.relay_port)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((args.host, args.port))
         listener.listen()
         print(f"social server listening on {args.host}:{args.port}", flush=True)
+        print(f"social server advertises relay {relay_address()}", flush=True)
         while True:
             conn, addr = listener.accept()
             t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
             t.start()
+
+
+def start_relay_server(host, port):
+    def run():
+        try:
+            import relay_server
+            relay_server.serve(host, port)
+        except Exception as exc:
+            print(f"[relay error] {exc}", flush=True)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def relay_address():
+    return f"{relay_advertise_host}:{relay_advertise_port}"
+
+
+def with_relay_config(resp):
+    resp["relay_address"] = relay_address()
+    return resp
 
 
 def handle_client(conn, addr):
@@ -53,10 +101,15 @@ def handle_client(conn, addr):
             print(f"[recv] {addr}: {req.get('type', '?')} | {json.dumps(req, ensure_ascii=False)}", flush=True)
             resp = handle_request(req, session_user_id)
             if "session_user_id" in resp:
-                session_user_id = resp["session_user_id"]
-                if session_user_id is not None:
+                next_session_user_id = resp["session_user_id"]
+                if next_session_user_id is not None:
+                    next_session_user_id = str(next_session_user_id)
                     with online_lock:
-                        online_users.add(str(session_user_id))
+                        if session_user_id is not None and session_user_id != next_session_user_id:
+                            if online_sessions.get(session_user_id) is conn:
+                                online_sessions.pop(session_user_id, None)
+                        online_sessions[next_session_user_id] = conn
+                    session_user_id = next_session_user_id
             send_message(conn, json.dumps(resp).encode("utf-8"))
             print(f"[sent] {addr}: {resp.get('type', '?')}", flush=True)
     except Exception as exc:
@@ -64,7 +117,8 @@ def handle_client(conn, addr):
     finally:
         if session_user_id is not None:
             with online_lock:
-                online_users.discard(str(session_user_id))
+                if online_sessions.get(session_user_id) is conn:
+                    online_sessions.pop(session_user_id, None)
         conn.close()
 
 
@@ -73,7 +127,7 @@ def handle_request(req, session_user_id):
     if t == "register":
         return do_register(req.get("username", ""), req.get("password", ""))
     if t == "login":
-        return do_login(req.get("username", ""), req.get("password", ""))
+        return do_login(req.get("username", ""), req.get("password", ""), session_user_id)
     if session_user_id is None:
         return {"type": "error", "message": "未登录"}
     if t == "get_profile":
@@ -93,7 +147,11 @@ def handle_request(req, session_user_id):
     if t == "send_message":
         return do_send_message(session_user_id, req.get("to_user_id", ""), req.get("text", ""))
     if t == "get_messages":
-        return do_get_messages(session_user_id, req.get("from_user_id", req.get("user_id", "")))
+        return do_get_messages(
+            session_user_id,
+            req.get("from_user_id", req.get("user_id", "")),
+            bool(req.get("mark_read", True)),
+        )
     if t == "get_updates":
         return do_get_updates(session_user_id)
     return {"type": "error", "message": f"未知命令: {t}"}
@@ -107,7 +165,7 @@ def do_register(username, password):
     with users_lock:
         key = username.lower()
         if key in username_index:
-            return {"type": "error", "message": "用户名已存在"}
+            return {"type": "error", "message": "用户名已存在，请直接登录或换一个用户名"}
         uid = str(next_user_id)
         next_user_id += 1
         users[uid] = {
@@ -119,20 +177,24 @@ def do_register(username, password):
         }
         username_index[key] = uid
     print(f"register: {username} -> id={uid}", flush=True)
-    return {"type": "register_ok", "user_id": uid, "username": username, "session_user_id": uid}
+    return with_relay_config({"type": "register_ok", "user_id": uid, "username": username, "session_user_id": uid})
 
 
-def do_login(username, password):
+def do_login(username, password, current_session_user_id=None):
     with users_lock:
         key = username.strip().lower()
         uid = username_index.get(key)
         if uid is None:
-            return {"type": "error", "message": "用户不存在"}
+            return {"type": "error", "message": "用户不存在，请先注册账号"}
         u = users[uid]
         if u["password"] != password:
             return {"type": "error", "message": "密码错误"}
+    with online_lock:
+        existing_conn = online_sessions.get(uid)
+        if existing_conn is not None and uid != current_session_user_id:
+            return {"type": "error", "message": "该账号已在其他客户端登录，请先退出后再登录"}
     print(f"login: {username} -> id={uid}", flush=True)
-    return {"type": "login_ok", "user_id": uid, "username": u["username"], "session_user_id": uid}
+    return with_relay_config({"type": "login_ok", "user_id": uid, "username": u["username"], "session_user_id": uid})
 
 
 def do_get_profile(uid):
@@ -140,7 +202,7 @@ def do_get_profile(uid):
         u = users.get(uid)
         if u is None:
             return {"type": "error", "message": "用户不存在"}
-        return {"type": "profile", "user_id": uid, "username": u["username"]}
+        return with_relay_config({"type": "profile", "user_id": uid, "username": u["username"]})
 
 
 def do_update_username(uid, new_name):
@@ -248,16 +310,16 @@ def do_send_message(uid, to_id, text):
     return {"type": "message_sent"}
 
 
-def do_get_messages(uid, from_id):
+def do_get_messages(uid, from_id, mark_read=True):
     key = msg_key(uid, from_id)
     with messages_lock:
         msgs = messages.get(key, [])
         result = [{"from": m["from"], "text": m["text"], "ts": m["ts"]} for m in msgs]
-    # 更新已读时间
-    with users_lock:
-        u = users.get(uid)
-        if u is not None:
-            u.setdefault("last_read", {})[from_id] = time.time()
+    if mark_read:
+        with users_lock:
+            u = users.get(uid)
+            if u is not None:
+                u.setdefault("last_read", {})[from_id] = time.time()
     return {"type": "messages", "from_user_id": from_id, "messages": result}
 
 
@@ -282,14 +344,14 @@ def do_get_updates(uid):
                 lr = last_read.get(fid, 0)
                 unread = sum(1 for m in msgs if m["from"] != uid and m["ts"] > lr)
             with online_lock:
-                is_online = fid in online_users
+                is_online = fid in online_sessions
             friends.append({
                 "user_id": fid,
                 "username": users[fid]["username"],
                 "unread": unread,
                 "online": is_online,
             })
-    return {"type": "updates", "pending_requests": requests, "friends": friends}
+    return with_relay_config({"type": "updates", "pending_requests": requests, "friends": friends})
 
 
 def msg_key(a, b):
