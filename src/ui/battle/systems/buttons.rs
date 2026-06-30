@@ -2,12 +2,15 @@ use bevy::prelude::*;
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, EnemyTeam, Hand, InBattle, PendingBoosts,
-        PlayerTeam, SelectedCards, Side, SkillCount, SkillList, Stats, StatusBoard, TurnContext,
-        UiControlSide, transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResultAction, EnemyTeam, Hand,
+        InBattle, PendingBattleResultAction, PendingHandDiscard, PendingTacticalDiscard,
+        PlayerTeam, SelectedCards, Shield, Side, SkillCount, SkillList, SkillUses, Stats,
+        StatusBoard, StatusInstance, StatusStageModifier, TurnContext, TurnCount, UiControlSide,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
-    data::BattleDbs,
+    data::{AttributeType, BattleDbs, BattleRules, MapBattleContext, StatusCategory},
     game_state::{BattlePhase, GameState},
+    map::components::CurrentMap,
     pvp,
 };
 
@@ -18,7 +21,44 @@ pub(crate) struct SwitchOverlayOpen(pub bool);
 
 #[derive(Resource, Default)]
 pub(crate) struct RetreatConfirmState {
-    pub armed: bool,
+    pub open: bool,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct BattleHintOverlayState {
+    pub open: bool,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct CheatMenuState {
+    pub open: bool,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub(crate) struct HandFullEndTurnWarning {
+    pub border_timer: Timer,
+    pub hint_timer: Timer,
+    pub hint_text: &'static str,
+}
+
+pub(crate) const HAND_FULL_END_TURN_HINT: &str = "手牌大于4张，请弃牌至4张";
+
+impl HandFullEndTurnWarning {
+    pub(crate) fn trigger_end_turn_blocked(&mut self) {
+        self.border_timer = Timer::from_seconds(1.0, TimerMode::Once);
+        self.hint_timer = Timer::from_seconds(3.0, TimerMode::Once);
+        self.hint_text = HAND_FULL_END_TURN_HINT;
+    }
+}
+
+impl Default for HandFullEndTurnWarning {
+    fn default() -> Self {
+        Self {
+            border_timer: Timer::from_seconds(0.0, TimerMode::Once),
+            hint_timer: Timer::from_seconds(0.0, TimerMode::Once),
+            hint_text: HAND_FULL_END_TURN_HINT,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -61,6 +101,13 @@ fn waiting_for_pvp_snapshot(
             .is_some_and(|pending| pending.0.is_some())
 }
 
+fn pending_tactical_discard_for_side(
+    pending: &Option<Res<PendingTacticalDiscard>>,
+    side: Side,
+) -> bool {
+    pending.as_ref().is_some_and(|pending| pending.side == side)
+}
+
 fn send_client_intent(
     battle_mode: BattleControlMode,
     connection: &mut Option<ResMut<pvp::PvpConnection>>,
@@ -80,6 +127,29 @@ fn send_client_intent(
         pvp::send_local_intent(connection, pending_intent, intent);
     }
     true
+}
+
+fn predict_local_card_discard(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap += 1;
+    }
+}
+
+fn predict_local_card_use(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+    cost_ap: i32,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap -= cost_ap;
+    }
 }
 
 pub(crate) fn button_toggle_switch_overlay_system(
@@ -210,13 +280,16 @@ pub(crate) fn button_select_skill_system(
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
-    query: Query<(&SkillList, &SkillCount), With<InBattle>>,
+    query: Query<(&SkillList, &SkillCount, &SkillUses), With<InBattle>>,
     battle_dbs: Res<BattleDbs>,
     pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }
@@ -227,7 +300,7 @@ pub(crate) fn button_select_skill_system(
     let Some(active_entity) = active_entity else {
         return;
     };
-    let Ok((skills, skill_count)) = query.get(active_entity) else {
+    let Ok((skills, skill_count, skill_uses)) = query.get(active_entity) else {
         return;
     };
     let skills = skills.0;
@@ -239,6 +312,12 @@ pub(crate) fn button_select_skill_system(
         if button.index >= skill_count.0 {
             continue;
         }
+        if !skill_uses.has_remaining(button.index) {
+            ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
+            continue;
+        }
         let skill_id = skills[button.index];
         let cost = super::super::helpers::monster_skill_ap_cost_ui(skill_id, &battle_dbs);
         let ap = match ui_control_side.0 {
@@ -246,8 +325,10 @@ pub(crate) fn button_select_skill_system(
             Side::Enemy => action_points.enemy,
         };
         if ap < cost {
+            ui_notices.write(BattleUiNotice { text: "AP不足" });
             continue;
         }
+
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = Some(crate::battle::TurnAction::Skill(skill_id));
@@ -272,13 +353,16 @@ pub(crate) fn button_switch_member_system(
     player_team: Option<ResMut<PlayerTeam>>,
     enemy_team: Option<ResMut<EnemyTeam>>,
     ui_control_side: Res<UiControlSide>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
     mut combat_query: Query<(&mut Stats, &Name, &mut StatusBoard), With<InBattle>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }
@@ -304,10 +388,11 @@ pub(crate) fn button_switch_member_system(
                 (&mut team.0, &mut action_points.enemy, Side::Enemy)
             }
         };
-        if *ap < 1 {
+        if target_index >= team.combatants.len() || target_index == team.active_index {
             continue;
         }
-        if target_index >= team.combatants.len() || target_index == team.active_index {
+        if *ap < 1 {
+            ui_notices.write(BattleUiNotice { text: "AP不足" });
             continue;
         }
 
@@ -334,6 +419,15 @@ pub(crate) fn button_switch_member_system(
                 pvp::BattleIntent::Switch { target_index },
             )
         {
+            transfer_status_by_id(
+                &mut current_statuses,
+                &mut current_stats,
+                target_statuses.into_inner(),
+                target_stats.into_inner(),
+                "nature_regen",
+            );
+            *ap -= 1;
+            team.active_index = target_index;
             return;
         }
         transfer_status_by_id(
@@ -352,7 +446,69 @@ pub(crate) fn button_switch_member_system(
     }
 }
 
+pub(crate) fn button_cancel_card_selection_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
+    card_query: Query<(&Interaction, &PlayerCardButton), With<Button>>,
+    other_button_query: Query<&Interaction, (With<Button>, Without<PlayerCardButton>)>,
+    ui_control_side: Res<UiControlSide>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
+    mut selected: ResMut<SelectedCards>,
+) {
+    let right_click = mouse_buttons.just_pressed(MouseButton::Right);
+    let left_click = mouse_buttons.just_pressed(MouseButton::Left);
+    if (!right_click && !left_click)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
+    {
+        return;
+    }
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
+        || (*battle_phase.get() == BattlePhase::Discard
+            && pending_discard.as_ref().is_some_and(|pending| {
+                pending.side != ui_control_side.0
+                    || (*battle_mode == BattleControlMode::PlayerVsAi
+                        && pending.side == Side::Enemy)
+            }))
+    {
+        return;
+    }
+
+    let selected_state = match ui_control_side.0 {
+        Side::Player => &mut selected.player,
+        Side::Enemy => &mut selected.enemy,
+    };
+    let Some(selected_index) = selected_state.index else {
+        return;
+    };
+
+    let mut selected_card_under_pointer = false;
+    let mut any_card_under_pointer = false;
+    for (interaction, button) in &card_query {
+        if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+            any_card_under_pointer = true;
+            if button.index == selected_index {
+                selected_card_under_pointer = true;
+            }
+        }
+    }
+
+    let any_other_button_under_pointer = other_button_query
+        .iter()
+        .any(|interaction| matches!(*interaction, Interaction::Hovered | Interaction::Pressed));
+
+    if (right_click && selected_card_under_pointer)
+        || (left_click && !any_card_under_pointer && !any_other_button_under_pointer)
+    {
+        selected_state.index = None;
+        selected_state.discard_armed = false;
+    }
+}
+
 pub(crate) fn button_play_card_two_step_system(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     battle_phase: Res<State<BattlePhase>>,
     battle_mode: Res<BattleControlMode>,
     mut interaction_query: Query<
@@ -363,17 +519,31 @@ pub(crate) fn button_play_card_two_step_system(
     mut turn_ctx: ResMut<TurnContext>,
     mut action_points: ResMut<ActionPoints>,
     mut hand: ResMut<Hand>,
-    mut pending_boosts: ResMut<PendingBoosts>,
     ui_control_side: Res<UiControlSide>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if !mouse_buttons.pressed(MouseButton::Left)
+        || (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+            && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, button) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
@@ -384,12 +554,73 @@ pub(crate) fn button_play_card_two_step_system(
             Side::Player => {
                 let cards = &mut hand.player;
                 let ap = &mut action_points.player;
-                let boosts = &mut pending_boosts.player;
                 let selected_state = &mut selected.player;
                 if idx >= cards.len() {
                     selected_state.index = None;
                     selected_state.discard_armed = false;
                     continue;
+                }
+                if pending_tactical_discard_for_side(&pending_tactical_discard, Side::Player) {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        predict_local_card_discard(cards, ap, idx);
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_id,
+                        card_name,
+                        ap_gain: 1,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    if send_client_intent(
+                        *battle_mode,
+                        &mut pvp_connection,
+                        &mut pvp_pending_intent,
+                        pvp::BattleIntent::DiscardCard { card_index: idx },
+                    ) {
+                        predict_local_card_discard(cards, ap, idx);
+                        turn_ctx.player_action = None;
+                        selected_state.index = None;
+                        selected_state.discard_armed = false;
+                        break;
+                    }
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Player,
+                        card_id,
+                        card_name,
+                        ap_gain: 1,
+                    });
+                    turn_ctx.player_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
                 }
                 if selected_state.discard_armed {
                     if send_client_intent(
@@ -398,6 +629,7 @@ pub(crate) fn button_play_card_two_step_system(
                         &mut pvp_pending_intent,
                         pvp::BattleIntent::DiscardCard { card_index: idx },
                     ) {
+                        predict_local_card_discard(cards, ap, idx);
                         turn_ctx.player_action = None;
                         selected_state.index = None;
                         selected_state.discard_armed = false;
@@ -413,7 +645,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Player,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.player_action = None;
                     selected_state.index = None;
@@ -429,6 +663,7 @@ pub(crate) fn button_play_card_two_step_system(
                     continue;
                 };
                 if *ap < card.cost_ap {
+                    ui_notices.write(BattleUiNotice { text: "AP不足" });
                     continue;
                 }
                 if send_client_intent(
@@ -437,6 +672,7 @@ pub(crate) fn button_play_card_two_step_system(
                     &mut pvp_pending_intent,
                     pvp::BattleIntent::UseCard { card_index: idx },
                 ) {
+                    predict_local_card_use(cards, ap, idx, card.cost_ap);
                     turn_ctx.player_action = None;
                     selected_state.index = None;
                     selected_state.discard_armed = false;
@@ -446,20 +682,10 @@ pub(crate) fn button_play_card_two_step_system(
                 *ap -= card.cost_ap;
                 event_writer.write(BattleEvent::CardUsed {
                     side: Side::Player,
+                    card_id,
                     card_name: card.name.to_string(),
+                    cost_ap: card.cost_ap,
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
                 turn_ctx.player_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -467,12 +693,49 @@ pub(crate) fn button_play_card_two_step_system(
             Side::Enemy => {
                 let cards = &mut hand.enemy;
                 let ap = &mut action_points.enemy;
-                let boosts = &mut pending_boosts.enemy;
                 let selected_state = &mut selected.enemy;
                 if idx >= cards.len() {
                     selected_state.index = None;
                     selected_state.discard_armed = false;
                     continue;
+                }
+                if pending_tactical_discard_for_side(&pending_tactical_discard, Side::Enemy) {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_id,
+                        card_name,
+                        ap_gain: 1,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
+                }
+                if *battle_phase.get() == BattlePhase::Discard {
+                    let card_id = cards.remove(idx);
+                    *ap += 1;
+                    let card_name = dbs
+                        .cards
+                        .get(&card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("{card_id:?}"));
+                    event_writer.write(BattleEvent::CardDiscarded {
+                        side: Side::Enemy,
+                        card_id,
+                        card_name,
+                        ap_gain: 1,
+                    });
+                    turn_ctx.enemy_action = None;
+                    selected_state.index = None;
+                    selected_state.discard_armed = false;
+                    break;
                 }
                 if selected_state.discard_armed {
                     let card_id = cards[idx];
@@ -485,7 +748,9 @@ pub(crate) fn button_play_card_two_step_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name,
+                        ap_gain: 1,
                     });
                     turn_ctx.enemy_action = None;
                     selected_state.index = None;
@@ -501,26 +766,17 @@ pub(crate) fn button_play_card_two_step_system(
                     continue;
                 };
                 if *ap < card.cost_ap {
+                    ui_notices.write(BattleUiNotice { text: "AP不足" });
                     continue;
                 }
                 cards.remove(idx);
                 *ap -= card.cost_ap;
                 event_writer.write(BattleEvent::CardUsed {
                     side: Side::Enemy,
+                    card_id,
                     card_name: card.name.to_string(),
+                    cost_ap: card.cost_ap,
                 });
-                match card.effect {
-                    crate::data::CardEffect::GainAp { amount } => *ap += amount,
-                    crate::data::CardEffect::NextAttackBoost { amount } => {
-                        boosts.next_attack_bonus += amount
-                    }
-                    crate::data::CardEffect::NextShieldBoost { amount } => {
-                        boosts.next_shield_bonus += amount
-                    }
-                    crate::data::CardEffect::NextHealBoost { amount } => {
-                        boosts.next_heal_bonus += amount
-                    }
-                }
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
                 selected_state.discard_armed = false;
@@ -545,17 +801,32 @@ pub(crate) fn button_discard_system(
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
     dbs: Res<crate::data::BattleDbs>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if !is_controllable_phase(*battle_phase.get(), *battle_mode)
+    if (!is_controllable_phase(*battle_phase.get(), *battle_mode)
+        && *battle_phase.get() != BattlePhase::Discard)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
+    }
+    if *battle_phase.get() == BattlePhase::Discard {
+        let Some(pending) = pending_discard.as_ref() else {
+            return;
+        };
+        if pending.side != ui_control_side.0
+            || (*battle_mode == BattleControlMode::PlayerVsAi && pending.side == Side::Enemy)
+        {
+            return;
+        }
     }
     for (interaction, _) in &mut interaction_query {
         if *interaction != Interaction::Pressed {
             continue;
         }
+
         match ui_control_side.0 {
             Side::Player => {
                 let cards = &mut hand.player;
@@ -581,6 +852,7 @@ pub(crate) fn button_discard_system(
                         card_index: target_index,
                     },
                 ) {
+                    predict_local_card_discard(cards, ap, target_index);
                     turn_ctx.player_action = None;
                     selected_state.index = None;
                     selected_state.discard_armed = false;
@@ -595,7 +867,9 @@ pub(crate) fn button_discard_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Player,
+                    card_id,
                     card_name,
+                    ap_gain: 1,
                 });
                 turn_ctx.player_action = None;
                 selected_state.index = None;
@@ -626,7 +900,9 @@ pub(crate) fn button_discard_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Enemy,
+                    card_id,
                     card_name,
+                    ap_gain: 1,
                 });
                 turn_ctx.enemy_action = None;
                 selected_state.index = None;
@@ -645,12 +921,17 @@ pub(crate) fn button_end_turn_system(
         (Changed<Interaction>, With<Button>),
     >,
     ui_control_side: Res<UiControlSide>,
+    hand: Res<Hand>,
+    battle_rules: Res<BattleRules>,
+    mut hand_full_warning: ResMut<HandFullEndTurnWarning>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut pvp_connection: Option<ResMut<pvp::PvpConnection>>,
     mut pvp_pending_intent: Option<ResMut<pvp::PvpPendingLocalIntent>>,
 ) {
     if !is_controllable_phase(*battle_phase.get(), *battle_mode)
         || waiting_for_pvp_snapshot(*battle_mode, &pvp_pending_intent)
+        || pending_tactical_discard_for_side(&pending_tactical_discard, ui_control_side.0)
     {
         return;
     }
@@ -658,6 +939,16 @@ pub(crate) fn button_end_turn_system(
         if *interaction != Interaction::Pressed {
             continue;
         }
+
+        let current_hand_len = match ui_control_side.0 {
+            Side::Player => hand.player.len(),
+            Side::Enemy => hand.enemy.len(),
+        };
+        if current_hand_len > battle_rules.max_retained_hand {
+            hand_full_warning.trigger_end_turn_blocked();
+            break;
+        }
+
         match ui_control_side.0 {
             Side::Player => {
                 turn_ctx.player_action = None;
@@ -677,40 +968,465 @@ pub(crate) fn button_end_turn_system(
     }
 }
 
-pub(crate) fn button_retreat_system(
+pub(crate) fn button_battle_hint_system(
+    mut state: ResMut<BattleHintOverlayState>,
+    mut hint_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<BattleHintButton>),
+    >,
+    mut close_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<BattleHintCloseButton>,
+        ),
+    >,
+) {
+    for interaction in &mut hint_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = !state.open;
+            return;
+        }
+    }
+
+    for interaction in &mut close_buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = false;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_battle_hint_overlay_system(
+    state: Res<BattleHintOverlayState>,
+    mut root_q: Query<&mut Visibility, With<BattleHintOverlayRoot>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    for mut visibility in &mut root_q {
+        *visibility = if state.open {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+pub(crate) fn button_toggle_cheat_menu_system(
+    battle_mode: Res<BattleControlMode>,
+    mut state: ResMut<CheatMenuState>,
+    mut buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, With<CheatModeButton>)>,
+) {
+    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+        state.open = false;
+        return;
+    }
+
+    for interaction in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            state.open = !state.open;
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_cheat_menu_visibility_system(
+    battle_mode: Res<BattleControlMode>,
+    mut state: ResMut<CheatMenuState>,
+    mut buttons: Query<&mut Node, With<CheatModeButton>>,
+    mut menus: Query<&mut Node, (With<CheatMenuRoot>, Without<CheatModeButton>)>,
+) {
+    let debug_mode = *battle_mode == BattleControlMode::DebugPlayerControlsBoth;
+    if !debug_mode {
+        state.open = false;
+    }
+
+    for mut node in &mut buttons {
+        node.display = if debug_mode {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut node in &mut menus {
+        node.display = if debug_mode && state.open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
+fn active_entity_for_side(
+    side: Side,
+    player_team: Option<&PlayerTeam>,
+    enemy_team: Option<&EnemyTeam>,
+) -> Option<Entity> {
+    match side {
+        Side::Player => player_team.and_then(|team| team.0.active_combatant()),
+        Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
+    }
+}
+
+fn hand_for_side(side: Side, hand: &mut Hand) -> &mut Vec<crate::data::CardId> {
+    match side {
+        Side::Player => &mut hand.player,
+        Side::Enemy => &mut hand.enemy,
+    }
+}
+
+fn ap_for_side(side: Side, action_points: &mut ActionPoints) -> &mut i32 {
+    match side {
+        Side::Player => &mut action_points.player,
+        Side::Enemy => &mut action_points.enemy,
+    }
+}
+
+fn attribute_label(attribute: AttributeType) -> &'static str {
+    match attribute {
+        AttributeType::Atk => "Atk",
+        AttributeType::Def => "Def",
+        AttributeType::Spd => "Spd",
+        AttributeType::Acc => "Acc",
+    }
+}
+
+fn apply_cheat_stage_modifier(
+    stats: &mut Stats,
+    status_board: &mut StatusBoard,
+    attribute: AttributeType,
+    amount: i32,
+    current_round: u32,
+) {
+    let id = format!(
+        "debug_cheat_{}",
+        attribute_label(attribute).to_ascii_lowercase()
+    );
+    if let Some(entry) = status_board.entries.iter_mut().find(|entry| entry.id == id) {
+        if let Some(modifier) = entry
+            .stage_modifiers
+            .iter_mut()
+            .find(|modifier| modifier.attribute == attribute)
+        {
+            modifier.amount += amount;
+        } else {
+            entry
+                .stage_modifiers
+                .push(StatusStageModifier { attribute, amount });
+        }
+        entry.remaining_turns = 99;
+        entry.applied_round = current_round;
+    } else {
+        status_board.entries.push(StatusInstance {
+            id,
+            name: format!("作弊{}", attribute_label(attribute)),
+            category: StatusCategory::Buff,
+            remaining_turns: 99,
+            applied_round: current_round,
+            source_side: None,
+            tick_timing: None,
+            stage_modifiers: vec![StatusStageModifier { attribute, amount }],
+            fixed_damage_on_tick: 0,
+            heal_on_tick: 0,
+            heal_taken_multiplier: None,
+            evade_charges: 0,
+        });
+    }
+    recalculate_stage_modifiers(stats, status_board);
+}
+
+pub(crate) fn button_cheat_action_system(
+    battle_mode: Res<BattleControlMode>,
+    ui_control_side: Res<UiControlSide>,
     mut interaction_query: Query<
-        (&Interaction, &RetreatButton),
+        (&Interaction, &CheatActionButton),
         (Changed<Interaction>, With<Button>),
     >,
+    mut action_points: ResMut<ActionPoints>,
+    mut hand: ResMut<Hand>,
+    battle_rules: Res<BattleRules>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    turn_count: Res<TurnCount>,
+    mut combat_query: Query<(&mut Stats, &mut Shield, &mut StatusBoard), With<InBattle>>,
+    mut event_writer: MessageWriter<BattleEvent>,
+    mut ui_notices: MessageWriter<BattleUiNotice>,
+) {
+    if *battle_mode != BattleControlMode::DebugPlayerControlsBoth {
+        return;
+    }
+
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let side = ui_control_side.0;
+        match button.action {
+            CheatAction::GainAp(amount) => {
+                *ap_for_side(side, &mut action_points) += amount;
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：AP增加",
+                });
+            }
+            CheatAction::GainCard(card_id) => {
+                hand_for_side(side, &mut hand).push(card_id);
+                event_writer.write(BattleEvent::CardsDrawn { side, count: 1 });
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：获得技能牌",
+                });
+            }
+            CheatAction::Heal(amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((mut stats, _, _)) = combat_query.get_mut(active_entity) else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let before = stats.hp;
+                stats.hp = (stats.hp + amount).clamp(0, stats.max_hp);
+                let healed = (stats.hp - before).max(0);
+                if healed > 0 {
+                    event_writer.write(BattleEvent::Healed {
+                        side,
+                        amount: healed,
+                    });
+                }
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：回复生命",
+                });
+            }
+            CheatAction::GainShield(amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((stats, mut shield, _)) = combat_query.get_mut(active_entity) else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let gained =
+                    shield.gain_capped(amount, stats.max_hp, battle_rules.max_shield_hp_ratio);
+                if gained > 0 {
+                    event_writer.write(BattleEvent::ShieldGained {
+                        side,
+                        amount: gained,
+                    });
+                }
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：获得护盾",
+                });
+            }
+            CheatAction::RaiseStage(attribute, amount) => {
+                let Some(active_entity) =
+                    active_entity_for_side(side, player_team.as_deref(), enemy_team.as_deref())
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                let Ok((mut stats, _, mut status_board)) = combat_query.get_mut(active_entity)
+                else {
+                    ui_notices.write(BattleUiNotice {
+                        text: "作弊：没有目标",
+                    });
+                    return;
+                };
+                apply_cheat_stage_modifier(
+                    &mut stats,
+                    &mut status_board,
+                    attribute,
+                    amount,
+                    turn_count.0,
+                );
+                ui_notices.write(BattleUiNotice {
+                    text: "作弊：属性提升",
+                });
+            }
+        }
+        return;
+    }
+}
+
+pub(crate) fn button_retreat_system(
+    mut interaction_query: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<RetreatButton>),
+    >,
     mut retreat_confirm: ResMut<RetreatConfirmState>,
-    mut retreat_button_text_q: Query<&mut Text, With<RetreatButtonText>>,
+) {
+    for interaction in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            retreat_confirm.open = true;
+            break;
+        }
+    }
+}
+
+pub(crate) fn button_retreat_confirm_system(
+    mut cancel_query: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<RetreatConfirmCancelButton>,
+        ),
+    >,
+    mut proceed_query: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<RetreatConfirmProceedButton>,
+        ),
+    >,
+    mut retreat_confirm: ResMut<RetreatConfirmState>,
     battle_mode: Res<BattleControlMode>,
+    mut map_battle_context: ResMut<MapBattleContext>,
+    mut current_map: ResMut<CurrentMap>,
     pvp_connection: Option<Res<pvp::PvpConnection>>,
+    online_connection: Option<Res<crate::online::OnlineConnection>>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
 ) {
-    for (interaction, _) in &mut interaction_query {
+    for interaction in &mut cancel_query {
         if *interaction == Interaction::Pressed {
-            let Ok(mut retreat_text) = retreat_button_text_q.single_mut() else {
-                return;
-            };
+            retreat_confirm.open = false;
+            return;
+        }
+    }
 
-            if !retreat_confirm.armed {
-                retreat_confirm.armed = true;
-                retreat_text.0 = "确认撤退".to_string();
-                return;
-            }
-
-            retreat_confirm.armed = false;
-            retreat_text.0 = "撤退".to_string();
-            if *battle_mode == BattleControlMode::PlayerVsRemote {
+    for interaction in &mut proceed_query {
+        if *interaction == Interaction::Pressed {
+            retreat_confirm.open = false;
+            let return_map = if *battle_mode == BattleControlMode::PlayerVsRemote {
                 if let Some(connection) = pvp_connection.as_ref() {
                     pvp::surrender(connection);
                 }
-            }
+                None
+            } else {
+                map_battle_context.return_map.take()
+            };
+            map_battle_context.enemy_monster_index = None;
+
             next_phase.set(BattlePhase::Init);
-            next_game_state.set(GameState::Lobby);
-            break;
+            if let Some(map) = return_map {
+                *current_map = map;
+                next_game_state.set(GameState::Map);
+            } else if *battle_mode == BattleControlMode::PlayerVsRemote
+                && online_connection.is_some_and(|c| c.user_id.is_some())
+            {
+                next_game_state.set(GameState::OnlineHome);
+            } else {
+                next_game_state.set(GameState::Lobby);
+            }
+            return;
+        }
+    }
+}
+
+pub(crate) fn update_retreat_confirm_overlay_system(
+    state: Res<RetreatConfirmState>,
+    mut root_q: Query<&mut Visibility, With<RetreatConfirmOverlayRoot>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+
+    for mut visibility in &mut root_q {
+        *visibility = if state.open {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+pub(crate) fn button_result_action_system(
+    mut return_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<ResultReturnButton>),
+    >,
+    mut restart_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultRestartButton>,
+        ),
+    >,
+    mut rematch_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultRematchButton>,
+        ),
+    >,
+    mut accept_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultInviteAcceptButton>,
+        ),
+    >,
+    mut reject_buttons: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<ResultInviteRejectButton>,
+        ),
+    >,
+    mut pending_action: ResMut<PendingBattleResultAction>,
+) {
+    for interaction in &mut return_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::Return);
+            return;
+        }
+    }
+    for interaction in &mut restart_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::RestartSameTeams);
+            return;
+        }
+    }
+    for interaction in &mut rematch_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::Rematch);
+            return;
+        }
+    }
+    for interaction in &mut accept_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::AcceptRematch);
+            return;
+        }
+    }
+    for interaction in &mut reject_buttons {
+        if *interaction == Interaction::Pressed {
+            pending_action.0 = Some(BattleResultAction::RejectRematch);
+            return;
         }
     }
 }

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::{
     data::{BattleDbs, MapBattleContext, MonsterPool},
     game_state::GameState,
+    map::components::CurrentMap,
     team_selection::SelectionEntryMode,
     ui::battle::{
         helpers::{monster_skill_ap_cost_ui, skill_meta, skill_name, skill_summary},
@@ -74,6 +75,9 @@ struct OpenDexButton;
 
 #[derive(Component)]
 struct PvpBattleButton;
+
+#[derive(Component)]
+struct OnlineSystemButton;
 
 #[derive(Component)]
 struct DebugBattleButton;
@@ -253,6 +257,30 @@ fn setup_lobby_ui(
                 BackgroundColor(theme.button_idle),
                 BorderColor::all(theme.button_border_idle),
                 theme.button_shadow(),
+                OnlineSystemButton,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("联网系统"),
+                    body_font.clone(),
+                    TextColor(theme.text_primary),
+                ));
+            });
+
+            root.spawn((
+                Button,
+                Node {
+                    width: Val::Px(280.0),
+                    min_height: Val::Px(58.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(theme.radius_button),
+                    ..default()
+                },
+                BackgroundColor(theme.button_idle),
+                BorderColor::all(theme.button_border_idle),
+                theme.button_shadow(),
                 OpenDexButton,
             ))
             .with_children(|btn| {
@@ -299,6 +327,7 @@ fn lobby_button_system(
     mut next_state: ResMut<NextState<GameState>>,
     mut entry_mode: ResMut<SelectionEntryMode>,
     mut map_battle_context: ResMut<MapBattleContext>,
+    mut current_map: ResMut<CurrentMap>,
     mut battle_buttons: Query<
         &Interaction,
         (Changed<Interaction>, With<Button>, With<StartBattleButton>),
@@ -308,6 +337,10 @@ fn lobby_button_system(
         &Interaction,
         (Changed<Interaction>, With<Button>, With<PvpBattleButton>),
     >,
+    mut online_buttons: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<OnlineSystemButton>),
+    >,
     mut debug_buttons: Query<
         &Interaction,
         (Changed<Interaction>, With<Button>, With<DebugBattleButton>),
@@ -316,7 +349,7 @@ fn lobby_button_system(
 ) {
     for interaction in &mut battle_buttons {
         if *interaction == Interaction::Pressed {
-            map_battle_context.enemy_monster_index = None;
+            *map_battle_context = MapBattleContext::default();
             *entry_mode = SelectionEntryMode::VsAi;
             next_state.set(GameState::TeamSelection);
             return;
@@ -325,16 +358,23 @@ fn lobby_button_system(
 
     for interaction in &mut pvp_buttons {
         if *interaction == Interaction::Pressed {
-            map_battle_context.enemy_monster_index = None;
+            *map_battle_context = MapBattleContext::default();
             *entry_mode = SelectionEntryMode::Pvp;
             next_state.set(GameState::PvpLobby);
             return;
         }
     }
 
+    for interaction in &mut online_buttons {
+        if *interaction == Interaction::Pressed {
+            next_state.set(GameState::OnlineLogin);
+            return;
+        }
+    }
+
     for interaction in &mut debug_buttons {
         if *interaction == Interaction::Pressed {
-            map_battle_context.enemy_monster_index = None;
+            *map_battle_context = MapBattleContext::default();
             *entry_mode = SelectionEntryMode::Debug;
             next_state.set(GameState::TeamSelection);
             return;
@@ -351,6 +391,8 @@ fn lobby_button_system(
     for interaction in &mut map_buttons {
         // 新增
         if *interaction == Interaction::Pressed {
+            *map_battle_context = MapBattleContext::default();
+            *current_map = CurrentMap::Map1;
             next_state.set(GameState::Map);
             return;
         }
@@ -368,6 +410,7 @@ fn lobby_button_visual_system(
                 With<StartBattleButton>,
                 With<MapButton>, // 新增
                 With<PvpBattleButton>,
+                With<OnlineSystemButton>,
                 With<OpenDexButton>,
                 With<DebugBattleButton>,
             )>,

@@ -7,17 +7,28 @@
 
 use bevy::prelude::*;
 
-use crate::battle::{BattleEvent, Side};
+use crate::battle::{
+    BattleActionCooldown, BattleControlMode, BattleEvent, DamageType, Side, UiControlSide,
+};
+use crate::game_state::BattlePhase;
 use crate::ui::battle::systems::SwitchOverlayOpen;
 
 use super::{
     components::{
+        ActionDialButton, ActionDialHighlight, ActivePortraitFrame, BattleUiCleanupPending,
         BattleUiRoot, DiscardButton, EndTurnButton, SkillButton, SkillSlotId, SwitchCancelButton,
         SwitchMonsterButton, TeamMemberButton,
     },
     resources::UiFontHandle,
     theme::UiTheme,
 };
+
+const DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX: f32 = 390.0;
+const DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX: f32 = 1140.0;
+const DAMAGE_TEXT_TARGET_TOP_PX: f32 = 326.0;
+const DAMAGE_TEXT_FONT_SIZE: f32 = 34.0;
+const DAMAGE_TEXT_FIXED_DAMAGE_ROW_OFFSET_PX: f32 = 46.0;
+const DAMAGE_TEXT_STACK_ROW_GAP_PX: f32 = 40.0;
 
 /// 技能格闪白计时器组件
 /// - 与 `SkillSlotId` 组件附加在同一实体上
@@ -51,7 +62,7 @@ pub struct ScreenFlashTimer(pub Timer);
 pub fn process_battle_fx_events(
     mut events: MessageReader<BattleEvent>,
     mut commands: Commands,
-    root: Query<Entity, With<BattleUiRoot>>,
+    root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
     slots: Query<(Entity, &SkillSlotId)>,
     mut discard_button: Query<
         (Entity, &mut BackgroundColor, &mut BorderColor),
@@ -72,6 +83,15 @@ pub fn process_battle_fx_events(
         }
         f
     };
+
+    let mut player_direct_damage_rows = 0;
+    let mut player_fixed_damage_rows = 0;
+    let mut player_heal_rows = 0;
+    let mut player_miss_rows = 0;
+    let mut enemy_direct_damage_rows = 0;
+    let mut enemy_fixed_damage_rows = 0;
+    let mut enemy_heal_rows = 0;
+    let mut enemy_miss_rows = 0;
 
     // 遍历所有战斗事件
     for event in events.read() {
@@ -98,17 +118,57 @@ pub fn process_battle_fx_events(
                 }
             }
             // 处理伤害事件：显示伤害飘字和受击闪屏
-            BattleEvent::DamageDealt { target, amount, .. } => {
+            BattleEvent::DamageDealt {
+                target,
+                amount,
+                damage_type,
+                ..
+            } => {
                 // 跳过无效伤害值
                 if *amount <= 0 {
                     continue;
                 }
 
-                // 根据目标阵营确定飘字位置
-                let top = if *target == Side::Enemy {
-                    Val::Percent(22.0) // 敌方飘字位置
+                let left = if *target == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
                 } else {
-                    Val::Percent(68.0) // 玩家飘字位置
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = match (*target, *damage_type) {
+                    (Side::Player, DamageType::Direct) => {
+                        let row = player_direct_damage_rows;
+                        player_direct_damage_rows += 1;
+                        row
+                    }
+                    (Side::Player, DamageType::Fixed) => {
+                        let row = player_fixed_damage_rows;
+                        player_fixed_damage_rows += 1;
+                        row
+                    }
+                    (Side::Enemy, DamageType::Direct) => {
+                        let row = enemy_direct_damage_rows;
+                        enemy_direct_damage_rows += 1;
+                        row
+                    }
+                    (Side::Enemy, DamageType::Fixed) => {
+                        let row = enemy_fixed_damage_rows;
+                        enemy_fixed_damage_rows += 1;
+                        row
+                    }
+                };
+                let type_offset = if *damage_type == DamageType::Fixed {
+                    DAMAGE_TEXT_FIXED_DAMAGE_ROW_OFFSET_PX
+                } else {
+                    0.0
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX
+                        + type_offset
+                        + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
+                let bg_color = match *damage_type {
+                    DamageType::Direct => Color::srgba(0.82, 0.05, 0.04, 0.88),
+                    DamageType::Fixed => Color::srgba(1.0, 0.42, 0.70, 0.88),
                 };
 
                 // 创建伤害飘字
@@ -116,19 +176,31 @@ pub fn process_battle_fx_events(
                     p.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(44.0),
+                            left,
                             top,
+                            min_width: Val::Px(58.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         },
-                        Text::new(format!("-{amount}")), // 伤害值显示（带负号）
-                        make_font(26.0),
-                        TextColor(Color::srgb(1.0, 0.35, 0.35)), // 红色伤害文字
-                        TextShadow {
-                            offset: Vec2::new(1.0, 1.0),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.75),
-                        },
+                        BackgroundColor(bg_color),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
                         FxLifetime(Timer::from_seconds(1.1, TimerMode::Once)), // 飘字持续1.1秒
-                    ));
+                    ))
+                    .with_children(|damage_label| {
+                        damage_label.spawn((
+                            Text::new(format!("-{amount}")),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
                 });
 
                 // 创建受击闪屏效果
@@ -147,31 +219,119 @@ pub fn process_battle_fx_events(
                     ));
                 });
             }
+            // 处理攻击未命中事件：显示 miss 提示
+            BattleEvent::AttackMissed { target, .. } => {
+                let left = if *target == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
+                } else {
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = if *target == Side::Enemy {
+                    let row = enemy_direct_damage_rows
+                        + enemy_fixed_damage_rows
+                        + enemy_heal_rows
+                        + enemy_miss_rows;
+                    enemy_miss_rows += 1;
+                    row
+                } else {
+                    let row = player_direct_damage_rows
+                        + player_fixed_damage_rows
+                        + player_heal_rows
+                        + player_miss_rows;
+                    player_miss_rows += 1;
+                    row
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
+
+                commands.entity(root).with_children(|p| {
+                    p.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left,
+                            top,
+                            min_width: Val::Px(68.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.08, 0.28, 0.88, 0.88)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
+                        FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)),
+                    ))
+                    .with_children(|miss_label| {
+                        miss_label.spawn((
+                            Text::new("miss"),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
+                });
+            }
             // 处理治疗事件：显示治疗飘字
-            BattleEvent::Healed { amount, .. } => {
+            BattleEvent::Healed { side, amount } => {
                 // 跳过无效治疗值
                 if *amount <= 0 {
                     continue;
                 }
+
+                let left = if *side == Side::Enemy {
+                    Val::Px(DAMAGE_TEXT_ENEMY_TARGET_LEFT_PX)
+                } else {
+                    Val::Px(DAMAGE_TEXT_PLAYER_TARGET_LEFT_PX)
+                };
+                let row_index = if *side == Side::Enemy {
+                    let row = enemy_direct_damage_rows + enemy_fixed_damage_rows + enemy_heal_rows;
+                    enemy_heal_rows += 1;
+                    row
+                } else {
+                    let row =
+                        player_direct_damage_rows + player_fixed_damage_rows + player_heal_rows;
+                    player_heal_rows += 1;
+                    row
+                };
+                let top = Val::Px(
+                    DAMAGE_TEXT_TARGET_TOP_PX + row_index as f32 * DAMAGE_TEXT_STACK_ROW_GAP_PX,
+                );
 
                 // 创建治疗飘字
                 commands.entity(root).with_children(|p| {
                     p.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(44.0),
-                            top: Val::Percent(52.0), // 治疗飘字位置
+                            left,
+                            top,
+                            min_width: Val::Px(58.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         },
-                        Text::new(format!("+{amount}")), // 治疗值显示（带加号）
-                        make_font(24.0),
-                        TextColor(Color::srgb(0.45, 1.0, 0.55)), // 绿色治疗文字
-                        TextShadow {
-                            offset: Vec2::new(1.0, 1.0),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.65),
-                        },
+                        BackgroundColor(Color::srgba(0.08, 0.62, 0.22, 0.88)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.95)),
                         FxLifetime(Timer::from_seconds(1.0, TimerMode::Once)), // 飘字持续1.0秒
-                    ));
+                    ))
+                    .with_children(|heal_label| {
+                        heal_label.spawn((
+                            Text::new(format!("+{amount}")),
+                            make_font(DAMAGE_TEXT_FONT_SIZE),
+                            TextColor(Color::WHITE),
+                            TextShadow {
+                                offset: Vec2::new(1.0, 1.0),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.70),
+                            },
+                        ));
+                    });
                 });
             }
             // 其他事件类型暂不处理
@@ -179,7 +339,6 @@ pub fn process_battle_fx_events(
         }
     }
 }
-
 /// 更新技能格闪白效果
 ///
 /// 功能：
@@ -215,8 +374,12 @@ pub fn tick_skill_flash_timer(
             // 根据阵营恢复不同的样式
             match sid.side {
                 Side::Player => {
-                    *bg = BackgroundColor(theme.button_idle);
-                    *border = BorderColor::all(theme.button_border_idle);
+                    super::systems::visuals::apply_regular_button_style(
+                        &Interaction::None,
+                        &mut bg,
+                        &mut border,
+                        &theme,
+                    );
                 }
                 Side::Enemy => {
                     *bg = BackgroundColor(theme.enemy_card_bg);
@@ -287,15 +450,30 @@ pub fn tick_fx_lifetimes(
 #[derive(Component)]
 pub struct ButtonClickFlash(pub Timer);
 
-const CLICK_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.90);
-const CLICK_FLASH_BORDER: Color = Color::srgba(0.72, 0.88, 1.0, 0.70);
+const CLICK_FLASH_COLOR: Color = Color::srgba(1.0, 0.86, 0.50, 0.92);
+const CLICK_FLASH_BORDER: Color = Color::srgba(0.98, 0.85, 0.50, 0.75);
+const ACTION_DIAL_KEYBOARD_FLASH_COLOR: Color = Color::srgba(0.72, 0.88, 1.0, 0.34);
+
+#[derive(Component)]
+pub struct ActionDialKeyboardFlash(pub Timer);
 
 /// 检测技能格与结束回合按钮的按下事件，插入 `ButtonClickFlash` 并立即显示闪光色。
 /// 弃牌按钮不在此列——其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn spawn_button_click_flash(
+    cooldown: Res<BattleActionCooldown>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     mut commands: Commands,
     mut q: Query<
-        (Entity, &Interaction, &mut BackgroundColor, &mut BorderColor),
+        (
+            Entity,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Has<SkillButton>,
+            Has<EndTurnButton>,
+            Has<TeamMemberButton>,
+        ),
         (
             Changed<Interaction>,
             Or<(
@@ -305,11 +483,19 @@ pub fn spawn_button_click_flash(
                 With<SwitchCancelButton>,
                 With<TeamMemberButton>,
             )>,
+            Without<ActionDialButton>,
         ),
     >,
 ) {
-    for (entity, interaction, mut bg, mut border) in &mut q {
+    // 与按钮变灰逻辑保持一致：对方回合或本地玩家行动冷却中，抑制点击闪光。
+    let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
+        && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
+    let locked = opponent_turn || !cooldown.ready(Side::Player);
+    for (entity, interaction, mut bg, mut border, is_skill, is_end_turn, is_team_member) in &mut q {
         if *interaction == Interaction::Pressed {
+            if locked && (is_skill || is_end_turn || is_team_member) {
+                continue;
+            }
             *bg = BackgroundColor(CLICK_FLASH_COLOR);
             *border = BorderColor::all(CLICK_FLASH_BORDER);
             commands
@@ -329,32 +515,43 @@ pub fn tick_button_click_flash(
         &mut BackgroundColor,
         &mut BorderColor,
         Option<&Interaction>,
+        Has<super::components::PlayerCardButton>,
     )>,
     theme: Res<UiTheme>,
 ) {
-    for (entity, mut flash, mut bg, mut border, interaction) in &mut q {
+    for (entity, mut flash, mut bg, mut border, interaction, is_card) in &mut q {
         flash.0.tick(time.delta());
         if flash.0.just_finished() {
             commands.entity(entity).remove::<ButtonClickFlash>();
             let interaction = interaction.copied().unwrap_or(Interaction::None);
-            *bg = match interaction {
-                Interaction::Pressed => BackgroundColor(theme.button_pressed),
-                Interaction::Hovered => BackgroundColor(theme.button_hover),
-                Interaction::None => BackgroundColor(theme.button_idle),
-            };
-            *border = match interaction {
-                Interaction::Pressed => BorderColor::all(theme.button_border_pressed),
-                Interaction::Hovered => BorderColor::all(theme.button_border_hover),
-                Interaction::None => BorderColor::all(theme.button_border_idle),
-            };
+            if is_card {
+                // 手牌卡恢复为羊皮纸 + 描金，避免闪光结束后闪回深蓝。
+                *bg = match interaction {
+                    Interaction::Pressed => BackgroundColor(theme.parchment_edge),
+                    Interaction::Hovered => BackgroundColor(theme.parchment_bright),
+                    Interaction::None => BackgroundColor(theme.card_bg),
+                };
+                *border = match interaction {
+                    Interaction::Pressed => BorderColor::all(theme.gold_dim),
+                    Interaction::Hovered => BorderColor::all(theme.gold_bright),
+                    Interaction::None => BorderColor::all(theme.card_border),
+                };
+            } else {
+                super::systems::visuals::apply_regular_button_style(
+                    &interaction,
+                    &mut bg,
+                    &mut border,
+                    &theme,
+                );
+            }
         }
     }
 }
 
-/// 将键盘快捷键触发的操作映射到 `ButtonClickFlash`，使视觉反馈与鼠标点击完全一致。
+/// 将键盘快捷键触发的操作映射到对应按钮反馈，使视觉反馈与鼠标点击一致。
 ///
 /// 纯 UI 层：只读取键盘输入、查找对应按钮实体、insert 组件并改颜色，不含任何战斗逻辑。
-/// `tick_button_click_flash` 完全复用——只要实体上有 `ButtonClickFlash` 它就会运行。
+/// 普通按钮使用 `ButtonClickFlash`；圆盘按钮点亮 `ActionDialHighlight` 子节点。
 ///
 /// 使用 `ParamSet` 规避多个 Query 同时 `&mut BackgroundColor` / `&mut BorderColor`
 /// 导致的 Bevy B0001 Query 冲突——ParamSet 保证同一帧内每次只访问其中一个 Query。
@@ -362,6 +559,9 @@ pub fn tick_button_click_flash(
 /// 注意：弃牌按钮（F 键）不在此列，其颜色由 `update_discard_armed_visual_system` 全权管理。
 pub fn keyboard_button_flash_system(
     keyboard: Res<ButtonInput<KeyCode>>,
+    cooldown: Res<BattleActionCooldown>,
+    battle_phase: Res<State<BattlePhase>>,
+    battle_mode: Res<BattleControlMode>,
     open: Res<SwitchOverlayOpen>,
     mut commands: Commands,
     mut queries: ParamSet<(
@@ -374,7 +574,13 @@ pub fn keyboard_button_flash_system(
         )>,
         // p1: 结束回合按钮（E）
         Query<
-            (Entity, &mut BackgroundColor, &mut BorderColor),
+            (
+                Entity,
+                &Children,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                Has<ActionDialButton>,
+            ),
             With<super::components::EndTurnButton>,
         >,
         // p2: 手牌按钮（Z/X/C/V/B）
@@ -393,7 +599,13 @@ pub fn keyboard_button_flash_system(
         )>,
         // p4: 换精灵按钮（Q）
         Query<
-            (Entity, &mut BackgroundColor, &mut BorderColor),
+            (
+                Entity,
+                &Children,
+                &mut BackgroundColor,
+                &mut BorderColor,
+                Has<ActionDialButton>,
+            ),
             With<super::components::SwitchMonsterButton>,
         >,
         // p5: 取消按钮（Q 关闭时也闪）
@@ -401,8 +613,14 @@ pub fn keyboard_button_flash_system(
             (Entity, &mut BackgroundColor, &mut BorderColor),
             With<super::components::SwitchCancelButton>,
         >,
+        Query<&mut BackgroundColor, With<ActionDialHighlight>>,
     )>,
 ) {
+    // 与按钮变灰逻辑保持一致：对方回合或本地玩家行动冷却中，抑制快捷键闪光。
+    let opponent_turn = *battle_phase.get() == BattlePhase::EnemyTurn
+        && *battle_mode != BattleControlMode::DebugPlayerControlsBoth;
+    let locked = opponent_turn || !cooldown.ready(Side::Player);
+
     // 辅助宏：写颜色并 insert 计时器
     // 宏展开为内联代码，commands 来自外部作用域，entity 为 Copy，无借用冲突
     macro_rules! do_flash {
@@ -415,61 +633,84 @@ pub fn keyboard_button_flash_system(
         };
     }
 
-    // 1-4 → 技能按钮（slot 0-3）
-    for (key, idx) in [
-        (KeyCode::Digit1, 0usize),
-        (KeyCode::Digit2, 1),
-        (KeyCode::Digit3, 2),
-        (KeyCode::Digit4, 3),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p0().iter_mut() {
-                if btn.index == idx {
-                    do_flash!(entity, bg, border);
-                    break;
+    let mut action_dial_highlights = Vec::new();
+
+    if !locked {
+        // 1-4 → 技能按钮（slot 0-3）
+        for (key, idx) in [
+            (KeyCode::Digit1, 0usize),
+            (KeyCode::Digit2, 1),
+            (KeyCode::Digit3, 2),
+            (KeyCode::Digit4, 3),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p0().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    // E → 结束回合按钮
-    if keyboard.just_pressed(KeyCode::KeyE) {
-        if let Ok((entity, mut bg, mut border)) = queries.p1().single_mut() {
-            do_flash!(entity, bg, border);
-        }
-    }
-
-    // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
-
-    // Z/X/C/V/B → 手牌按钮（index 0-4）
-    for (key, idx) in [
-        (KeyCode::KeyZ, 0usize),
-        (KeyCode::KeyX, 1),
-        (KeyCode::KeyC, 2),
-        (KeyCode::KeyV, 3),
-        (KeyCode::KeyB, 4),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {
-                if btn.index == idx {
+        // E → 结束回合按钮
+        if keyboard.just_pressed(KeyCode::KeyE) {
+            if let Ok((entity, children, mut bg, mut border, is_action_dial)) =
+                queries.p1().single_mut()
+            {
+                if is_action_dial {
+                    action_dial_highlights.extend(children.iter());
+                } else {
                     do_flash!(entity, bg, border);
-                    break;
                 }
             }
         }
-    }
 
-    // 5/6/7 → 队员切换按钮（index 0/1/2）
-    for (key, idx) in [
-        (KeyCode::Digit5, 0usize),
-        (KeyCode::Digit6, 1),
-        (KeyCode::Digit7, 2),
-    ] {
-        if keyboard.just_pressed(key) {
-            for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
-                if btn.index == idx {
-                    do_flash!(entity, bg, border);
-                    break;
+        // F → 弃牌按钮：颜色由 update_discard_armed_visual_system 管理，此处不 flash
+
+        // 手牌热键 → 手牌按钮
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0usize),
+            (KeyCode::KeyX, 1),
+            (KeyCode::KeyC, 2),
+            (KeyCode::KeyV, 3),
+            (KeyCode::KeyB, 4),
+            (KeyCode::KeyN, 5),
+            (KeyCode::KeyA, 6),
+            (KeyCode::KeyS, 7),
+            (KeyCode::KeyD, 8),
+            (KeyCode::KeyG, 9),
+            (KeyCode::KeyH, 10),
+            (KeyCode::KeyJ, 11),
+            (KeyCode::KeyK, 12),
+            (KeyCode::KeyL, 13),
+            (KeyCode::KeyU, 14),
+            (KeyCode::KeyI, 15),
+            (KeyCode::KeyO, 16),
+            (KeyCode::KeyP, 17),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p2().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 5/6/7 → 队员切换按钮（index 0/1/2）
+        for (key, idx) in [
+            (KeyCode::Digit5, 0usize),
+            (KeyCode::Digit6, 1),
+            (KeyCode::Digit7, 2),
+        ] {
+            if keyboard.just_pressed(key) {
+                for (entity, btn, mut bg, mut border) in queries.p3().iter_mut() {
+                    if btn.index == idx {
+                        do_flash!(entity, bg, border);
+                        break;
+                    }
                 }
             }
         }
@@ -481,8 +722,400 @@ pub fn keyboard_button_flash_system(
             if let Ok((entity, mut bg, mut border)) = queries.p5().single_mut() {
                 do_flash!(entity, bg, border);
             }
-        } else if let Ok((entity, mut bg, mut border)) = queries.p4().single_mut() {
-            do_flash!(entity, bg, border);
+        } else if let Ok((entity, children, mut bg, mut border, is_action_dial)) =
+            queries.p4().single_mut()
+        {
+            if is_action_dial {
+                action_dial_highlights.extend(children.iter());
+            } else {
+                do_flash!(entity, bg, border);
+            }
+        }
+    }
+
+    let mut highlights = queries.p6();
+    for child in action_dial_highlights {
+        if let Ok(mut highlight_bg) = highlights.get_mut(child) {
+            *highlight_bg = BackgroundColor(ACTION_DIAL_KEYBOARD_FLASH_COLOR);
+            commands
+                .entity(child)
+                .insert(ActionDialKeyboardFlash(Timer::from_seconds(
+                    0.15,
+                    TimerMode::Once,
+                )));
+        }
+    }
+}
+
+pub fn tick_action_dial_keyboard_flash_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut ActionDialKeyboardFlash, &mut BackgroundColor)>,
+) {
+    for (entity, mut flash, mut bg) in &mut q {
+        flash.0.tick(time.delta());
+        if flash.0.just_finished() {
+            commands.entity(entity).remove::<ActionDialKeyboardFlash>();
+            *bg = BackgroundColor(Color::NONE);
+        } else {
+            *bg = BackgroundColor(ACTION_DIAL_KEYBOARD_FLASH_COLOR);
+        }
+    }
+}
+
+/// 在 sRGB 空间对两色做线性插值（UI 脉冲/呼吸用）。
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let a = a.to_srgba();
+    let b = b.to_srgba();
+    Color::srgba(
+        a.red + (b.red - a.red) * t,
+        a.green + (b.green - a.green) * t,
+        a.blue + (b.blue - a.blue) * t,
+        a.alpha + (b.alpha - a.alpha) * t,
+    )
+}
+
+/// 当前行动方主精灵信息框的描金外框做轻微脉冲，直观提示"该谁行动"。
+/// 仅改写 `ActivePortraitFrame` 自身的 BorderColor（独立节点，不与按钮系统冲突）。
+pub fn tick_active_frame_pulse_system(
+    time: Res<Time>,
+    theme: Res<UiTheme>,
+    ui_control_side: Res<UiControlSide>,
+    mut q: Query<(&ActivePortraitFrame, &mut BorderColor)>,
+) {
+    let pulse = 0.5 + 0.5 * (time.elapsed_secs() * 3.0).sin();
+    for (frame, mut border) in &mut q {
+        *border = if frame.side == ui_control_side.0 {
+            BorderColor::all(lerp_color(theme.gold, theme.gold_bright, pulse))
+        } else {
+            BorderColor::all(theme.gold_dim)
+        };
+    }
+}
+
+// ============================================================================
+// 元素反应中央横幅特效
+// 触发元素反应时，在屏幕中央弹出一张"反应图标 + 反应名"横幅，带缩放弹出与淡入/
+// 淡出动画。图标复用 `assets/images/icons/reactions/` 下的反应图标。
+// ============================================================================
+
+/// 反应横幅生命周期/动画总时长（秒）。
+const REACTION_BANNER_LIFETIME_SECS: f32 = 1.4;
+/// 同帧触发多个反应时，后续横幅相对屏幕中心的纵向堆叠间距（像素），避免重叠。
+const REACTION_BANNER_STACK_GAP_PX: f32 = 92.0;
+
+/// 反应名 -> (图标路径, 主题描边色)。
+///
+/// 反应名取自 `assets/data/battle_data.ron` 的 `reactions[].name`，多数与
+/// `assets/images/icons/reactions/` 下同名 PNG 对应。未知反应名退化为纯文字横幅。
+fn reaction_visual(reaction_name: &str) -> (Option<&'static str>, Color) {
+    match reaction_name {
+        "蒸发" => (
+            Some("images/icons/reactions/蒸发.png"),
+            Color::srgb(1.0, 0.58, 0.30),
+        ),
+        "燃烧" => (
+            Some("images/icons/reactions/燃烧.png"),
+            Color::srgb(1.0, 0.45, 0.22),
+        ),
+        "导电" => (
+            Some("images/icons/reactions/导电.png"),
+            Color::srgb(0.70, 0.52, 1.0),
+        ),
+        "绽放" => (
+            Some("images/icons/reactions/绽放.png"),
+            Color::srgb(0.42, 0.86, 0.50),
+        ),
+        "雷火燎原" => (
+            Some("images/icons/reactions/雷火燎原.png"),
+            Color::srgb(1.0, 0.40, 0.48),
+        ),
+        "超载" => (
+            Some("images/icons/reactions/超载.png"),
+            Color::srgb(0.93, 0.42, 0.90),
+        ),
+        "激化" => (
+            Some("images/icons/reactions/激化.png"),
+            Color::srgb(0.72, 0.92, 0.40),
+        ),
+        "蒸汽雷爆" => (
+            Some("images/icons/reactions/蒸汽雷爆.png"),
+            Color::srgb(0.50, 0.90, 1.0),
+        ),
+        "感电绽放" => (
+            Some("images/icons/reactions/感电绽放.png"),
+            Color::srgb(0.45, 0.95, 0.82),
+        ),
+        _ => (None, Color::srgb(1.0, 0.84, 0.40)),
+    }
+}
+
+/// 全部反应图标路径（用于 Startup 预加载；须与 `reaction_visual` 的图标集保持一致）。
+const REACTION_ICON_PATHS: &[&str] = &[
+    "images/icons/reactions/蒸发.png",
+    "images/icons/reactions/燃烧.png",
+    "images/icons/reactions/导电.png",
+    "images/icons/reactions/绽放.png",
+    "images/icons/reactions/雷火燎原.png",
+    "images/icons/reactions/超载.png",
+    "images/icons/reactions/激化.png",
+    "images/icons/reactions/蒸汽雷爆.png",
+    "images/icons/reactions/感电绽放.png",
+];
+
+/// 预加载并持有反应图标句柄。
+///
+/// 横幅是短生命周期实体，若在触发瞬间才首次异步加载图标，可能来不及上传到 GPU 而短暂
+/// 显示空白（露出深色底）。在 Startup 预加载并长期持有句柄，确保战斗中即时可用、不被卸载。
+#[derive(Resource, Default)]
+pub struct ReactionIconAssets {
+    #[allow(dead_code)]
+    handles: Vec<Handle<Image>>,
+}
+
+/// Startup：预加载全部反应图标。
+pub fn preload_reaction_icons(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let handles = REACTION_ICON_PATHS
+        .iter()
+        .map(|path| asset_server.load::<Image>(*path))
+        .collect();
+    commands.insert_resource(ReactionIconAssets { handles });
+}
+
+/// 横幅子树中实体的角色，决定淡入淡出作用于哪种颜色、是否缩放、是否负责销毁。
+///
+/// 关键：`Node` 会通过 `#[require]` 自动附带一个默认 `BackgroundColor`（`Color::NONE`，
+/// 即 rgba(0,0,0,0) 透明黑）。若对其调用 `set_alpha` 会把它变成不透明黑，凭空画出黑块。
+/// 因此只对“确实拥有可见颜色”的实体做淡入淡出，绝不碰图标/文字/遮罩的默认透明底。
+#[derive(Clone, Copy, PartialEq)]
+enum ReactionBannerRole {
+    /// 全屏居中容器：自身无可见颜色，仅用于居中；到期时级联销毁整棵子树。
+    Overlay,
+    /// 胶囊：淡入淡出作用于背景 + 描边，并应用缩放弹出。
+    Pill,
+    /// 图标：淡入淡出作用于图片着色。
+    Icon,
+    /// 文字：淡入淡出作用于文字颜色。
+    Text,
+}
+
+/// 元素反应中央横幅特效标记 + 动画状态。
+///
+/// 横幅子树（遮罩 / 胶囊 / 图标 / 文字）中每个实体各持一份相同时长的计时器，
+/// 同帧 spawn 即同步推进；到期时由遮罩层负责级联销毁整棵子树。
+#[derive(Component)]
+pub struct ReactionBannerFx {
+    timer: Timer,
+    role: ReactionBannerRole,
+}
+
+impl ReactionBannerFx {
+    fn new(role: ReactionBannerRole) -> Self {
+        Self {
+            timer: Timer::from_seconds(REACTION_BANNER_LIFETIME_SECS, TimerMode::Once),
+            role,
+        }
+    }
+}
+
+/// 透明度曲线：前段淡入 -> 停留 -> 末段淡出。
+fn reaction_banner_alpha(fraction: f32) -> f32 {
+    const FADE_IN_END: f32 = 0.10;
+    const FADE_OUT_START: f32 = 0.78;
+    if fraction <= FADE_IN_END {
+        (fraction / FADE_IN_END).clamp(0.0, 1.0)
+    } else if fraction >= FADE_OUT_START {
+        (1.0 - (fraction - FADE_OUT_START) / (1.0 - FADE_OUT_START)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// 缩放曲线：0.6 弹出过冲到 1.12，回落到 1.0 停留，末段轻微收缩到 0.94。
+fn reaction_banner_scale(fraction: f32) -> f32 {
+    const POP_END: f32 = 0.13;
+    const SETTLE_END: f32 = 0.22;
+    const SHRINK_START: f32 = 0.86;
+    if fraction <= POP_END {
+        let t = fraction / POP_END;
+        0.6 + (1.12 - 0.6) * t
+    } else if fraction <= SETTLE_END {
+        let t = (fraction - POP_END) / (SETTLE_END - POP_END);
+        1.12 + (1.0 - 1.12) * t
+    } else if fraction >= SHRINK_START {
+        let t = (fraction - SHRINK_START) / (1.0 - SHRINK_START);
+        1.0 + (0.94 - 1.0) * t
+    } else {
+        1.0
+    }
+}
+
+/// 监听 `BattleEvent::ReactionTriggered`，在屏幕中央生成"反应图标 + 反应名"横幅。
+///
+/// 独立于 `process_battle_fx_events`：两者各自持有 `BattleEvent` 读游标，互不影响。
+/// 没有战斗 UI 根（非战斗态）时直接返回，沿用本模块其它 FX 系统的约定。
+pub fn spawn_reaction_banner_system(
+    mut events: MessageReader<BattleEvent>,
+    mut commands: Commands,
+    root: Query<Entity, (With<BattleUiRoot>, Without<BattleUiCleanupPending>)>,
+    ui_font: Option<Res<UiFontHandle>>,
+    asset_server: Res<AssetServer>,
+) {
+    let Ok(root) = root.single() else {
+        return;
+    };
+
+    // 辅助函数：创建指定大小的字体（复用嵌入的 CJK 字体）。
+    let make_font = |size: f32| {
+        let mut f = TextFont::from_font_size(size);
+        if let Some(h) = ui_font.as_ref() {
+            f.font = h.0.clone();
+        }
+        f
+    };
+
+    // 同帧多个反应时纵向堆叠，避免重叠。
+    let mut stack_index = 0usize;
+    for event in events.read() {
+        let BattleEvent::ReactionTriggered { reaction_name, .. } = event else {
+            continue;
+        };
+
+        let (icon_path, accent) = reaction_visual(reaction_name);
+        let name = reaction_name.clone();
+        let stack_offset_px = stack_index as f32 * REACTION_BANNER_STACK_GAP_PX;
+        stack_index += 1;
+
+        // 胶囊初始：缩小态（弹出动画起点）+ 纵向堆叠偏移。
+        let pill_transform = {
+            let mut t = UiTransform::from_scale(Vec2::splat(0.6));
+            t.translation = Val2::px(0.0, stack_offset_px);
+            t
+        };
+
+        commands.entity(root).with_children(|parent| {
+            // 遮罩层：全屏，仅用于把胶囊居中；Pickable::IGNORE 确保不吞点击。
+            parent
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                    ReactionBannerFx::new(ReactionBannerRole::Overlay),
+                ))
+                .with_children(|overlay| {
+                    // 胶囊：图标 + 文字，深色半透明底 + 反应主题色描边，缩放弹出。
+                    overlay
+                        .spawn((
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(14.0),
+                                padding: UiRect::axes(Val::Px(24.0), Val::Px(13.0)),
+                                border: UiRect::all(Val::Px(3.0)),
+                                border_radius: BorderRadius::all(Val::Px(16.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.06, 0.07, 0.12, 0.86)),
+                            BorderColor::all(accent),
+                            pill_transform,
+                            Pickable::IGNORE,
+                            ReactionBannerFx::new(ReactionBannerRole::Pill),
+                        ))
+                        .with_children(|pill| {
+                            if let Some(path) = icon_path {
+                                pill.spawn((
+                                    Node {
+                                        width: Val::Px(58.0),
+                                        height: Val::Px(58.0),
+                                        flex_shrink: 0.0,
+                                        ..default()
+                                    },
+                                    ImageNode::new(asset_server.load(path))
+                                        .with_color(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+                                    Pickable::IGNORE,
+                                    ReactionBannerFx::new(ReactionBannerRole::Icon),
+                                ));
+                            }
+                            pill.spawn((
+                                Text::new(name.clone()),
+                                make_font(40.0),
+                                TextColor(Color::WHITE),
+                                TextShadow {
+                                    offset: Vec2::new(2.0, 2.0),
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.75),
+                                },
+                                Pickable::IGNORE,
+                                ReactionBannerFx::new(ReactionBannerRole::Text),
+                            ));
+                        });
+                });
+        });
+    }
+}
+
+/// 推进反应横幅动画并在到期时销毁。
+///
+/// 对子树中每个实体：按计时器进度更新透明度（淡入/停留/淡出），并对胶囊额外更新
+/// 缩放；到期帧由根实体级联销毁整棵子树。
+pub fn tick_reaction_banner_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(
+        Entity,
+        &mut ReactionBannerFx,
+        Option<&mut UiTransform>,
+        Option<&mut BackgroundColor>,
+        Option<&mut BorderColor>,
+        Option<&mut TextColor>,
+        Option<&mut ImageNode>,
+    )>,
+) {
+    for (entity, mut fx, transform, background, border, text_color, image) in &mut q {
+        fx.timer.tick(time.delta());
+        let fraction = fx.timer.fraction();
+        let alpha = reaction_banner_alpha(fraction);
+
+        // 仅对各实体“确实拥有的可见颜色”做淡入淡出，绝不触碰节点自动附带的默认透明底，
+        // 否则 set_alpha 会把透明黑 rgba(0,0,0,0) 变成不透明黑，画出黑块。
+        match fx.role {
+            ReactionBannerRole::Pill => {
+                if let Some(mut background) = background {
+                    background.0.set_alpha(alpha);
+                }
+                if let Some(mut border) = border {
+                    border.top.set_alpha(alpha);
+                    border.right.set_alpha(alpha);
+                    border.bottom.set_alpha(alpha);
+                    border.left.set_alpha(alpha);
+                }
+                // 缩放弹出仅作用于胶囊（保留 spawn 时设置的纵向堆叠平移）。
+                if let Some(mut transform) = transform {
+                    transform.scale = Vec2::splat(reaction_banner_scale(fraction));
+                }
+            }
+            ReactionBannerRole::Icon => {
+                if let Some(mut image) = image {
+                    image.color = Color::srgba(1.0, 1.0, 1.0, alpha);
+                }
+            }
+            ReactionBannerRole::Text => {
+                if let Some(mut text_color) = text_color {
+                    text_color.0.set_alpha(alpha);
+                }
+            }
+            ReactionBannerRole::Overlay => {}
+        }
+
+        if fx.role == ReactionBannerRole::Overlay && fx.timer.just_finished() {
+            commands.entity(entity).despawn();
         }
     }
 }

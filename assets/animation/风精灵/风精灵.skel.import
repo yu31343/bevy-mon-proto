@@ -2,13 +2,13 @@
 
 importer="spine.skel"
 type="SpineSkeletonFileResource"
-uid="uid://coi4r5bv4daor"
-path="res://.godot/imported/nibbit.skel-ddc5039554708a8040777fb0d60b580f.spskel"
+uid="uid://cbaww6gd7g743"
+path="res://.godot/imported/风精灵.skel-6b655a4fd5b64cebd28f191d15f9cfc4.spskel"
 
 [deps]
 
-source_file="res://animations/monsters/nibbit/nibbit.skel"
-dest_files=["res://.godot/imported/nibbit.skel-ddc5039554708a8040777fb0d60b580f.spskel"]
+source_file="res://animations/characters/风精灵/风精灵.skel"
+dest_files=["res://.godot/imported/风精灵.skel-6b655a4fd5b64cebd28f191d15f9cfc4.spskel"]
 
 [params]
 

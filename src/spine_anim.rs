@@ -15,14 +15,20 @@ impl Plugin for SpineAnimPlugin {
             .add_systems(Startup, systems::load_monster_skeletons)
             .add_systems(
                 Update,
-                systems::spawn_monster_ui_visuals.run_if(in_state(GameState::Battle)),
+                (
+                    systems::spawn_monster_ui_visuals,
+                    systems::despawn_stale_monster_visuals,
+                )
+                    .run_if(in_state(GameState::Battle)),
             )
             .add_systems(
                 Update,
                 (
                     systems::react_to_battle_events,
+                    systems::sync_cursed_chain_vfx,
                     systems::sync_active_visibility_and_facing,
                     systems::handle_spine_animation_complete,
+                    systems::handle_vfx_animation_complete,
                     systems::log_spine_ui_ready_events,
                     systems::log_spine_loader_failures,
                 )
@@ -32,6 +38,7 @@ impl Plugin for SpineAnimPlugin {
                 Update,
                 systems::tick_death_fade
                     .run_if(in_state(GameState::Battle).or(in_state(GameState::Result))),
-            );
+            )
+            .add_systems(PostUpdate, systems::despawn_ready_spine_ui_nodes);
     }
 }

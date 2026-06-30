@@ -14,9 +14,9 @@ use crate::{
         upsert_status_instance,
     },
     data::{
-        AttributeStageModifier, AttributeType, BattleFormulaRules, EffectTarget, ElementDb,
-        ElementType, ReactionDb, ReactionDef, SkillCategory, SkillCondition, SkillDef, SkillEffect,
-        StatusCategory, StatusDb, StatusTickTiming,
+        AttributeStageModifier, AttributeType, BattleFormulaRules, BattleRules, EffectTarget,
+        ElementDb, ElementType, ReactionDb, ReactionDef, SkillCategory, SkillCondition, SkillDef,
+        SkillEffect, StatusCategory, StatusDb, StatusTickTiming,
     },
 };
 
@@ -364,9 +364,6 @@ fn reaction_matches(
     if reaction.trigger_element != incoming_element {
         return false;
     }
-    if reaction.required_elements.len() > 2 {
-        return false;
-    }
     if !reaction.required_elements.is_empty()
         && !reaction.required_elements.contains(&incoming_element)
     {
@@ -386,15 +383,30 @@ fn reaction_matches(
         .all(|status_id| has_status(current_statuses, status_id))
 }
 
+fn reaction_priority(reaction: &ReactionDef) -> (usize, usize) {
+    (
+        reaction.required_statuses.len(),
+        reaction.required_elements.len(),
+    )
+}
+
 fn detect_element_reaction<'a>(
     reaction_db: &'a ReactionDb,
     current_auras: &[ElementType],
     current_statuses: &StatusBoard,
     incoming_element: ElementType,
 ) -> Option<&'a ReactionDef> {
-    reaction_db.reactions.iter().find(|reaction| {
+    let mut best = None;
+    for reaction in reaction_db.reactions.iter().filter(|reaction| {
         reaction_matches(reaction, current_auras, current_statuses, incoming_element)
-    })
+    }) {
+        if best.is_none_or(|best_reaction| {
+            reaction_priority(reaction) > reaction_priority(best_reaction)
+        }) {
+            best = Some(reaction);
+        }
+    }
+    best
 }
 
 fn clear_status_by_id(
@@ -476,6 +488,7 @@ fn sync_aura_status(
 }
 
 fn emit_reaction(
+    reaction_id: &str,
     reaction_name: &str,
     attacker_side: Side,
     target_side: Side,
@@ -489,6 +502,7 @@ fn emit_reaction(
     event_writer.write(BattleEvent::ReactionTriggered {
         source: attacker_side,
         target: target_side,
+        reaction_id: reaction_id.to_string(),
         reaction_name: reaction_name.to_string(),
     });
     if let Some(round) = round {
@@ -517,6 +531,7 @@ fn apply_damage_with_shield(
     source_side: Side,
     target_side: Side,
     amount: i32,
+    damage_type: crate::battle::DamageType,
     target_stats: &mut Stats,
     target_shield: &mut Shield,
     event_writer: &mut MessageWriter<BattleEvent>,
@@ -538,6 +553,7 @@ fn apply_damage_with_shield(
         source: source_side,
         target: target_side,
         amount: hp_damage,
+        damage_type,
     });
     (absorbed, hp_damage)
 }
@@ -549,13 +565,25 @@ fn supports_normal_attachment(element: ElementType) -> bool {
     )
 }
 
+fn take_next_heal_bonus(side: Side, pending_boosts: &mut PendingBoosts) -> i32 {
+    let pending = match side {
+        Side::Player => &mut pending_boosts.player,
+        Side::Enemy => &mut pending_boosts.enemy,
+    };
+    let bonus = pending.next_heal_bonus;
+    pending.next_heal_bonus = 0;
+    bonus
+}
+
 fn heal_target(
     heal_side: Side,
     raw_amount: i32,
     target_stats: &mut Stats,
     target_statuses: &StatusBoard,
+    pending_boosts: &mut PendingBoosts,
     event_writer: &mut MessageWriter<BattleEvent>,
 ) -> (i32, f32, i32) {
+    let raw_amount = raw_amount + take_next_heal_bonus(heal_side, pending_boosts);
     let multiplier = target_statuses.heal_taken_multiplier();
     let final_heal = ((raw_amount as f32) * multiplier).round() as i32;
     let before = target_stats.hp;
@@ -607,21 +635,66 @@ fn apply_stage_modifiers_to_target(
         return;
     }
 
-    let has_debuff = modifiers.iter().any(|modifier| modifier.amount < 0);
-    let status_prefix = if has_debuff {
-        "stage_shift_debuff"
-    } else {
-        "stage_shift_buff"
-    };
+    let buff_modifiers: Vec<AttributeStageModifier> = modifiers
+        .iter()
+        .copied()
+        .filter(|modifier| modifier.amount >= 0)
+        .collect();
+    let debuff_modifiers: Vec<AttributeStageModifier> = modifiers
+        .iter()
+        .copied()
+        .filter(|modifier| modifier.amount < 0)
+        .collect();
+
+    apply_stage_modifier_group(
+        &buff_modifiers,
+        StatusCategory::Buff,
+        "stage_shift_buff",
+        duration_turns,
+        source_side,
+        target_side,
+        target_stats,
+        target_statuses,
+        status_writer.as_deref_mut(),
+        structured_log.as_deref_mut(),
+        round,
+    );
+    apply_stage_modifier_group(
+        &debuff_modifiers,
+        StatusCategory::Debuff,
+        "stage_shift_debuff",
+        duration_turns,
+        source_side,
+        target_side,
+        target_stats,
+        target_statuses,
+        status_writer.as_deref_mut(),
+        structured_log.as_deref_mut(),
+        round,
+    );
+}
+
+fn apply_stage_modifier_group(
+    modifiers: &[AttributeStageModifier],
+    category: StatusCategory,
+    status_prefix: &str,
+    duration_turns: i32,
+    source_side: Side,
+    target_side: Side,
+    target_stats: &mut Stats,
+    target_statuses: &mut StatusBoard,
+    mut status_writer: Option<&mut MessageWriter<BattleStatusEvent>>,
+    mut structured_log: Option<&mut StructuredBattleLog>,
+    round: Option<u32>,
+) {
+    if modifiers.is_empty() {
+        return;
+    }
 
     let status = StatusInstance {
         id: next_status_id_with_prefix(target_statuses, status_prefix),
         name: "属性变化".to_string(),
-        category: if has_debuff {
-            StatusCategory::Debuff
-        } else {
-            StatusCategory::Buff
-        },
+        category,
         remaining_turns: duration_turns,
         applied_round: round.unwrap_or(0),
         source_side: Some(source_side),
@@ -648,7 +721,10 @@ fn apply_stage_modifiers_to_target(
                 target_side,
                 "stage_shift",
                 if refreshed { "refreshed" } else { "applied" },
-                format!("duration={} modifiers={:?}", duration_turns, modifiers),
+                format!(
+                    "category={:?} duration={} modifiers={:?}",
+                    category, duration_turns, modifiers
+                ),
             ));
         }
         if let Some(log) = structured_log.as_deref_mut() {
@@ -658,13 +734,14 @@ fn apply_stage_modifiers_to_target(
                 source_side,
                 "属性变化",
                 format!(
-                    "{}{}属性变化；持续={}回合；修正={:?}",
+                    "{}{}{:?}属性变化；持续={}回合；修正={:?}",
                     if refreshed { "刷新" } else { "施加" },
                     if target_side == Side::Player {
                         "玩家"
                     } else {
                         "敌方"
                     },
+                    category,
                     duration_turns,
                     modifiers
                 ),
@@ -883,6 +960,7 @@ fn apply_fixed_damage(
     target_side: Side,
     amount: i32,
     ignore_shield: bool,
+    damage_type: crate::battle::DamageType,
     target_stats: &mut Stats,
     target_shield: &mut Shield,
     event_writer: &mut MessageWriter<BattleEvent>,
@@ -896,6 +974,7 @@ fn apply_fixed_damage(
             source: source_side,
             target: target_side,
             amount: hp_damage,
+            damage_type,
         });
         (0, hp_damage)
     } else {
@@ -903,6 +982,7 @@ fn apply_fixed_damage(
             source_side,
             target_side,
             amount,
+            damage_type,
             target_stats,
             target_shield,
             event_writer,
@@ -936,6 +1016,7 @@ fn apply_stat_difference_damage(
         target_side,
         amount,
         ignore_shield,
+        crate::battle::DamageType::Fixed,
         target_stats,
         target_shield,
         event_writer,
@@ -1037,6 +1118,7 @@ fn resolve_element_attachment_only(
     target_shield: &mut Shield,
     target_aura: &mut ElementAura,
     target_statuses: &mut StatusBoard,
+    pending_boosts: &mut PendingBoosts,
     status_db: &StatusDb,
     reaction_db: &ReactionDb,
     event_writer: &mut MessageWriter<BattleEvent>,
@@ -1057,6 +1139,8 @@ fn resolve_element_attachment_only(
     let mut reaction_required_statuses: Vec<&str> = Vec::new();
     let mut reaction_statuses_to_apply: Vec<&str> = Vec::new();
     let mut reaction_statuses_to_clear: Vec<&str> = Vec::new();
+    let mut reaction_clear_elements: Vec<ElementType> = Vec::new();
+    let mut reaction_preserve_current_auras = false;
 
     if let Some(round) = round {
         if let Some(writer) = formula_writer.as_deref_mut() {
@@ -1097,7 +1181,22 @@ fn resolve_element_attachment_only(
                 reaction.apply_statuses.iter().map(String::as_str).collect();
             reaction_statuses_to_clear =
                 reaction.clear_statuses.iter().map(String::as_str).collect();
-            outcome.aura_to = reaction.aura_results.clone();
+            reaction_clear_elements = reaction.clear_elements.clone();
+            reaction_preserve_current_auras = reaction.preserve_current_auras;
+            if reaction.preserve_current_auras {
+                outcome.aura_to = from
+                    .iter()
+                    .copied()
+                    .filter(|element| !reaction.clear_elements.contains(element))
+                    .collect();
+                for element in &reaction.aura_results {
+                    if !outcome.aura_to.contains(element) {
+                        outcome.aura_to.push(*element);
+                    }
+                }
+            } else {
+                outcome.aura_to = reaction.aura_results.clone();
+            }
         } else if !outcome.aura_to.contains(&incoming_element) {
             if outcome.aura_to.len() >= 2 {
                 outcome.evicted_aura = outcome.aura_to.first().copied();
@@ -1143,7 +1242,7 @@ fn resolve_element_attachment_only(
                 target_side,
                 format!("{}_resolved", action_label),
                 format!(
-                    "incoming_element={:?} reaction_id={:?} reaction_name={:?} required_elements={:?} required_statuses={:?} statuses_to_clear={:?} statuses_to_apply={:?} evicted_aura={:?} aura_before={:?} aura_after_candidate={:?}",
+                    "incoming_element={:?} reaction_id={:?} reaction_name={:?} required_elements={:?} required_statuses={:?} statuses_to_clear={:?} statuses_to_apply={:?} clear_elements={:?} preserve_current_auras={} evicted_aura={:?} aura_before={:?} aura_after_candidate={:?}",
                     incoming_element,
                     outcome.reaction_id,
                     outcome.reaction_name,
@@ -1151,6 +1250,8 @@ fn resolve_element_attachment_only(
                     reaction_required_statuses,
                     reaction_statuses_to_clear,
                     reaction_statuses_to_apply,
+                    reaction_clear_elements,
+                    reaction_preserve_current_auras,
                     outcome.evicted_aura,
                     from,
                     outcome.aura_to
@@ -1192,6 +1293,7 @@ fn resolve_element_attachment_only(
             attacker_side,
             target_side,
             outcome.reaction_fixed_damage,
+            crate::battle::DamageType::Fixed,
             target_stats,
             target_shield,
             event_writer,
@@ -1208,11 +1310,15 @@ fn resolve_element_attachment_only(
             outcome.reaction_heal_raw,
             attacker_stats,
             attacker_statuses,
+            pending_boosts,
             event_writer,
         );
     }
 
-    if from != outcome.aura_to {
+    let refreshed_normal_attachment = supports_normal_attachment(incoming_element)
+        && outcome.reaction_name.is_none()
+        && from.contains(&incoming_element);
+    if from != outcome.aura_to || refreshed_normal_attachment {
         event_writer.write(BattleEvent::ElementAuraApplied {
             side: target_side,
             from: from.clone(),
@@ -1254,8 +1360,12 @@ fn resolve_element_attachment_only(
         }
     }
 
-    if let Some(name) = outcome.reaction_name.as_deref() {
+    if let (Some(id), Some(name)) = (
+        outcome.reaction_id.as_deref(),
+        outcome.reaction_name.as_deref(),
+    ) {
         emit_reaction(
+            id,
             name,
             attacker_side,
             target_side,
@@ -1347,6 +1457,7 @@ pub(crate) fn apply_wind_effect(
     back_target_b: Option<WindSpreadTarget<'_>>,
     pending_boosts: &mut PendingBoosts,
     formula_rules: &BattleFormulaRules,
+    battle_rules: &BattleRules,
     accuracy_rng: &mut AccuracyRng,
     element_db: &ElementDb,
     status_db: &StatusDb,
@@ -1418,6 +1529,7 @@ pub(crate) fn apply_wind_effect(
                         front_statuses,
                         pending_boosts,
                         formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         element_db,
                         status_db,
@@ -1457,6 +1569,7 @@ pub(crate) fn apply_wind_effect(
         attacker_side,
         target_side,
         direct_damage,
+        crate::battle::DamageType::Direct,
         front_stats,
         front_shield,
         event_writer,
@@ -1522,6 +1635,7 @@ pub(crate) fn apply_wind_effect(
                         front_statuses,
                         pending_boosts,
                         formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         element_db,
                         status_db,
@@ -1598,6 +1712,7 @@ pub(crate) fn apply_wind_effect(
         attacker_side,
         target_side,
         front_spread_damage,
+        crate::battle::DamageType::Fixed,
         front_stats,
         front_shield,
         event_writer,
@@ -1656,6 +1771,7 @@ pub(crate) fn apply_wind_effect(
             attacker_side,
             target_side,
             back_damage,
+            crate::battle::DamageType::Fixed,
             stats,
             shield,
             event_writer,
@@ -1670,6 +1786,7 @@ pub(crate) fn apply_wind_effect(
             shield,
             aura,
             statuses,
+            pending_boosts,
             status_db,
             reaction_db,
             event_writer,
@@ -1740,6 +1857,7 @@ pub(crate) fn apply_wind_effect(
                     front_statuses,
                     pending_boosts,
                     formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     element_db,
                     status_db,
@@ -1767,6 +1885,7 @@ pub(crate) fn apply_self_effect(
     actor_statuses: &mut StatusBoard,
     pending_boosts: &mut PendingBoosts,
     formula_rules: &BattleFormulaRules,
+    battle_rules: &BattleRules,
     accuracy_rng: &mut AccuracyRng,
     element_db: &ElementDb,
     status_db: &StatusDb,
@@ -1800,6 +1919,7 @@ pub(crate) fn apply_self_effect(
         actor_statuses,
         pending_boosts,
         formula_rules,
+        battle_rules,
         accuracy_rng,
         element_db,
         status_db,
@@ -1823,6 +1943,7 @@ fn apply_self_skill_effect_with_context(
     actor_statuses: &mut StatusBoard,
     pending_boosts: &mut PendingBoosts,
     formula_rules: &BattleFormulaRules,
+    battle_rules: &BattleRules,
     accuracy_rng: &mut AccuracyRng,
     element_db: &ElementDb,
     status_db: &StatusDb,
@@ -1847,6 +1968,7 @@ fn apply_self_skill_effect_with_context(
                     actor_statuses,
                     pending_boosts,
                     formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     element_db,
                     status_db,
@@ -1873,6 +1995,7 @@ fn apply_self_skill_effect_with_context(
                         actor_statuses,
                         pending_boosts,
                         formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         element_db,
                         status_db,
@@ -1972,7 +2095,11 @@ fn apply_self_skill_effect_with_context(
                 pending_boosts.enemy.next_shield_bonus = 0;
             }
 
-            actor_shield.0 += shield_amount;
+            shield_amount = actor_shield.gain_capped(
+                shield_amount,
+                actor_stats.max_hp,
+                battle_rules.max_shield_hp_ratio,
+            );
             event_writer.write(BattleEvent::ShieldGained {
                 side: actor_side,
                 amount: shield_amount,
@@ -2081,6 +2208,7 @@ fn apply_self_skill_effect_with_context(
                 target_for_damage,
                 *amount,
                 *ignore_shield,
+                crate::battle::DamageType::Fixed,
                 actor_stats,
                 actor_shield,
                 event_writer,
@@ -2133,6 +2261,7 @@ fn apply_self_skill_effect_with_context(
                 target_for_damage,
                 amount,
                 *ignore_shield,
+                crate::battle::DamageType::Fixed,
                 actor_stats,
                 actor_shield,
                 event_writer,
@@ -2184,6 +2313,7 @@ pub(crate) fn apply_effect(
     target_statuses: &mut StatusBoard,
     pending_boosts: &mut PendingBoosts,
     formula_rules: &BattleFormulaRules,
+    battle_rules: &BattleRules,
     accuracy_rng: &mut AccuracyRng,
     element_db: &ElementDb,
     status_db: &StatusDb,
@@ -2221,6 +2351,7 @@ pub(crate) fn apply_effect(
         target_statuses,
         pending_boosts,
         formula_rules,
+        battle_rules,
         accuracy_rng,
         element_db,
         status_db,
@@ -2248,6 +2379,7 @@ fn apply_effect_with_context(
     target_statuses: &mut StatusBoard,
     pending_boosts: &mut PendingBoosts,
     formula_rules: &BattleFormulaRules,
+    battle_rules: &BattleRules,
     accuracy_rng: &mut AccuracyRng,
     element_db: &ElementDb,
     status_db: &StatusDb,
@@ -2280,6 +2412,7 @@ fn apply_effect_with_context(
                     target_statuses,
                     pending_boosts,
                     formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     element_db,
                     status_db,
@@ -2320,6 +2453,7 @@ fn apply_effect_with_context(
                         target_statuses,
                         pending_boosts,
                         formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         element_db,
                         status_db,
@@ -2490,6 +2624,7 @@ fn apply_effect_with_context(
                 target_for_damage,
                 *amount,
                 *ignore_shield,
+                crate::battle::DamageType::Fixed,
                 stats,
                 shield,
                 event_writer,
@@ -2737,6 +2872,7 @@ fn apply_effect_with_context(
                         attacker_side,
                         target_side,
                         theoretical_damage_no_aura,
+                        crate::battle::DamageType::Direct,
                         target_stats,
                         target_shield,
                         event_writer,
@@ -2804,6 +2940,7 @@ fn apply_effect_with_context(
                         target_side,
                         theoretical_damage_with_aura,
                         *ignore_shield,
+                        crate::battle::DamageType::Direct,
                         target_stats,
                         target_shield,
                         event_writer,
@@ -2965,6 +3102,7 @@ fn apply_effect_with_context(
                             attacker_side,
                             target_side,
                             reaction_fixed_damage,
+                            crate::battle::DamageType::Fixed,
                             target_stats,
                             target_shield,
                             event_writer,
@@ -2984,11 +3122,15 @@ fn apply_effect_with_context(
                             reaction_heal_amount,
                             attacker_stats,
                             attacker_statuses,
+                            pending_boosts,
                             event_writer,
                         );
                     }
 
-                    if from != aura_after {
+                    let refreshed_normal_attachment = supports_normal_attachment(incoming_element)
+                        && reaction_name.is_none()
+                        && from.contains(&incoming_element);
+                    if from != aura_after || refreshed_normal_attachment {
                         event_writer.write(BattleEvent::ElementAuraApplied {
                             side: target_side,
                             from: from.clone(),
@@ -3048,6 +3190,7 @@ fn apply_effect_with_context(
                                     lifesteal_raw,
                                     attacker_stats,
                                     attacker_statuses,
+                                    pending_boosts,
                                     event_writer,
                                 );
                             if let Some(round) = round {
@@ -3074,8 +3217,9 @@ fn apply_effect_with_context(
                         }
                     }
 
-                    if let Some(name) = reaction_name {
+                    if let (Some(id), Some(name)) = (reaction_id, reaction_name) {
                         emit_reaction(
+                            id,
                             name,
                             attacker_side,
                             target_side,
@@ -3166,6 +3310,7 @@ fn apply_effect_with_context(
                     target_side,
                     theoretical_damage,
                     *ignore_shield,
+                    crate::battle::DamageType::Direct,
                     target_stats,
                     target_shield,
                     event_writer,
@@ -3186,6 +3331,7 @@ fn apply_effect_with_context(
                             lifesteal_raw,
                             attacker_stats,
                             attacker_statuses,
+                            pending_boosts,
                             event_writer,
                         );
                         if let Some(round) = round {
@@ -3269,6 +3415,7 @@ fn apply_effect_with_context(
                 attacker_statuses,
                 pending_boosts,
                 formula_rules,
+                battle_rules,
                 accuracy_rng,
                 element_db,
                 status_db,
@@ -3314,6 +3461,7 @@ mod tests {
             },
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         }
     }
 
@@ -3364,6 +3512,7 @@ mod tests {
             cost_ap: 2,
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
             effect: SkillEffect::Sequence {
                 effects: vec![
                     SkillEffect::Attack {
@@ -3427,6 +3576,8 @@ mod tests {
                 heal_attacker: 0,
                 apply_statuses: vec![],
                 clear_statuses: vec![],
+                clear_elements: vec![],
+                preserve_current_auras: false,
                 aura_results: vec![],
             }],
         }
@@ -3445,6 +3596,269 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    #[test]
+    fn mixed_stage_modifiers_are_split_into_buff_and_debuff_statuses() {
+        let mut stats = base_stats(30);
+        let mut statuses = StatusBoard::default();
+        let modifiers = vec![
+            AttributeStageModifier {
+                attribute: AttributeType::Atk,
+                amount: 1,
+            },
+            AttributeStageModifier {
+                attribute: AttributeType::Def,
+                amount: -1,
+            },
+        ];
+
+        apply_stage_modifiers_to_target(
+            &modifiers,
+            2,
+            Side::Player,
+            Side::Player,
+            &mut stats,
+            &mut statuses,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(statuses.entries.len(), 2);
+        assert!(statuses.entries.iter().any(|status| {
+            status.category == StatusCategory::Buff
+                && status.stage_modifiers.iter().any(|modifier| {
+                    modifier.attribute == AttributeType::Atk && modifier.amount == 1
+                })
+        }));
+        assert!(statuses.entries.iter().any(|status| {
+            status.category == StatusCategory::Debuff
+                && status.stage_modifiers.iter().any(|modifier| {
+                    modifier.attribute == AttributeType::Def && modifier.amount == -1
+                })
+        }));
+        assert_eq!(stats.atk_stage, 1);
+        assert_eq!(stats.def_stage, -1);
+    }
+
+    fn status_board_with(status_id: &str) -> StatusBoard {
+        StatusBoard {
+            entries: vec![StatusInstance {
+                id: status_id.to_string(),
+                name: status_id.to_string(),
+                category: StatusCategory::Debuff,
+                remaining_turns: 2,
+                applied_round: 1,
+                source_side: Some(Side::Player),
+                tick_timing: Some(StatusTickTiming::OwnerActionEnd),
+                stage_modifiers: vec![],
+                fixed_damage_on_tick: 0,
+                heal_on_tick: 0,
+                heal_taken_multiplier: None,
+                evade_charges: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn reaction_matches_two_existing_auras_plus_incoming_element() {
+        let reaction = ReactionDef {
+            id: "steam_thunder_explosion".to_string(),
+            name: "蒸汽雷爆".to_string(),
+            required_elements: vec![ElementType::Water, ElementType::Thunder, ElementType::Fire],
+            required_statuses: vec![],
+            trigger_element: ElementType::Fire,
+            fixed_damage: 24,
+            heal_attacker: 0,
+            apply_statuses: vec!["armor_break".to_string()],
+            clear_statuses: vec!["electrocuted".to_string()],
+            clear_elements: vec![ElementType::Water, ElementType::Thunder],
+            preserve_current_auras: true,
+            aura_results: vec![],
+        };
+
+        assert!(reaction_matches(
+            &reaction,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        ));
+        assert!(!reaction_matches(
+            &reaction,
+            &[ElementType::Water],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        ));
+        assert!(!reaction_matches(
+            &reaction,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Grass,
+        ));
+    }
+
+    #[test]
+    fn detect_element_reaction_prefers_three_element_match_over_earlier_normal_reaction() {
+        let reaction_db = ReactionDb {
+            reactions: vec![
+                ReactionDef {
+                    id: "vaporize_reverse".to_string(),
+                    name: "蒸发".to_string(),
+                    required_elements: vec![ElementType::Water, ElementType::Fire],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 15,
+                    heal_attacker: 0,
+                    apply_statuses: vec![],
+                    clear_statuses: vec![],
+                    clear_elements: vec![],
+                    preserve_current_auras: false,
+                    aura_results: vec![],
+                },
+                ReactionDef {
+                    id: "steam_thunder_explosion".to_string(),
+                    name: "蒸汽雷爆".to_string(),
+                    required_elements: vec![
+                        ElementType::Water,
+                        ElementType::Thunder,
+                        ElementType::Fire,
+                    ],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 24,
+                    heal_attacker: 0,
+                    apply_statuses: vec!["armor_break".to_string()],
+                    clear_statuses: vec!["electrocuted".to_string()],
+                    clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                    preserve_current_auras: true,
+                    aura_results: vec![],
+                },
+            ],
+        };
+
+        let reaction = detect_element_reaction(
+            &reaction_db,
+            &[ElementType::Water, ElementType::Thunder],
+            &StatusBoard::default(),
+            ElementType::Fire,
+        );
+
+        assert_eq!(
+            reaction.map(|reaction| reaction.id.as_str()),
+            Some("steam_thunder_explosion")
+        );
+    }
+
+    #[test]
+    fn detect_element_reaction_prefers_status_fallback_over_earlier_normal_reaction() {
+        let reaction_db = ReactionDb {
+            reactions: vec![
+                ReactionDef {
+                    id: "vaporize_reverse".to_string(),
+                    name: "蒸发".to_string(),
+                    required_elements: vec![ElementType::Water, ElementType::Fire],
+                    required_statuses: vec![],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 15,
+                    heal_attacker: 0,
+                    apply_statuses: vec![],
+                    clear_statuses: vec![],
+                    clear_elements: vec![],
+                    preserve_current_auras: false,
+                    aura_results: vec![],
+                },
+                ReactionDef {
+                    id: "steam_thunder_explosion_from_electrocuted".to_string(),
+                    name: "蒸汽雷爆".to_string(),
+                    required_elements: vec![ElementType::Fire],
+                    required_statuses: vec!["electrocuted".to_string()],
+                    trigger_element: ElementType::Fire,
+                    fixed_damage: 24,
+                    heal_attacker: 0,
+                    apply_statuses: vec!["armor_break".to_string()],
+                    clear_statuses: vec!["electrocuted".to_string()],
+                    clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                    preserve_current_auras: true,
+                    aura_results: vec![],
+                },
+            ],
+        };
+        let statuses = status_board_with("electrocuted");
+
+        let reaction = detect_element_reaction(
+            &reaction_db,
+            &[ElementType::Water],
+            &statuses,
+            ElementType::Fire,
+        );
+
+        assert_eq!(
+            reaction.map(|reaction| reaction.id.as_str()),
+            Some("steam_thunder_explosion_from_electrocuted")
+        );
+    }
+
+    #[test]
+    fn reaction_preserve_current_auras_clears_only_configured_elements() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(30);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut target_stats = base_stats(30);
+        let mut target_shield = Shield(0);
+        let mut target_aura = ElementAura {
+            slots: [Some(ElementType::Water), Some(ElementType::Grass)],
+        };
+        let mut target_statuses = status_board_with("electrocuted");
+        let mut pending_boosts = PendingBoosts::default();
+        let status_db = empty_status_db();
+        let reaction_db = ReactionDb {
+            reactions: vec![ReactionDef {
+                id: "steam_thunder_explosion_from_electrocuted".to_string(),
+                name: "蒸汽雷爆".to_string(),
+                required_elements: vec![ElementType::Fire],
+                required_statuses: vec!["electrocuted".to_string()],
+                trigger_element: ElementType::Fire,
+                fixed_damage: 0,
+                heal_attacker: 0,
+                apply_statuses: vec![],
+                clear_statuses: vec![],
+                clear_elements: vec![ElementType::Water, ElementType::Thunder],
+                preserve_current_auras: true,
+                aura_results: vec![],
+            }],
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            resolve_element_attachment_only(
+                ElementType::Fire,
+                Side::Player,
+                Side::Enemy,
+                &mut attacker_stats,
+                &mut attacker_statuses,
+                &mut target_stats,
+                &mut target_shield,
+                &mut target_aura,
+                &mut target_statuses,
+                &mut pending_boosts,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                None,
+                None,
+                "test_attachment",
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(target_aura.elements(), vec![ElementType::Grass]);
     }
 
     #[test]
@@ -3488,6 +3902,7 @@ mod tests {
             },
             element: Some(ElementType::Wind),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         };
 
         {
@@ -3516,6 +3931,7 @@ mod tests {
                 None,
                 &mut pending_boosts,
                 &formula_rules(),
+                &BattleRules::default(),
                 &mut accuracy_rng,
                 &element_db,
                 &status_db,
@@ -3555,6 +3971,79 @@ mod tests {
     }
 
     #[test]
+    fn shield_skill_caps_at_half_max_hp() {
+        let mut world = World::new();
+        world.init_resource::<Messages<BattleEvent>>();
+        let mut system_state: SystemState<MessageWriter<BattleEvent>> =
+            SystemState::new(&mut world);
+
+        let mut attacker_stats = base_stats(21);
+        let mut attacker_shield = Shield(9);
+        let mut attacker_statuses = StatusBoard::default();
+        let mut target_stats = base_stats(30);
+        let mut target_shield = Shield(0);
+        let mut target_aura = ElementAura::default();
+        let mut target_statuses = StatusBoard::default();
+        let mut pending_boosts = PendingBoosts::default();
+        let mut accuracy_rng = AccuracyRng::default();
+        let element_db = ElementDb::from_default_config();
+        let status_db = empty_status_db();
+        let reaction_db = test_reaction_db();
+        let skill = SkillDef {
+            id: crate::data::SkillId::WaterScreen,
+            name: "水幕".to_string(),
+            category: SkillCategory::SelfUtility,
+            cost_ap: 1,
+            effect: SkillEffect::Shield { amount: 8 },
+            element: Some(ElementType::Water),
+            base_accuracy: Some(1.0),
+            uses_per_turn: None,
+        };
+
+        {
+            let mut event_writer = system_state.get_mut(&mut world);
+            apply_effect(
+                &skill,
+                Side::Player,
+                Side::Player,
+                ElementType::Water,
+                &mut attacker_stats,
+                &mut attacker_shield,
+                &mut attacker_statuses,
+                &mut target_stats,
+                &mut target_shield,
+                &mut target_aura,
+                &mut target_statuses,
+                &mut pending_boosts,
+                &formula_rules(),
+                &BattleRules::default(),
+                &mut accuracy_rng,
+                &element_db,
+                &status_db,
+                &reaction_db,
+                &mut event_writer,
+                None,
+                None,
+                None,
+                Some(1),
+            );
+            system_state.apply(&mut world);
+        }
+
+        assert_eq!(attacker_shield.0, 10);
+        let events = world.resource::<Messages<BattleEvent>>();
+        let mut cursor = events.get_cursor();
+        let collected: Vec<_> = cursor.read(events).cloned().collect();
+        assert!(collected.iter().any(|event| matches!(
+            event,
+            BattleEvent::ShieldGained {
+                side: Side::Player,
+                amount: 1,
+            }
+        )));
+    }
+
+    #[test]
     fn elemental_attack_shield_blocks_attachment_and_reaction() {
         let mut world = World::new();
         world.init_resource::<Messages<BattleEvent>>();
@@ -3587,6 +4076,7 @@ mod tests {
             },
             element: Some(ElementType::Water),
             base_accuracy: Some(1.0),
+            uses_per_turn: None,
         };
 
         {
@@ -3605,6 +4095,7 @@ mod tests {
                 &mut target_statuses,
                 &mut pending_boosts,
                 &formula_rules(),
+                &BattleRules::default(),
                 &mut accuracy_rng,
                 &element_db,
                 &status_db,

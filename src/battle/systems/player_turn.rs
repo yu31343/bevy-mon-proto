@@ -4,13 +4,15 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        PendingKoResolution, RoundOrder, SelectedCards, Shield, Side, SkillCount, SkillList, Stats,
-        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
-        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, PendingTacticalDiscard, RoundOrder, SelectedCards, Shield, Side,
+        SkillCount, SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext,
+        TurnCount, next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        push_turn_action_trace, transfer_status_by_id,
     },
-    data::{BattleDbs, CardEffect},
+    data::{BattleDbs, BattleRules},
     game_state::{BattlePhase, GameState},
     pvp,
+    ui::battle::{components::BattleUiNotice, systems::HandFullEndTurnWarning},
 };
 
 use super::{
@@ -31,6 +33,7 @@ pub(crate) struct PlayerTurnEventWriters<'w> {
     event_writer: MessageWriter<'w, BattleEvent>,
     formula_writer: MessageWriter<'w, BattleFormulaEvent>,
     status_writer: MessageWriter<'w, BattleStatusEvent>,
+    ui_notices: MessageWriter<'w, BattleUiNotice>,
 }
 
 #[derive(SystemParam)]
@@ -41,6 +44,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     pending_boosts: ResMut<'w, PendingBoosts>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: ResMut<'w, crate::battle::PlayerTeam>,
@@ -49,6 +53,7 @@ pub(crate) struct PlayerTurnRuntime<'w> {
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     selected: ResMut<'w, SelectedCards>,
+    hand_full_warning: ResMut<'w, HandFullEndTurnWarning>,
     battle_mode: Res<'w, BattleControlMode>,
     pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
     pvp_pending_intent: Option<ResMut<'w, pvp::PvpPendingLocalIntent>>,
@@ -75,11 +80,54 @@ fn send_pvp_intent(
     true
 }
 
+fn predict_local_card_discard(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap += 1;
+    }
+}
+
+fn predict_local_card_use(
+    cards: &mut Vec<crate::data::CardId>,
+    ap: &mut i32,
+    card_index: usize,
+    cost_ap: i32,
+) {
+    if card_index < cards.len() {
+        cards.remove(card_index);
+        *ap -= cost_ap;
+    }
+}
+
+fn predict_local_skill_use(
+    action_points: &mut ActionPoints,
+    skill_uses_q: &mut Query<&mut SkillUses, With<InBattle>>,
+    entity: Entity,
+    slot: usize,
+    cost_ap: i32,
+) {
+    action_points.player -= cost_ap;
+    if let Ok(mut uses) = skill_uses_q.get_mut(entity) {
+        if let Some(remaining) = uses.0.get_mut(slot) {
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
+}
+
 fn finalize_player_turn(
     p_entity: Entity,
     player_team: &crate::battle::PlayerTeam,
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
+    pending_boosts: &mut PendingBoosts,
+    action_points: &mut ActionPoints,
+    hand: &Hand,
+    battle_rules: &BattleRules,
+    commands: &mut Commands,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut PlayerTurnLogs,
     writers: &mut PlayerTurnEventWriters,
@@ -113,6 +161,7 @@ fn finalize_player_turn(
                     side: Side::Player,
                     round: logs.turn_count.0,
                     formula_rules,
+                    pending_boosts: Some(&mut *pending_boosts),
                     event_writer: &mut writers.event_writer,
                     formula_writer: &mut writers.formula_writer,
                     status_writer: &mut writers.status_writer,
@@ -121,18 +170,33 @@ fn finalize_player_turn(
             );
         }
     }
+    super::clear_action_scoped_card_effects(Side::Player, pending_boosts);
+    commands.insert_resource(crate::battle::PendingGuardCounterClear {
+        acting_side: Side::Player,
+    });
     turn_ctx.player_ended = true;
     if let Ok((_, _, stats, _, _, _, _, _, _)) = query.get(p_entity) {
         if stats.hp <= 0 {
+            super::clamp_ap_to_max(Side::Player, battle_rules, action_points);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
     }
-    next_phase.set(next_phase_after_side_end(round_order, Side::Player));
+    super::enter_discard_phase_or_continue(
+        Side::Player,
+        next_phase_after_side_end(round_order, Side::Player),
+        hand,
+        battle_rules,
+        action_points,
+        commands,
+        next_phase,
+    );
 }
 
 pub fn player_turn_input_system(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: PlayerTurnRuntime,
@@ -152,6 +216,7 @@ pub fn player_turn_input_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     let action_points = &mut runtime.action_points;
     let round_order = &runtime.round_order;
@@ -159,6 +224,7 @@ pub fn player_turn_input_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &mut runtime.player_team;
@@ -167,6 +233,7 @@ pub fn player_turn_input_system(
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
     let selected = &mut runtime.selected;
+    let hand_full_warning = &mut runtime.hand_full_warning;
     let battle_mode = &runtime.battle_mode;
     let pvp_connection = &mut runtime.pvp_connection;
     let pvp_pending_intent = &mut runtime.pvp_pending_intent;
@@ -221,9 +288,15 @@ pub fn player_turn_input_system(
     };
 
     if let Some(target_index) = switch_target {
-        if action_points.player >= 1
-            && target_index < player_team.0.combatants.len()
-            && target_index != player_team.0.active_index
+        if target_index >= player_team.0.combatants.len()
+            || target_index == player_team.0.active_index
+        {
+            return;
+        }
+        if action_points.player < 1 {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+            return;
+        }
         {
             let current_entity = player_team.0.combatants[player_team.0.active_index];
             let target_entity = player_team.0.combatants[target_index];
@@ -241,6 +314,15 @@ pub fn player_turn_input_system(
                         pvp_pending_intent,
                         pvp::BattleIntent::Switch { target_index },
                     ) {
+                        transfer_status_by_id(
+                            &mut current_statuses,
+                            &mut current_stats,
+                            target_statuses.into_inner(),
+                            target_stats.into_inner(),
+                            "nature_regen",
+                        );
+                        action_points.player -= 1;
+                        player_team.0.active_index = target_index;
                         return;
                     }
                     transfer_status_by_id(
@@ -298,8 +380,21 @@ pub fn player_turn_input_system(
         };
         let cost = skill.cost_ap;
 
+        // 该技能本回合释放次数已耗尽：提示并清空，避免下一帧重复触发。
+        if !skill_uses_q
+            .get(p_entity)
+            .is_ok_and(|uses| uses.has_remaining(slot))
+        {
+            writers.ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
+            turn_ctx.player_action = None;
+            return;
+        }
+
         // 如果 AP 不够：不执行并清空，避免下一帧重复触发。
         if action_points.player < cost {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
             turn_ctx.player_action = None;
             return;
         }
@@ -310,11 +405,17 @@ pub fn player_turn_input_system(
             pvp_pending_intent,
             pvp::BattleIntent::UseSkill { slot },
         ) {
+            predict_local_skill_use(action_points, &mut skill_uses_q, p_entity, slot, cost);
             turn_ctx.player_action = None;
             return;
         }
         action_points.player -= cost;
         turn_ctx.player_action = None;
+        if let Ok(mut uses) = skill_uses_q.get_mut(p_entity) {
+            if let Some(remaining) = uses.0.get_mut(slot) {
+                *remaining = remaining.saturating_sub(1);
+            }
+        }
 
         let Ok(
             [
@@ -338,8 +439,10 @@ pub fn player_turn_input_system(
 
         writers.event_writer.write(BattleEvent::SkillUsed {
             side: Side::Player,
+            skill_id,
             skill_name: skill.name.clone(),
             slot,
+            cost_ap: cost,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -458,6 +561,7 @@ pub fn player_turn_input_system(
                         }),
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -536,6 +640,7 @@ pub fn player_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -567,6 +672,7 @@ pub fn player_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -591,6 +697,7 @@ pub fn player_turn_input_system(
                     &mut p_statuses,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -615,6 +722,7 @@ pub fn player_turn_input_system(
                     &mut e_statuses,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -645,8 +753,90 @@ pub fn player_turn_input_system(
         return;
     }
 
+    if pending_tactical_discard
+        .as_ref()
+        .is_some_and(|pending| pending.side == Side::Player)
+    {
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0_usize),
+            (KeyCode::KeyX, 1_usize),
+            (KeyCode::KeyC, 2_usize),
+            (KeyCode::KeyV, 3_usize),
+            (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
+        ] {
+            if !keyboard.just_pressed(key) {
+                continue;
+            }
+            if idx >= hand.player.len() {
+                return;
+            }
+            if send_pvp_intent(
+                battle_mode,
+                pvp_connection,
+                pvp_pending_intent,
+                pvp::BattleIntent::DiscardCard { card_index: idx },
+            ) {
+                predict_local_card_discard(&mut hand.player, &mut action_points.player, idx);
+                selected.player.index = None;
+                selected.player.discard_armed = false;
+                return;
+            }
+            let card_id = hand.player.remove(idx);
+            action_points.player += 1;
+            let card_name = dbs
+                .cards
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+            writers.event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Player,
+                card_id,
+                card_name: card_name.clone(),
+                ap_gain: 1,
+            });
+            note_action_phase(
+                &mut logs.structured_log,
+                logs.turn_count.0,
+                Side::Player,
+                "玩家战术整理",
+                format!(
+                    "弃置卡牌={}；获得AP=1；当前AP={}",
+                    card_name, action_points.player
+                ),
+            );
+            push_named_action_trace(
+                &mut logs.action_trace,
+                logs.turn_count.0,
+                Side::Player,
+                "tactical_discard",
+                format!("弃置卡牌={}；当前AP={}", card_name, action_points.player),
+            );
+            selected.player.index = None;
+            selected.player.discard_armed = false;
+            return;
+        }
+        return;
+    }
+
     // 1) 手动结束回合（优先级最高）
     if keyboard.just_pressed(KeyCode::KeyE) {
+        if hand.player.len() > battle_rules.max_retained_hand {
+            hand_full_warning.trigger_end_turn_blocked();
+            return;
+        }
         turn_ctx.player_end_requested = true;
     }
 
@@ -680,6 +870,11 @@ pub fn player_turn_input_system(
             player_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
+            action_points,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -707,6 +902,7 @@ pub fn player_turn_input_system(
                 card_index: target_index,
             },
         ) {
+            predict_local_card_discard(&mut hand.player, &mut action_points.player, target_index);
             selected.player.index = None;
             selected.player.discard_armed = false;
             return;
@@ -720,7 +916,9 @@ pub fn player_turn_input_system(
             .unwrap_or_else(|| format!("{card_id:?}"));
         writers.event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Player,
+            card_id,
             card_name: card_name.clone(),
+            ap_gain: 1,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -745,13 +943,26 @@ pub fn player_turn_input_system(
         return;
     }
 
-    // 3) 出牌/选牌（手牌热键：Z X C V B；两步式：首按选中，再按出牌；弃牌武装时直接弃置）
+    // 3) 出牌/选牌（手牌热键按 UI 标注；两步式：首按选中/弹出，再按出牌；弃牌武装时直接弃置）
     for (key, idx) in [
         (KeyCode::KeyZ, 0_usize),
         (KeyCode::KeyX, 1_usize),
         (KeyCode::KeyC, 2_usize),
         (KeyCode::KeyV, 3_usize),
         (KeyCode::KeyB, 4_usize),
+        (KeyCode::KeyN, 5_usize),
+        (KeyCode::KeyA, 6_usize),
+        (KeyCode::KeyS, 7_usize),
+        (KeyCode::KeyD, 8_usize),
+        (KeyCode::KeyG, 9_usize),
+        (KeyCode::KeyH, 10_usize),
+        (KeyCode::KeyJ, 11_usize),
+        (KeyCode::KeyK, 12_usize),
+        (KeyCode::KeyL, 13_usize),
+        (KeyCode::KeyU, 14_usize),
+        (KeyCode::KeyI, 15_usize),
+        (KeyCode::KeyO, 16_usize),
+        (KeyCode::KeyP, 17_usize),
     ] {
         if keyboard.just_pressed(key) {
             if idx >= hand.player.len() {
@@ -765,6 +976,7 @@ pub fn player_turn_input_system(
                     pvp_pending_intent,
                     pvp::BattleIntent::DiscardCard { card_index: idx },
                 ) {
+                    predict_local_card_discard(&mut hand.player, &mut action_points.player, idx);
                     selected.player.index = None;
                     selected.player.discard_armed = false;
                     return;
@@ -778,7 +990,9 @@ pub fn player_turn_input_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 writers.event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Player,
+                    card_id,
                     card_name: card_name.clone(),
+                    ap_gain: 1,
                 });
                 note_action_phase(
                     &mut logs.structured_log,
@@ -809,81 +1023,74 @@ pub fn player_turn_input_system(
             // 第二步：出牌
             let card_id = hand.player[idx];
             if let Some(card) = dbs.cards.get(&card_id) {
-                if action_points.player >= card.cost_ap {
-                    if send_pvp_intent(
-                        battle_mode,
-                        pvp_connection,
-                        pvp_pending_intent,
-                        pvp::BattleIntent::UseCard { card_index: idx },
-                    ) {
-                        selected.player.index = None;
-                        selected.player.discard_armed = false;
-                        return;
-                    }
-                    hand.player.remove(idx);
-                    action_points.player -= card.cost_ap;
-
-                    let card_name = card.name.to_string();
-                    writers.event_writer.write(BattleEvent::CardUsed {
-                        side: Side::Player,
-                        card_name: card_name.clone(),
-                    });
-
-                    let effect_detail = match card.effect {
-                        CardEffect::GainAp { amount } => {
-                            action_points.player += amount;
-                            format!("获得AP={amount}")
-                        }
-                        CardEffect::NextAttackBoost { amount } => {
-                            pending_boosts.player.next_attack_bonus = amount;
-                            format!("下次攻击加成={amount}")
-                        }
-                        CardEffect::NextShieldBoost { amount } => {
-                            pending_boosts.player.next_shield_bonus = amount;
-                            format!("下次护盾加成={amount}")
-                        }
-                        CardEffect::NextHealBoost { amount } => {
-                            pending_boosts.player.next_heal_bonus = amount;
-                            format!("下次治疗加成={amount}")
-                        }
-                    };
-                    note_action_phase(
-                        &mut logs.structured_log,
-                        logs.turn_count.0,
-                        Side::Player,
-                        "玩家使用卡牌",
-                        format!(
-                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
-                            card_name, card.cost_ap, effect_detail, action_points.player
-                        ),
+                if action_points.player < card.cost_ap {
+                    writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+                    return;
+                }
+                if send_pvp_intent(
+                    battle_mode,
+                    pvp_connection,
+                    pvp_pending_intent,
+                    pvp::BattleIntent::UseCard { card_index: idx },
+                ) {
+                    predict_local_card_use(
+                        &mut hand.player,
+                        &mut action_points.player,
+                        idx,
+                        card.cost_ap,
                     );
-                    push_named_action_trace(
-                        &mut logs.action_trace,
-                        logs.turn_count.0,
-                        Side::Player,
-                        "use_card",
-                        format!(
-                            "卡牌={}；效果={}；当前AP={}",
-                            card_name, effect_detail, action_points.player
-                        ),
-                    );
-
                     selected.player.index = None;
                     selected.player.discard_armed = false;
+                    return;
+                }
+                hand.player.remove(idx);
+                action_points.player -= card.cost_ap;
 
-                    let should_go_check_end = query
-                        .get(p_entity)
+                let card_name = card.name.to_string();
+                writers.event_writer.write(BattleEvent::CardUsed {
+                    side: Side::Player,
+                    card_id,
+                    card_name: card_name.clone(),
+                    cost_ap: card.cost_ap,
+                });
+
+                let effect_detail = "效果已排入卡牌结算".to_string();
+                note_action_phase(
+                    &mut logs.structured_log,
+                    logs.turn_count.0,
+                    Side::Player,
+                    "玩家使用卡牌",
+                    format!(
+                        "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                        card_name, card.cost_ap, effect_detail, action_points.player
+                    ),
+                );
+                push_named_action_trace(
+                    &mut logs.action_trace,
+                    logs.turn_count.0,
+                    Side::Player,
+                    "use_card",
+                    format!(
+                        "卡牌={}；效果={}；当前AP={}",
+                        card_name, effect_detail, action_points.player
+                    ),
+                );
+
+                selected.player.index = None;
+                selected.player.discard_armed = false;
+
+                let should_go_check_end = query
+                    .get(p_entity)
+                    .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                    .unwrap_or(false)
+                    || query
+                        .get(e_entity)
                         .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                        .unwrap_or(false)
-                        || query
-                            .get(e_entity)
-                            .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false);
-                    if should_go_check_end {
-                        pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
-                        next_phase.set(BattlePhase::CheckEnd);
-                        return;
-                    }
+                        .unwrap_or(false);
+                if should_go_check_end {
+                    pending_ko.resume_phase = Some(BattlePhase::PlayerTurn);
+                    next_phase.set(BattlePhase::CheckEnd);
+                    return;
                 }
             }
             return;
@@ -917,7 +1124,17 @@ pub fn player_turn_input_system(
         return;
     };
     let cost = skill.cost_ap;
+    if !skill_uses_q
+        .get(p_entity)
+        .is_ok_and(|uses| uses.has_remaining(skill_slot))
+    {
+        writers.ui_notices.write(BattleUiNotice {
+            text: "次数不足"
+        });
+        return;
+    }
     if action_points.player < cost {
+        writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
         return;
     }
 
@@ -927,15 +1144,23 @@ pub fn player_turn_input_system(
         pvp_pending_intent,
         pvp::BattleIntent::UseSkill { slot: skill_slot },
     ) {
+        predict_local_skill_use(action_points, &mut skill_uses_q, p_entity, skill_slot, cost);
         return;
     }
     action_points.player -= cost;
+    if let Ok(mut uses) = skill_uses_q.get_mut(p_entity) {
+        if let Some(remaining) = uses.0.get_mut(skill_slot) {
+            *remaining = remaining.saturating_sub(1);
+        }
+    }
 
     // 事件：技能使用（用于 UI 闪白）。
     writers.event_writer.write(BattleEvent::SkillUsed {
         side: Side::Player,
+        skill_id,
         skill_name: skill.name.clone(),
         slot: skill_slot,
+        cost_ap: cost,
     });
     note_action_phase(
         &mut logs.structured_log,
@@ -1054,6 +1279,7 @@ pub fn player_turn_input_system(
                     }),
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1132,6 +1358,7 @@ pub fn player_turn_input_system(
                     None,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1193,6 +1420,7 @@ pub fn player_turn_input_system(
                     None,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1237,6 +1465,7 @@ pub fn player_turn_input_system(
                 &mut p_statuses,
                 pending_boosts,
                 &formula_rules,
+                battle_rules,
                 accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,
@@ -1261,6 +1490,7 @@ pub fn player_turn_input_system(
                 &mut e_statuses,
                 pending_boosts,
                 &formula_rules,
+                battle_rules,
                 accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,

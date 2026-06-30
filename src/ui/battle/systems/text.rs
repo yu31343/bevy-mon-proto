@@ -1,14 +1,53 @@
 use bevy::prelude::*;
 
 use super::super::{components::*, resources::UiFontHandle, theme::UiTheme};
+use super::roster::bench_display_order;
 use crate::{
     battle::{
-        BattleEvent, Combatant, ElementAura, EnemyTeam, InBattle, PlayerTeam, Shield, SkillCount,
-        SkillList, Stats, StatusBoard, Team,
+        BattleControlMode, BattleEvent, BattlePerformanceReport, BattleResultNotice, Combatant,
+        ElementAura, EnemyTeam, InBattle, PendingHandDiscard, PlayerTeam, ROUND_TRANSITION_SECONDS,
+        RoundOrder, Shield, Side, SkillCount, SkillList, SkillUses, Stats, StatusBoard, Team,
+        TurnCount, UiControlSide,
     },
-    data::{BattleDbs, BattleFormulaRules, StatusCategory},
+    data::{BattleDbs, BattleFormulaRules, BattleRules, ElementType, EnemyAiConfig},
     game_state::BattlePhase,
+    pvp,
+    team_selection::ai_difficulty_label,
 };
+
+fn element_icon_path(element: ElementType) -> &'static str {
+    match element {
+        ElementType::Fire => "images/icons/elements/fire.png",
+        ElementType::Water => "images/icons/elements/water.png",
+        ElementType::Grass => "images/icons/elements/grass.png",
+        ElementType::Light => "images/icons/elements/light.png",
+        ElementType::Dark => "images/icons/elements/dark.png",
+        ElementType::Thunder => "images/icons/elements/thunder.png",
+        ElementType::Wind => "images/icons/elements/wind.png",
+    }
+}
+
+fn portrait_path(element: ElementType) -> &'static str {
+    match element {
+        ElementType::Fire => "images/icons/profile/ui/fire.png",
+        ElementType::Water => "images/icons/profile/ui/water.png",
+        ElementType::Grass => "images/icons/profile/ui/grass.png",
+        ElementType::Light => "images/icons/profile/ui/light.png",
+        ElementType::Dark => "images/icons/profile/ui/dark.png",
+        ElementType::Thunder => "images/icons/profile/ui/thunder.png",
+        ElementType::Wind => "images/icons/profile/ui/wind.png",
+    }
+}
+
+fn attachment_icon_path(element: ElementType) -> Option<&'static str> {
+    match element {
+        ElementType::Fire => Some("images/icons/attachment/fire.png"),
+        ElementType::Water => Some("images/icons/attachment/water.png"),
+        ElementType::Grass => Some("images/icons/attachment/grass.png"),
+        ElementType::Thunder => Some("images/icons/attachment/thunder.png"),
+        ElementType::Light | ElementType::Dark | ElementType::Wind => None,
+    }
+}
 
 type ActiveCombatantRef<'a> = (
     &'a Combatant,
@@ -18,6 +57,24 @@ type ActiveCombatantRef<'a> = (
     &'a ElementAura,
     &'a StatusBoard,
 );
+
+fn status_icon_path(status_id: &str, status_name: &str) -> Option<&'static str> {
+    match status_id {
+        "seeded" => Some("images/icons/status/绽放.png"),
+        "electrocuted" => Some("images/icons/status/导电.png"),
+        "armor_break" => Some("images/icons/status/超载.png"),
+        _ => match status_name {
+            "燃烧" => Some("images/icons/status/燃烧.png"),
+            "速度降低" => Some("images/icons/status/速度降低.png"),
+            "缠绕" => Some("images/icons/status/缠绕.png"),
+            "诅咒" => Some("images/icons/status/诅咒.png"),
+            "攻击降低" => Some("images/icons/status/攻击降低.png"),
+            "自然治愈" => Some("images/icons/status/自然治愈.png"),
+            "闪避" => Some("images/icons/status/闪避.png"),
+            _ => None,
+        },
+    }
+}
 
 fn active_combatant_data<'a>(
     team: &Team,
@@ -44,26 +101,305 @@ fn active_summary(active: Option<ActiveCombatantRef<'_>>) -> String {
     super::super::helpers::element_name(combatant.element).to_string()
 }
 
-fn stat_line(label: &str, stage: i32, current: i32) -> String {
-    format!(
-        "{}: {}{}",
-        label,
-        super::super::helpers::stage_prefix(stage),
-        current
-    )
+fn stat_value(_stage: i32, current: i32) -> String {
+    current.to_string()
+}
+
+fn shield_value(value: i32) -> String {
+    if value > 0 {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn stage_modifier_color(stage: i32) -> Color {
+    if stage > 0 {
+        Color::srgb(0.16, 0.46, 0.95)
+    } else {
+        Color::srgb(0.86, 0.16, 0.22)
+    }
+}
+
+fn stat_stage(stats: &Stats, stat: StatStageModifierKind) -> i32 {
+    match stat {
+        StatStageModifierKind::Atk => stats.atk_stage,
+        StatStageModifierKind::Def => stats.def_stage,
+        StatStageModifierKind::Acc => stats.acc_stage,
+        StatStageModifierKind::Spd => stats.spd_stage,
+    }
+}
+
+fn stage_for_side(
+    player_active: Option<ActiveCombatantRef<'_>>,
+    enemy_active: Option<ActiveCombatantRef<'_>>,
+    side: Side,
+    stat: StatStageModifierKind,
+) -> Option<i32> {
+    let active = match side {
+        Side::Player => player_active,
+        Side::Enemy => enemy_active,
+    };
+    active.map(|(_, stats, _, _, _, _)| stat_stage(stats, stat))
+}
+
+fn top_bar_side_label(side: Side) -> &'static str {
+    match side {
+        Side::Player => "我方",
+        Side::Enemy => "敌方",
+    }
+}
+
+fn current_top_bar_side(
+    battle_phase: BattlePhase,
+    pending_discard: Option<&PendingHandDiscard>,
+) -> Option<Side> {
+    match battle_phase {
+        BattlePhase::PlayerTurn => Some(Side::Player),
+        BattlePhase::EnemyTurn => Some(Side::Enemy),
+        BattlePhase::Discard => pending_discard.map(|pending| pending.side),
+        _ => None,
+    }
+}
+
+fn round_banner_alpha(fraction: f32) -> f32 {
+    const FADE_IN_END: f32 = 0.16;
+    const FADE_OUT_START: f32 = 0.72;
+    if fraction <= FADE_IN_END {
+        (fraction / FADE_IN_END).clamp(0.0, 1.0)
+    } else if fraction >= FADE_OUT_START {
+        (1.0 - (fraction - FADE_OUT_START) / (1.0 - FADE_OUT_START)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+fn round_banner_scale(fraction: f32) -> f32 {
+    const POP_END: f32 = 0.18;
+    const SETTLE_END: f32 = 0.32;
+    const SHRINK_START: f32 = 0.78;
+    if fraction <= POP_END {
+        let t = fraction / POP_END;
+        0.72 + (1.14 - 0.72) * t
+    } else if fraction <= SETTLE_END {
+        let t = (fraction - POP_END) / (SETTLE_END - POP_END);
+        1.14 + (1.0 - 1.14) * t
+    } else if fraction >= SHRINK_START {
+        let t = (fraction - SHRINK_START) / (1.0 - SHRINK_START);
+        1.0 + (0.88 - 1.0) * t
+    } else {
+        1.0
+    }
 }
 
 pub(crate) fn update_phase_text_system(
     battle_phase: Res<State<BattlePhase>>,
-    mut text_q: Query<&mut Text, With<BattlePhaseText>>,
+    turn_count: Res<TurnCount>,
+    round_order: Res<RoundOrder>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
+    mut text_q: ParamSet<(
+        Query<&mut Text, With<BattlePhaseText>>,
+        Query<&mut Text, With<BattleTurnOrderText>>,
+    )>,
 ) {
-    if let Ok(mut text) = text_q.single_mut() {
+    if let Ok(mut text) = text_q.p0().single_mut() {
+        text.0 = if turn_count.0 == 0 {
+            "准备中".to_string()
+        } else {
+            format!("第 {} 回合", turn_count.0)
+        };
+    }
+
+    if let Ok(mut text) = text_q.p1().single_mut() {
+        let current = current_top_bar_side(*battle_phase.get(), pending_discard.as_deref());
+        let marker = |side| {
+            if current == Some(side) { "●" } else { "○" }
+        };
         text.0 = format!(
-            "战斗阶段：{}",
-            super::super::helpers::phase_label(*battle_phase.get())
+            "{} {} → {} {}",
+            top_bar_side_label(round_order.first),
+            marker(round_order.first),
+            top_bar_side_label(round_order.second),
+            marker(round_order.second)
         );
     }
 }
+
+pub(crate) fn update_ai_difficulty_top_bar_system(
+    battle_mode: Res<BattleControlMode>,
+    ai_config: Option<Res<EnemyAiConfig>>,
+    mut text_q: Query<(&mut Text, &mut Visibility), With<AiDifficultyTopBarText>>,
+) {
+    let visible = *battle_mode == BattleControlMode::PlayerVsAi;
+    let label = ai_config
+        .as_deref()
+        .map(|config| ai_difficulty_label(config.difficulty))
+        .unwrap_or("普通");
+
+    for (mut text, mut visibility) in &mut text_q {
+        *visibility = if visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if visible {
+            text.0 = format!("AI难度：{label}");
+        }
+    }
+}
+
+pub(crate) fn update_element_icon_system(
+    asset_server: Res<AssetServer>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
+    combat_query: Query<(&Combatant,), With<InBattle>>,
+    mut icons: Query<
+        (
+            &mut ImageNode,
+            Option<&PlayerElementIcon>,
+            Option<&EnemyElementIcon>,
+            Option<&TeamMemberElementIcon>,
+        ),
+        Or<(
+            With<PlayerElementIcon>,
+            With<EnemyElementIcon>,
+            With<TeamMemberElementIcon>,
+        )>,
+    >,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+
+    let player_element = player_team
+        .0
+        .active_combatant()
+        .and_then(|entity| combat_query.get(entity).ok())
+        .map(|(combatant,)| combatant.element);
+    let enemy_element = enemy_team
+        .0
+        .active_combatant()
+        .and_then(|entity| combat_query.get(entity).ok())
+        .map(|(combatant,)| combatant.element);
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
+
+    for (mut image, is_player, is_enemy, switch_icon) in &mut icons {
+        let element = if is_player.is_some() {
+            player_element
+        } else if is_enemy.is_some() {
+            enemy_element
+        } else if let Some(switch_icon) = switch_icon {
+            controlled_team
+                .combatants
+                .get(switch_icon.index)
+                .and_then(|entity| combat_query.get(*entity).ok())
+                .map(|(combatant,)| combatant.element)
+        } else {
+            None
+        };
+
+        if let Some(element) = element {
+            image.image = asset_server.load(element_icon_path(element));
+            image.color = Color::WHITE;
+        } else {
+            image.color = Color::NONE;
+        }
+    }
+}
+
+/// 刷新精灵头像（上场大头像 + 待机位小头像，敌我两侧）。
+///
+/// 头像按元素取图（`images/icons/profile/ui/{element}.png`），逻辑与
+/// [`update_element_icon_system`] 一致：上场取 `active_combatant()`，
+/// 待机按槽位 `combatants[index]`。无精灵（空位/查询失败）则隐藏头像。
+/// 敌方水平翻转在生成时静态设置，本系统不触碰 `flip_x`。
+pub(crate) fn update_portrait_images_system(
+    asset_server: Res<AssetServer>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    combat_query: Query<(&Combatant, &Stats), With<InBattle>>,
+    mut portraits: Query<
+        (
+            &mut ImageNode,
+            Option<&PlayerPortraitImage>,
+            Option<&EnemyPortraitImage>,
+            Option<&PlayerBenchPortrait>,
+            Option<&EnemyBenchPortrait>,
+            Option<&TeamMemberPortrait>,
+        ),
+        Or<(
+            With<PlayerPortraitImage>,
+            With<EnemyPortraitImage>,
+            With<PlayerBenchPortrait>,
+            With<EnemyBenchPortrait>,
+            With<TeamMemberPortrait>,
+        )>,
+    >,
+    ui_control_side: Res<UiControlSide>,
+) {
+    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+        return;
+    };
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
+
+    let is_dead = |entity: Entity| {
+        combat_query
+            .get(entity)
+            .is_ok_and(|(_, stats)| stats.hp <= 0)
+    };
+    // 待机头像需与待机卡片使用相同的“存活靠前、阵亡沉底”展示顺序，
+    // 才能对应到正确的队伍成员，并正确判断阵亡头像变灰。
+    let player_order = bench_display_order(&player_team.0, is_dead);
+    let enemy_order = bench_display_order(&enemy_team.0, is_dead);
+    let bench_entity = |display_index: usize, order: &[usize], team: &Team| {
+        order
+            .get(display_index)
+            .and_then(|&i| team.combatants.get(i).copied())
+    };
+
+    for (mut image, p_active, e_active, p_bench, e_bench, switch_portrait) in &mut portraits {
+        let entity = if p_active.is_some() {
+            player_team.0.active_combatant()
+        } else if e_active.is_some() {
+            enemy_team.0.active_combatant()
+        } else if let Some(bench) = p_bench {
+            bench_entity(bench.index, &player_order, &player_team.0)
+        } else if let Some(bench) = e_bench {
+            bench_entity(bench.index, &enemy_order, &enemy_team.0)
+        } else if let Some(switch_portrait) = switch_portrait {
+            controlled_team
+                .combatants
+                .get(switch_portrait.index)
+                .copied()
+        } else {
+            None
+        };
+
+        let combat = entity.and_then(|entity| combat_query.get(entity).ok());
+
+        if let Some((combatant, stats)) = combat {
+            image.image = asset_server.load(portrait_path(combatant.element));
+            // 阵亡精灵头像整体压暗成冷灰，存活保持原色，替代“已倒下”文字。
+            image.color = if stats.hp <= 0 {
+                DEAD_PORTRAIT_TINT
+            } else {
+                Color::WHITE
+            };
+        } else {
+            image.color = Color::NONE;
+        }
+    }
+}
+
+/// 阵亡精灵头像的冷灰压暗色调，与存活头像的原色形成明显反差。
+const DEAD_PORTRAIT_TINT: Color = Color::srgba(0.42, 0.40, 0.42, 1.0);
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_active_panel_text_system(
@@ -82,7 +418,9 @@ pub(crate) fn update_active_panel_text_system(
             (
                 &mut Text,
                 Option<&PlayerHpValueText>,
+                Option<&PlayerHpStatText>,
                 Option<&EnemyHpValueText>,
+                Option<&EnemyHpStatText>,
                 Option<&PlayerShieldValueText>,
                 Option<&EnemyShieldValueText>,
                 Option<&PlayerAtkText>,
@@ -126,17 +464,17 @@ pub(crate) fn update_active_panel_text_system(
     {
         if is_player_name.is_some() {
             text.0 = if let Some((_, _, name, _, _, _)) = player_active {
-                format!("我方：{}", name)
+                name.to_string()
             } else {
-                "我方：无在场精灵".to_string()
+                "无在场精灵".to_string()
             };
             continue;
         }
         if is_enemy_name.is_some() {
             text.0 = if let Some((_, _, name, _, _, _)) = enemy_active {
-                format!("敌方：{}", name)
+                name.to_string()
             } else {
-                "敌方：无在场精灵".to_string()
+                "无在场精灵".to_string()
             };
             continue;
         }
@@ -152,7 +490,9 @@ pub(crate) fn update_active_panel_text_system(
     for (
         mut text,
         is_player_hp,
+        is_player_hp_stat,
         is_enemy_hp,
+        is_enemy_hp_stat,
         is_player_shield,
         is_enemy_shield,
         is_player_atk,
@@ -173,6 +513,14 @@ pub(crate) fn update_active_panel_text_system(
             };
             continue;
         }
+        if is_player_hp_stat.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
+                stats.max_hp.to_string()
+            } else {
+                "0".to_string()
+            };
+            continue;
+        }
         if is_enemy_hp.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
                 format!("{}/{}", stats.hp.max(0), stats.max_hp)
@@ -181,115 +529,115 @@ pub(crate) fn update_active_panel_text_system(
             };
             continue;
         }
-        if is_player_shield.is_some() {
-            text.0 = if let Some((_, _, _, shield, _, _)) = player_active {
-                shield.0.max(0).to_string()
+        if is_enemy_hp_stat.is_some() {
+            text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
+                stats.max_hp.to_string()
             } else {
                 "0".to_string()
+            };
+            continue;
+        }
+        if is_player_shield.is_some() {
+            text.0 = if let Some((_, _, _, shield, _, _)) = player_active {
+                shield_value(shield.0)
+            } else {
+                String::new()
             };
             continue;
         }
         if is_enemy_shield.is_some() {
             text.0 = if let Some((_, _, _, shield, _, _)) = enemy_active {
-                shield.0.max(0).to_string()
+                shield_value(shield.0)
             } else {
-                "0".to_string()
+                String::new()
             };
             continue;
         }
         if is_player_atk.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Atk",
+                stat_value(
                     stats.atk_stage,
                     super::super::helpers::effective_atk_value(stats, &formula_rules),
                 )
             } else {
-                "Atk: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_atk.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Atk",
+                stat_value(
                     stats.atk_stage,
                     super::super::helpers::effective_atk_value(stats, &formula_rules),
                 )
             } else {
-                "Atk: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_def.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Def",
+                stat_value(
                     stats.def_stage,
                     super::super::helpers::effective_def_value(stats, &formula_rules),
                 )
             } else {
-                "Def: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_def.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Def",
+                stat_value(
                     stats.def_stage,
                     super::super::helpers::effective_def_value(stats, &formula_rules),
                 )
             } else {
-                "Def: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_acc.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Acc",
+                stat_value(
                     stats.acc_stage,
                     super::super::helpers::effective_acc_value(stats, &formula_rules),
                 )
             } else {
-                "Acc: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_acc.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Acc",
+                stat_value(
                     stats.acc_stage,
                     super::super::helpers::effective_acc_value(stats, &formula_rules),
                 )
             } else {
-                "Acc: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_player_spd.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = player_active {
-                stat_line(
-                    "Spd",
+                stat_value(
                     stats.spd_stage,
                     super::super::helpers::effective_spd_value(stats, &formula_rules),
                 )
             } else {
-                "Spd: 0".to_string()
+                "0".to_string()
             };
             continue;
         }
         if is_enemy_spd.is_some() {
             text.0 = if let Some((_, stats, _, _, _, _)) = enemy_active {
-                stat_line(
-                    "Spd",
+                stat_value(
                     stats.spd_stage,
                     super::super::helpers::effective_spd_value(stats, &formula_rules),
                 )
             } else {
-                "Spd: 0".to_string()
+                "0".to_string()
             };
         }
     }
@@ -298,26 +646,45 @@ pub(crate) fn update_active_panel_text_system(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_active_panel_tokens_system(
     mut commands: Commands,
-    aura_lines: Query<
-        (
-            Entity,
-            Option<&Children>,
-            Option<&PlayerAuraLine>,
-            Option<&EnemyAuraLine>,
-        ),
-        Or<(With<PlayerAuraLine>, With<EnemyAuraLine>)>,
-    >,
-    status_lines: Query<
-        (
-            Entity,
-            Option<&Children>,
-            Option<&PlayerStatusLine>,
-            Option<&EnemyStatusLine>,
-        ),
-        Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
-    >,
+    mut line_queries: ParamSet<(
+        Query<
+            (
+                Entity,
+                Option<&Children>,
+                Option<&PlayerAuraLine>,
+                Option<&EnemyAuraLine>,
+            ),
+            Or<(With<PlayerAuraLine>, With<EnemyAuraLine>)>,
+        >,
+        Query<
+            (
+                Entity,
+                Option<&Children>,
+                Option<&PlayerStatusLine>,
+                Option<&EnemyStatusLine>,
+            ),
+            Or<(With<PlayerStatusLine>, With<EnemyStatusLine>)>,
+        >,
+        Query<(Entity, Option<&Children>, &PlayerBenchAuraLine)>,
+        Query<(Entity, Option<&Children>, &EnemyBenchAuraLine)>,
+        Query<(Entity, Option<&Children>, &TeamMemberAuraLine)>,
+        Query<(Entity, Option<&Children>, &PlayerBenchStatusLine)>,
+        Query<(Entity, Option<&Children>, &EnemyBenchStatusLine)>,
+        Query<(Entity, Option<&Children>, &TeamMemberStatusLine)>,
+    )>,
+    mut stage_queries: ParamSet<(
+        Query<(&mut Node, &mut BackgroundColor, &StatStageModifierBadge)>,
+        Query<(&mut Text, &StatStageModifierText)>,
+        Query<(
+            &mut Node,
+            &mut BackgroundColor,
+            &TeamMemberStatStageModifierBadge,
+        )>,
+        Query<(&mut Text, &TeamMemberStatStageModifierText)>,
+    )>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
+    ui_control_side: Res<UiControlSide>,
     combat_query: Query<
         (
             &Combatant,
@@ -329,6 +696,7 @@ pub(crate) fn update_active_panel_tokens_system(
         ),
         With<InBattle>,
     >,
+    asset_server: Res<AssetServer>,
     theme: Res<UiTheme>,
     ui_font: Option<Res<UiFontHandle>>,
 ) {
@@ -338,40 +706,161 @@ pub(crate) fn update_active_panel_tokens_system(
 
     let player_active = active_combatant_data(&player_team.0, &combat_query);
     let enemy_active = active_combatant_data(&enemy_team.0, &combat_query);
+    let controlled_team = match ui_control_side.0 {
+        Side::Player => &player_team.0,
+        Side::Enemy => &enemy_team.0,
+    };
+    let is_dead = |entity: Entity| {
+        combat_query
+            .get(entity)
+            .is_ok_and(|(_, stats, _, _, _, _)| stats.hp <= 0)
+    };
+    // 待机位状态/附着图标要与待机卡片、头像使用同一展示顺序：存活靠前、阵亡沉底。
+    // 否则阵亡精灵沉底后，图标仍按队伍原始索引绘制，会看起来挂到其它精灵身上。
+    let player_bench_order = bench_display_order(&player_team.0, is_dead);
+    let enemy_bench_order = bench_display_order(&enemy_team.0, is_dead);
+    let bench_entity = |display_index: usize, order: &[usize], team: &Team| {
+        order
+            .get(display_index)
+            .and_then(|&team_index| team.combatants.get(team_index).copied())
+    };
     let info_font = super::super::helpers::make_text_font(13.0, ui_font.as_deref());
+    let aura_icon_items =
+        |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
+            let Some(entity) = target else {
+                return Vec::new();
+            };
+            let Ok((_, _, _, _, aura, _)) = combat_query.get(entity) else {
+                return Vec::new();
+            };
+            aura.elements()
+                .iter()
+                .filter_map(|element| attachment_icon_path(*element))
+                .map(super::super::helpers::DebugTokenContent::Image)
+                .collect()
+        };
 
-    for (entity, children, is_player_aura, is_enemy_aura) in &aura_lines {
-        let active = if is_player_aura.is_some() {
-            player_active
+    for (entity, children, is_player_aura, is_enemy_aura) in &line_queries.p0() {
+        let target = if is_player_aura.is_some() {
+            player_team.0.active_combatant()
         } else if is_enemy_aura.is_some() {
-            enemy_active
+            enemy_team.0.active_combatant()
         } else {
             None
         };
-        let items = if let Some((_, _, _, _, aura, _)) = active {
-            aura.elements()
-                .iter()
-                .map(|element| {
-                    (
-                        super::super::helpers::element_name(*element).to_string(),
-                        super::super::helpers::element_color(*element, &theme),
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        super::super::helpers::replace_debug_tokens(
+        let items = aura_icon_items(target);
+        super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
             children,
+            &asset_server,
             &info_font,
             &items,
+            28.0,
             DebugAuraToken,
         );
     }
 
-    for (entity, children, is_player_status, is_enemy_status) in &status_lines {
+    for (entity, children, line) in &line_queries.p2() {
+        let items = aura_icon_items(bench_entity(
+            line.index,
+            &player_bench_order,
+            &player_team.0,
+        ));
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            24.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (entity, children, line) in &line_queries.p3() {
+        let items = aura_icon_items(bench_entity(line.index, &enemy_bench_order, &enemy_team.0));
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            24.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (entity, children, line) in &line_queries.p4() {
+        let items = aura_icon_items(controlled_team.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
+            DebugAuraToken,
+        );
+    }
+
+    for (_, mut bg, marker) in &mut stage_queries.p0() {
+        let stage =
+            stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
+        *bg = if stage == 0 {
+            BackgroundColor(Color::NONE)
+        } else {
+            BackgroundColor(stage_modifier_color(stage))
+        };
+    }
+
+    for (mut text, marker) in &mut stage_queries.p1() {
+        let stage =
+            stage_for_side(player_active, enemy_active, marker.side, marker.stat).unwrap_or(0);
+        text.0 = if stage == 0 {
+            String::new()
+        } else {
+            format!("{stage:+}")
+        };
+    }
+
+    for (mut node, mut bg, marker) in &mut stage_queries.p2() {
+        let stage = controlled_team
+            .combatants
+            .get(marker.index)
+            .and_then(|entity| combat_query.get(*entity).ok())
+            .map(|(_, stats, _, _, _, _)| stat_stage(stats, marker.stat))
+            .unwrap_or(0);
+        node.display = if stage == 0 {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        *bg = if stage == 0 {
+            BackgroundColor(Color::NONE)
+        } else {
+            BackgroundColor(stage_modifier_color(stage))
+        };
+    }
+
+    for (mut text, marker) in &mut stage_queries.p3() {
+        let stage = controlled_team
+            .combatants
+            .get(marker.index)
+            .and_then(|entity| combat_query.get(*entity).ok())
+            .map(|(_, stats, _, _, _, _)| stat_stage(stats, marker.stat))
+            .unwrap_or(0);
+        text.0 = if stage == 0 {
+            String::new()
+        } else {
+            format!("{stage:+}")
+        };
+    }
+
+    for (entity, children, is_player_status, is_enemy_status) in &line_queries.p1() {
         let active = if is_player_status.is_some() {
             player_active
         } else if is_enemy_status.is_some() {
@@ -380,46 +869,131 @@ pub(crate) fn update_active_panel_tokens_system(
             None
         };
         let items = if let Some((_, _, _, _, _, statuses)) = active {
-            let labels: Vec<_> = statuses
+            statuses
                 .entries
                 .iter()
-                .filter(|entry| entry.category != StatusCategory::Aura)
-                .map(|entry| {
-                    (
-                        entry.name.clone(),
-                        super::super::helpers::status_color(entry, &theme),
-                    )
+                .filter(|entry| {
+                    super::super::helpers::is_status_line_visible(&entry.id, entry.category)
                 })
-                .collect();
-            if labels.is_empty() {
-                vec![("无".to_string(), theme.text_muted)]
-            } else {
-                labels
-            }
+                .map(|entry| {
+                    if let Some(path) = status_icon_path(&entry.id, &entry.name) {
+                        super::super::helpers::DebugTokenContent::Image(path)
+                    } else {
+                        super::super::helpers::DebugTokenContent::Text(
+                            entry.name.clone(),
+                            super::super::helpers::status_color(entry, &theme),
+                        )
+                    }
+                })
+                .collect()
         } else {
-            vec![("无".to_string(), theme.text_muted)]
+            Vec::new()
         };
-        super::super::helpers::replace_debug_tokens(
+        super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
             children,
+            &asset_server,
             &info_font,
             &items,
+            30.0,
+            DebugStatusToken,
+        );
+    }
+
+    // 待机位状态图标：与主面板状态行使用同一可见性规则与图标，无状态时不显示。
+    let bench_status_items =
+        |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
+            let Some(entity) = target else {
+                return Vec::new();
+            };
+            let Ok((_, _, _, _, _, statuses)) = combat_query.get(entity) else {
+                return Vec::new();
+            };
+            statuses
+                .entries
+                .iter()
+                .filter(|entry| {
+                    super::super::helpers::is_status_line_visible(&entry.id, entry.category)
+                })
+                .map(|entry| {
+                    if let Some(path) = status_icon_path(&entry.id, &entry.name) {
+                        super::super::helpers::DebugTokenContent::Image(path)
+                    } else {
+                        super::super::helpers::DebugTokenContent::Text(
+                            entry.name.clone(),
+                            super::super::helpers::status_color(entry, &theme),
+                        )
+                    }
+                })
+                .collect()
+        };
+
+    for (entity, children, line) in &line_queries.p5() {
+        let items = bench_status_items(bench_entity(
+            line.index,
+            &player_bench_order,
+            &player_team.0,
+        ));
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
+            DebugStatusToken,
+        );
+    }
+
+    for (entity, children, line) in &line_queries.p6() {
+        let items = bench_status_items(bench_entity(line.index, &enemy_bench_order, &enemy_team.0));
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            28.0,
+            DebugStatusToken,
+        );
+    }
+
+    for (entity, children, line) in &line_queries.p7() {
+        let items = bench_status_items(controlled_team.combatants.get(line.index).copied());
+        super::super::helpers::replace_debug_tokens_with_images(
+            &mut commands,
+            entity,
+            children,
+            &asset_server,
+            &info_font,
+            &items,
+            30.0,
             DebugStatusToken,
         );
     }
 }
 
 pub(crate) fn update_skill_text_system(
+    time: Res<Time>,
     battle_phase: Res<State<BattlePhase>>,
+    turn_count: Res<TurnCount>,
     ui_control_side: Res<crate::battle::UiControlSide>,
+    theme: Res<UiTheme>,
     mut text_q: Query<
         (
             &mut Text,
-            Option<&TurnBannerText>,
+            Option<&mut TextColor>,
+            Option<&mut TextShadow>,
+            Option<&mut TextFont>,
+            Option<&mut UiTransform>,
+            Option<&mut TurnBannerText>,
             Option<&SkillButtonText>,
             Option<&SkillButtonMetaText>,
             Option<&SkillButtonIconText>,
+            Option<&SkillButtonCostText>,
             Option<&EnemySkillText>,
             Option<&EnemySkillMetaText>,
             Option<&EnemySkillIconText>,
@@ -437,6 +1011,7 @@ pub(crate) fn update_skill_text_system(
             Without<BattleActionText>,
         ),
     >,
+    mut type_chip_q: Query<(&SkillTileTypeChip, &mut BackgroundColor)>,
     player_team: Option<Res<PlayerTeam>>,
     enemy_team: Option<Res<EnemyTeam>>,
     skill_query: Query<(&SkillList, &SkillCount), With<InBattle>>,
@@ -462,24 +1037,76 @@ pub(crate) fn update_skill_text_system(
 
     for (
         mut text,
-        is_turn_banner,
+        text_color,
+        text_shadow,
+        text_font,
+        transform,
+        turn_banner,
         skill_button_text,
         skill_button_meta_text,
         skill_icon_text,
+        skill_cost_text,
         enemy_skill_text,
         enemy_skill_meta,
         enemy_skill_icon,
     ) in &mut text_q
     {
-        if is_turn_banner.is_some() {
-            text.0 = match *battle_phase.get() {
-                BattlePhase::PlayerTurn => "你的回合".to_string(),
-                BattlePhase::EnemyTurn if ui_control_side.0 == crate::battle::Side::Enemy => {
-                    "敌方操作回合".to_string()
+        if let Some(mut banner) = turn_banner {
+            let phase = *battle_phase.get();
+            if phase == BattlePhase::RoundStart {
+                if banner.round != turn_count.0 {
+                    banner.round = turn_count.0;
+                    banner.elapsed = 0.0;
+                } else {
+                    banner.elapsed += time.delta_secs();
                 }
-                BattlePhase::EnemyTurn => "对手的回合".to_string(),
-                _ => String::new(),
+
+                let fraction = (banner.elapsed / ROUND_TRANSITION_SECONDS).clamp(0.0, 1.0);
+                let alpha = round_banner_alpha(fraction);
+                text.0 = format!("第 {} 回合", turn_count.0);
+                if let Some(mut font) = text_font {
+                    font.font_size = 88.0;
+                }
+                if let Some(mut color) = text_color {
+                    color.0 = Color::srgba(1.0, 0.92, 0.28, alpha);
+                }
+                if let Some(mut shadow) = text_shadow {
+                    shadow.offset = Vec2::new(5.0, 5.0);
+                    shadow.color = Color::srgba(0.95, 0.10, 0.04, alpha * 0.95);
+                }
+                if let Some(mut transform) = transform {
+                    transform.scale = Vec2::splat(round_banner_scale(fraction));
+                }
+                continue;
+            }
+
+            banner.elapsed = 0.0;
+            let (banner_text, outline_color) = match phase {
+                BattlePhase::PlayerTurn => {
+                    ("你的回合".to_string(), Color::srgba(0.05, 0.24, 1.0, 0.95))
+                }
+                BattlePhase::EnemyTurn => {
+                    ("敌方回合".to_string(), Color::srgba(1.0, 0.05, 0.04, 0.95))
+                }
+                BattlePhase::Discard => {
+                    ("弃牌阶段".to_string(), Color::srgba(0.05, 0.24, 1.0, 0.95))
+                }
+                _ => ("".to_string(), Color::srgba(0.0, 0.0, 0.0, 0.0)),
             };
+            text.0 = banner_text;
+            if let Some(mut font) = text_font {
+                font.font_size = 46.0;
+            }
+            if let Some(mut color) = text_color {
+                color.0 = Color::WHITE;
+            }
+            if let Some(mut shadow) = text_shadow {
+                shadow.offset = Vec2::new(3.0, 3.0);
+                shadow.color = outline_color;
+            }
+            if let Some(mut transform) = transform {
+                transform.scale = Vec2::ONE;
+            }
             continue;
         }
         let control_skills = match ui_control_side.0 {
@@ -501,16 +1128,24 @@ pub(crate) fn update_skill_text_system(
         }
         if let (Some(meta), Some((skills, count))) = (skill_button_meta_text, control_skills) {
             if meta.index >= count {
-                text.0 = "AP消耗：--".to_string();
+                text.0 = "类型：--".to_string();
             } else {
                 let skill_id = skills[meta.index];
                 text.0 = format!(
-                    "{}\nAP消耗：{}\n{}",
+                    "{}\n{}",
                     super::super::helpers::skill_meta(skill_id, &skill_db),
-                    super::super::helpers::monster_skill_ap_cost_ui(skill_id, &skill_db),
                     super::super::helpers::skill_summary(skill_id, &skill_db)
                 );
             }
+            continue;
+        }
+        if let (Some(cost), Some((skills, count))) = (skill_cost_text, control_skills) {
+            text.0 = if cost.index >= count {
+                "—".to_string()
+            } else {
+                super::super::helpers::monster_skill_ap_cost_ui(skills[cost.index], &skill_db)
+                    .to_string()
+            };
             continue;
         }
         if let (Some(icon), Some((_skills, count))) = (skill_icon_text, control_skills) {
@@ -551,6 +1186,24 @@ pub(crate) fn update_skill_text_system(
             };
         }
     }
+
+    // 技能格元素类型色片：按 control 侧技能的元素着色（未配置/无元素用描金暗）。
+    let chip_skills = match ui_control_side.0 {
+        crate::battle::Side::Player => player_skills,
+        crate::battle::Side::Enemy => enemy_skills,
+    };
+    for (chip, mut bg) in &mut type_chip_q {
+        let color = match chip_skills {
+            Some((skills, count)) if chip.index < count => skill_db
+                .skills
+                .get(&skills[chip.index])
+                .and_then(|skill| skill.element)
+                .map(|element| super::super::helpers::element_color(element, &theme))
+                .unwrap_or(theme.gold_dim),
+            _ => theme.gold_dim,
+        };
+        *bg = BackgroundColor(color);
+    }
 }
 
 pub(crate) fn update_action_points_text_system(
@@ -565,11 +1218,115 @@ pub(crate) fn update_action_points_text_system(
     }
 }
 
-pub(crate) fn update_battle_action_text_system(
-    mut events: MessageReader<BattleEvent>,
-    mut text_q: Query<&mut Text, With<BattleActionText>>,
+/// 用 AP 宝石 pip + 数字直观展示双方行动点（七圣召唤风）。
+/// 按真实 Side 读取，PVP 镜像下两侧各自正确。
+pub(crate) fn update_ap_gems_system(
+    action_points: Res<crate::battle::ActionPoints>,
+    theme: Res<UiTheme>,
+    mut pip_q: Query<&mut BackgroundColor, (With<ApGemPip>, Without<ApGemPipFill>)>,
+    mut fill_q: Query<(&ApGemPipFill, &mut Node, &mut BackgroundColor), Without<ApGemPip>>,
+    mut count_q: Query<(&ApGemCountText, &mut Text)>,
 ) {
-    let Ok(mut text) = text_q.single_mut() else {
+    let ap_for = |side: Side| match side {
+        Side::Player => action_points.player,
+        Side::Enemy => action_points.enemy,
+    };
+    for mut bg in &mut pip_q {
+        *bg = BackgroundColor(theme.ap_gem_empty);
+    }
+    for (fill, mut node, mut bg) in &mut fill_q {
+        let filled_units = (ap_for(fill.side).max(0) - fill.index as i32 * 2).clamp(0, 2);
+        node.width = Val::Percent(filled_units as f32 * 50.0);
+        *bg = BackgroundColor(theme.ap_gem_full);
+    }
+    for (count, mut text) in &mut count_q {
+        text.0 = ap_for(count.side).to_string();
+    }
+}
+
+/// 技能格变灰冷却色（与行动冷却的锁定色一致）。
+const SKILL_EXHAUSTED_BG: Color = Color::srgba(0.18, 0.13, 0.065, 1.0);
+const SKILL_EXHAUSTED_BORDER: Color = Color::srgba(0.34, 0.26, 0.13, 0.75);
+
+/// 用充能圆点展示每个技能本回合剩余释放次数，并在归 0 时让技能格变灰进入冷却态。
+/// 读取 `UiControlSide` 对应上场精灵的 `SkillUses`（与技能按钮的映射一致），按精灵单独计数。
+pub(crate) fn update_skill_uses_system(
+    mut commands: Commands,
+    ui_control_side: Res<UiControlSide>,
+    theme: Res<UiTheme>,
+    player_team: Option<Res<PlayerTeam>>,
+    enemy_team: Option<Res<EnemyTeam>>,
+    skill_query: Query<(&SkillList, &SkillCount, &SkillUses), With<InBattle>>,
+    dbs: Res<BattleDbs>,
+    rules: Res<BattleRules>,
+    mut pip_q: Query<(&SkillUsePip, &mut Node, &mut BackgroundColor), Without<SkillButton>>,
+    mut button_q: Query<
+        (
+            Entity,
+            &SkillButton,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Has<SkillButtonExhausted>,
+        ),
+        Without<SkillUsePip>,
+    >,
+) {
+    let active = match ui_control_side.0 {
+        Side::Player => player_team.and_then(|team| team.0.active_combatant()),
+        Side::Enemy => enemy_team.and_then(|team| team.0.active_combatant()),
+    };
+    // (&SkillList, &SkillCount, &SkillUses) 全为引用，元组可 Copy，下方两处复用。
+    let info = active.and_then(|entity| skill_query.get(entity).ok());
+
+    // 充能点：亮=剩余、暗=已用；超过该技能上限或未配置槽位的圆点隐藏。
+    for (pip, mut node, mut bg) in &mut pip_q {
+        let (max, remaining) = match info {
+            Some((skills, count, uses)) if pip.slot < count.0 => (
+                dbs.skill_uses_per_turn(skills.0[pip.slot], &rules) as usize,
+                uses.0[pip.slot] as usize,
+            ),
+            _ => (0, 0),
+        };
+        if pip.pip >= max {
+            node.display = Display::None;
+            continue;
+        }
+        node.display = Display::Flex;
+        *bg = if pip.pip < remaining {
+            BackgroundColor(theme.ap_gem_full)
+        } else {
+            BackgroundColor(theme.ap_gem_empty)
+        };
+    }
+
+    // 变灰冷却：只接管「已耗尽」的技能格；可用时交还给常规悬停/冷却系统着色。
+    for (entity, button, interaction, mut bg, mut border, was_exhausted) in &mut button_q {
+        let exhausted = matches!(
+            info,
+            Some((_, count, uses)) if button.index < count.0 && uses.0[button.index] == 0
+        );
+        if exhausted {
+            *bg = BackgroundColor(SKILL_EXHAUSTED_BG);
+            *border = BorderColor::all(SKILL_EXHAUSTED_BORDER);
+            if !was_exhausted {
+                commands.entity(entity).insert(SkillButtonExhausted);
+            }
+        } else if was_exhausted {
+            commands.entity(entity).remove::<SkillButtonExhausted>();
+            super::visuals::apply_regular_button_style(interaction, &mut bg, &mut border, &theme);
+        }
+    }
+}
+
+const BATTLE_ACTION_TEXT_VISIBLE_SECONDS: f32 = 2.0;
+
+pub(crate) fn update_battle_action_text_system(
+    time: Res<Time>,
+    mut events: MessageReader<BattleEvent>,
+    mut text_q: Query<(&mut Text, &mut Visibility, &mut BattleActionText)>,
+) {
+    let Ok((mut text, mut visibility, mut action_text)) = text_q.single_mut() else {
         return;
     };
 
@@ -583,23 +1340,27 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}发动{}", owner, skill_name)
+                format!("{}发动{}", owner, skill_name)
             }
-            BattleEvent::CardUsed { side, card_name } => {
+            BattleEvent::CardUsed {
+                side, card_name, ..
+            } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
                     "对方"
                 };
-                format!("行为：{}使用技能牌{}", owner, card_name)
+                format!("{}使用技能牌{}", owner, card_name)
             }
-            BattleEvent::CardDiscarded { side, card_name } => {
+            BattleEvent::CardDiscarded {
+                side, card_name, ..
+            } => {
                 let owner = if *side == crate::battle::Side::Player {
                     "我方"
                 } else {
                     "对方"
                 };
-                format!("行为：{}弃置{}", owner, card_name)
+                format!("{}弃置{}", owner, card_name)
             }
             BattleEvent::Switched { side, name } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -607,7 +1368,7 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}换上{}", owner, name)
+                format!("{}换上{}", owner, name)
             }
             BattleEvent::CombatantFainted { side, name, .. } => {
                 let owner = if *side == crate::battle::Side::Player {
@@ -615,29 +1376,322 @@ pub(crate) fn update_battle_action_text_system(
                 } else {
                     "对方"
                 };
-                format!("行为：{}{}倒下", owner, name)
+                format!("{}{}倒下", owner, name)
             }
             _ => continue,
         };
         text.0 = line;
+        action_text.remaining = BATTLE_ACTION_TEXT_VISIBLE_SECONDS;
+        *visibility = Visibility::Visible;
+    }
+
+    if action_text.remaining > 0.0 {
+        action_text.remaining = (action_text.remaining - time.delta_secs()).max(0.0);
+        if action_text.remaining == 0.0 {
+            text.0.clear();
+            *visibility = Visibility::Hidden;
+        }
     }
 }
 
-pub(crate) fn update_result_ui_system(
-    mut result_text_q: Query<&mut Text, With<ResultText>>,
-    battle_result: Res<crate::battle::BattleResult>,
-) {
-    if let Ok(mut result_text) = result_text_q.single_mut() {
-        if battle_result.message.is_empty() {
-            result_text.0.clear();
-            return;
-        }
+fn grade_art_color(grade: &str) -> Color {
+    match grade {
+        "S" => Color::srgb(1.0, 0.82, 0.26),
+        "A" => Color::srgb(0.48, 0.84, 1.0),
+        "B" => Color::srgb(0.48, 0.92, 0.58),
+        "C" => Color::srgb(0.96, 0.64, 0.30),
+        _ => Color::srgb(0.62, 0.62, 0.66),
+    }
+}
 
-        let mut lines = vec![battle_result.message.clone()];
-        if let Some(status) = &battle_result.export_status {
-            lines.push(status.clone());
+fn dimension_score(
+    summary: &crate::battle::BattlePerformanceSummary,
+    dimension: ResultScoreDimension,
+) -> (u32, u32) {
+    match dimension {
+        ResultScoreDimension::Coordination => (summary.dimensions.chain, 30),
+        ResultScoreDimension::Resource => (summary.dimensions.resource, 25),
+        ResultScoreDimension::Offense => (summary.dimensions.offense, 20),
+        ResultScoreDimension::Tempo => (summary.dimensions.tempo, 10),
+        ResultScoreDimension::Survival => (summary.dimensions.survival, 15),
+    }
+}
+
+fn dimension_color(dimension: ResultScoreDimension) -> Color {
+    match dimension {
+        ResultScoreDimension::Coordination => Color::srgb(0.95, 0.58, 1.0),
+        ResultScoreDimension::Resource => Color::srgb(0.55, 0.82, 1.0),
+        ResultScoreDimension::Offense => Color::srgb(1.0, 0.48, 0.35),
+        ResultScoreDimension::Tempo => Color::srgb(1.0, 0.78, 0.32),
+        ResultScoreDimension::Survival => Color::srgb(0.46, 0.92, 0.58),
+    }
+}
+
+fn active_ring_segments(score: u32, max: u32) -> u8 {
+    if max == 0 {
+        return 0;
+    }
+    ((score as f32 / max as f32) * 12.0)
+        .round()
+        .clamp(0.0, 12.0) as u8
+}
+
+fn result_score_detail(summary: &crate::battle::BattlePerformanceSummary) -> String {
+    format!(
+        "连携构成：元素 {} · 战术 {} · 续航 {} · 混合 +{}    关键表现：反应 {}+{} · 卡技 {} · 有效大招 {} · 换人 {} · AP {} · {}回合",
+        summary.coordination.element,
+        summary.coordination.tactical,
+        summary.coordination.sustain,
+        summary.coordination.bonus,
+        summary.counters.two_element_reactions,
+        summary.counters.advanced_reactions,
+        summary.counters.card_skill_links,
+        summary.counters.high_cost_effective_skills,
+        summary.counters.post_switch_contributions,
+        summary.counters.ap_spent,
+        summary.counters.rounds
+    )
+}
+
+pub(crate) fn update_result_ui_system(
+    mut root_q: Query<&mut Visibility, With<ResultPopupRoot>>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<ResultTitleText>>,
+        Query<&mut Text, With<ResultText>>,
+        Query<&mut Text, With<ResultNoticeText>>,
+        Query<(&mut Text, &mut TextColor), With<ResultGradeText>>,
+        Query<&mut Text, With<ResultTotalScoreText>>,
+        Query<(&ResultScoreValueText, &mut Text)>,
+        Query<&mut Text, With<ResultScoreDetailText>>,
+    )>,
+    mut notice_root_q: Query<&mut Visibility, (With<ResultNoticeRoot>, Without<ResultPopupRoot>)>,
+    mut performance_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultPerformanceRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+            Without<ResultInvitePromptRoot>,
+        ),
+    >,
+    mut ring_segments_q: Query<(&ResultScoreRingSegment, &mut BackgroundColor)>,
+    mut restart_button_q: Query<&mut Node, With<ResultRestartButton>>,
+    mut prompt_q: Query<
+        &mut Visibility,
+        (
+            With<ResultInvitePromptRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+        ),
+    >,
+    battle_result: Res<crate::battle::BattleResult>,
+    performance_report: Res<BattlePerformanceReport>,
+    battle_mode: Res<BattleControlMode>,
+    notice: Res<BattleResultNotice>,
+    pvp_rematch: Option<Res<pvp::PvpRematchState>>,
+) {
+    let visible = !battle_result.message.is_empty();
+    for mut root in &mut root_q {
+        *root = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !visible {
+        return;
+    }
+
+    let is_pvp = *battle_mode == BattleControlMode::PlayerVsRemote;
+    for mut title in &mut text_queries.p0() {
+        title.0 = result_title(&battle_result.message).to_string();
+    }
+    let base_message = clean_result_message(&battle_result.message);
+    for mut result_text in &mut text_queries.p1() {
+        result_text.0 = base_message.clone();
+    }
+
+    if let Some(summary) = performance_report.summary.as_ref() {
+        for mut visibility in &mut performance_root_q {
+            *visibility = Visibility::Visible;
         }
-        lines.push("按 L 导出 replay/action log。".to_string());
-        result_text.0 = lines.join("\n");
+        for (mut grade_text, mut grade_color) in &mut text_queries.p3() {
+            grade_text.0 = summary.grade.to_string();
+            grade_color.0 = grade_art_color(summary.grade);
+        }
+        for mut total_text in &mut text_queries.p4() {
+            total_text.0 = format!("{}/100", summary.total_score);
+        }
+        for (score_text, mut text) in &mut text_queries.p5() {
+            let (score, max) = dimension_score(summary, score_text.dimension);
+            text.0 = format!("{score}\n/{max}");
+        }
+        for mut text in &mut text_queries.p6() {
+            text.0 = result_score_detail(summary);
+        }
+        for (segment, mut bg) in &mut ring_segments_q {
+            let (score, max) = dimension_score(summary, segment.dimension);
+            let active_segments = active_ring_segments(score, max);
+            bg.0 = if segment.index < active_segments {
+                dimension_color(segment.dimension)
+            } else {
+                Color::srgba(1.0, 1.0, 1.0, 0.14)
+            };
+        }
+    } else {
+        for mut visibility in &mut performance_root_q {
+            *visibility = Visibility::Hidden;
+        }
+    }
+
+    for mut node in &mut restart_button_q {
+        node.display = if is_pvp { Display::None } else { Display::Flex };
+    }
+
+    let notice_visible = notice.remaining > 0.0 && !notice.text.is_empty();
+    for mut visibility in &mut notice_root_q {
+        *visibility = if notice_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if notice_visible {
+        for mut text in &mut text_queries.p2() {
+            text.0 = notice.text.clone();
+        }
+    }
+
+    let invite_visible = pvp_rematch
+        .as_ref()
+        .is_some_and(|state| state.incoming_request);
+    for mut visibility in &mut prompt_q {
+        *visibility = if invite_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+pub(crate) fn hide_result_ui_system(
+    mut root_q: Query<&mut Visibility, With<ResultPopupRoot>>,
+    mut prompt_q: Query<
+        &mut Visibility,
+        (
+            With<ResultInvitePromptRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+            Without<ResultPerformanceRoot>,
+        ),
+    >,
+    mut notice_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultNoticeRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultPerformanceRoot>,
+        ),
+    >,
+    mut performance_root_q: Query<
+        &mut Visibility,
+        (
+            With<ResultPerformanceRoot>,
+            Without<ResultPopupRoot>,
+            Without<ResultNoticeRoot>,
+            Without<ResultInvitePromptRoot>,
+        ),
+    >,
+) {
+    for mut visibility in &mut root_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut prompt_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut notice_root_q {
+        *visibility = Visibility::Hidden;
+    }
+    for mut visibility in &mut performance_root_q {
+        *visibility = Visibility::Hidden;
+    }
+}
+
+fn result_title(message: &str) -> &'static str {
+    if message.contains("胜利") {
+        "成功"
+    } else if message.contains("失败") || message.contains("中断") || message.contains("撤退")
+    {
+        "失败"
+    } else {
+        "结果"
+    }
+}
+
+fn clean_result_message(message: &str) -> String {
+    message
+        .replace("按 R 返回大厅。", "")
+        .replace("按 R 返回。", "")
+        .replace("按 R 重新开始。", "")
+        .trim()
+        .to_string()
+}
+
+/// 更新顶栏右上角的联机延迟指示器：非 PVP 或未连接时隐藏；连接后根据最近一次
+/// 心跳测得的延迟显示信号条格数（1~3）、配色与具体毫秒数。
+pub(crate) fn update_latency_indicator_system(
+    battle_mode: Res<BattleControlMode>,
+    connection: Option<Res<pvp::PvpConnection>>,
+    theme: Res<UiTheme>,
+    mut root_q: Query<&mut Visibility, With<LatencyIndicatorRoot>>,
+    mut bars_q: Query<(&LatencyBar, &mut BackgroundColor)>,
+    mut text_q: Query<(&mut Text, &mut TextColor), With<LatencyText>>,
+) {
+    let connected = connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_connected());
+    let visible = *battle_mode == BattleControlMode::PlayerVsRemote && connected;
+
+    for mut visibility in &mut root_q {
+        *visibility = if visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !visible {
+        return;
+    }
+
+    let latency = connection
+        .as_ref()
+        .and_then(|connection| connection.latency_ms);
+    let (active_bars, signal_color) = match latency {
+        Some(ms) if ms <= LATENCY_GOOD_MAX_MS => (3u8, LATENCY_GOOD),
+        Some(ms) if ms <= LATENCY_MEDIUM_MAX_MS => (2, LATENCY_MEDIUM),
+        Some(_) => (1, LATENCY_POOR),
+        None => (0, LATENCY_UNKNOWN),
+    };
+
+    for (bar, mut background) in &mut bars_q {
+        background.0 = if bar.index < active_bars {
+            signal_color
+        } else {
+            LATENCY_BAR_INACTIVE
+        };
+    }
+
+    let label = match latency {
+        Some(ms) => format!("{ms} ms"),
+        None => "-- ms".to_string(),
+    };
+    let label_color = if latency.is_some() {
+        signal_color
+    } else {
+        theme.text_muted
+    };
+    for (mut text, mut color) in &mut text_q {
+        text.0 = label.clone();
+        color.0 = label_color;
     }
 }

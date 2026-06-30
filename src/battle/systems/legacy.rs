@@ -8,7 +8,7 @@ use crate::{
         PendingBoosts, Shield, Side, SkillList, Stats, StatusBoard, TurnAction, TurnContext,
         TurnCount, transfer_status_by_id,
     },
-    data::{BattleDbs, BattleFormulaRules, SkillEffect},
+    data::{BattleDbs, BattleFormulaRules, BattleRules, SkillEffect},
     game_state::{BattlePhase, GameState},
 };
 
@@ -279,6 +279,7 @@ fn resolve_turn_system(
     mut turn_count: ResMut<TurnCount>,
     mut pending_boosts: ResMut<PendingBoosts>,
     formula_rules: Res<BattleFormulaRules>,
+    battle_rules: Res<BattleRules>,
     mut accuracy_rng: ResMut<AccuracyRng>,
 ) {
     let Some(player_action) = turn_ctx.player_action else {
@@ -423,8 +424,10 @@ fn resolve_turn_system(
 
         event_writer.write(BattleEvent::SkillUsed {
             side: attacker_side,
+            skill_id,
             skill_name: skill.name.clone(),
             slot: skill_slot,
+            cost_ap: skill.cost_ap,
         });
 
         if actor_is_player_slot {
@@ -442,6 +445,7 @@ fn resolve_turn_system(
                 &mut t_statuses,
                 &mut pending_boosts,
                 &formula_rules,
+                &battle_rules,
                 &mut accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,
@@ -467,6 +471,7 @@ fn resolve_turn_system(
                 &mut a_statuses,
                 &mut pending_boosts,
                 &formula_rules,
+                &battle_rules,
                 &mut accuracy_rng,
                 &dbs.elements,
                 &dbs.statuses,

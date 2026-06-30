@@ -15,26 +15,30 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{
-        ActionPoints, BattleControlMode, BattleEvent, BattleLog, BattleResult, ElementAura,
-        EnemyTeam, Hand, InBattle, PendingBoosts, PendingKoResolution, PlayerTeam, PvpTurnOrder,
-        RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard, StatusInstance, TurnAction,
-        TurnContext, TurnCount, push_battle_line, recalculate_stage_modifiers,
-        transfer_status_by_id,
+        ActionPoints, BattleControlMode, BattleEvent, BattleResult, BattleResultAction,
+        BattleResultNotice, BattleShuffleSeed, DamageType, ElementAura, EnemyTeam, Hand, InBattle,
+        PendingBattleResultAction, PendingBoosts, PendingHandDiscard, PendingKoResolution,
+        PlayerTeam, PvpTurnOrder, RoundOrder, SelectedCards, Shield, Side, Stats, StatusBoard,
+        StatusInstance, TurnAction, TurnContext, TurnCount, new_battle_shuffle_seed,
+        recalculate_stage_modifiers, transfer_status_by_id,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
     data::{
-        BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardEffect, CardId,
-        MonsterPool, SkillDef, TeamSelections,
+        BattleDbs, BattleFormulaRules, BattleRules, CardDeck, CardDef, CardId, MonsterPool,
+        SkillDef, SkillId, TeamSelections,
     },
     game_state::{BattlePhase, GameState},
 };
 
 const DEFAULT_PORT: u16 = 42043;
 const MAX_PORT_ATTEMPTS: u16 = 32;
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 6;
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_LEN: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
+const NETWORK_IDLE_SLEEP: Duration = Duration::from_millis(1);
+const PVP_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 
 pub struct PvpPlugin;
 
@@ -43,11 +47,13 @@ impl Plugin for PvpPlugin {
         app.init_resource::<PvpConnection>()
             .init_resource::<PvpLobbyInput>()
             .init_resource::<PvpTeamState>()
+            .init_resource::<PvpRematchState>()
             .init_resource::<PvpIncomingIntents>()
             .init_resource::<PvpIncomingSnapshots>()
             .init_resource::<PvpIncomingFeedbacks>()
             .init_resource::<PvpPendingLocalIntent>()
             .init_resource::<PvpLastRemoteIntentSeq>()
+            .init_resource::<PvpSnapshotSync>()
             .add_systems(Update, pvp_poll_network_system)
             .add_systems(
                 Update,
@@ -88,6 +94,10 @@ impl Plugin for PvpPlugin {
             .add_systems(Update, pvp_send_host_snapshot_system)
             .add_systems(Update, pvp_apply_host_snapshot_system)
             .add_systems(Update, pvp_handle_battle_disconnect_system)
+            .add_systems(
+                Update,
+                pvp_result_rematch_system.run_if(in_state(GameState::Result)),
+            )
             .add_systems(OnEnter(GameState::Lobby), reset_pvp_state_on_lobby)
             .add_systems(OnEnter(GameState::PvpLobby), reset_pvp_lobby_ui_state)
             .add_systems(OnExit(GameState::PvpLobby), cleanup_pvp_lobby_ui)
@@ -124,6 +134,8 @@ pub struct PvpConnection {
     pub seq: u32,
     pub protocol_ready: bool,
     pub remote_data_hash: Option<String>,
+    /// 最近一次心跳测得的往返延迟（毫秒）；未连接或尚无读数时为 None。
+    pub latency_ms: Option<u32>,
 }
 
 impl Default for PvpConnection {
@@ -137,6 +149,7 @@ impl Default for PvpConnection {
             seq: 0,
             protocol_ready: false,
             remote_data_hash: None,
+            latency_ms: None,
         }
     }
 }
@@ -181,6 +194,15 @@ pub struct PvpTeamState {
     pub local_indices: Option<Vec<usize>>,
     pub remote_indices: Option<Vec<usize>>,
     pub battle_started: bool,
+    pub battle_seed: Option<u64>,
+    pub session_id: u64,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct PvpRematchState {
+    pub incoming_request: bool,
+    pub outgoing_request: bool,
+    pub accepted: bool,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -197,6 +219,28 @@ pub struct PvpPendingLocalIntent(pub Option<u32>);
 
 #[derive(Resource, Debug, Default)]
 pub struct PvpLastRemoteIntentSeq(pub u32);
+
+#[derive(Resource, Debug)]
+struct PvpSnapshotSync {
+    interval: Timer,
+    last_sent: Option<PvpBattleSnapshot>,
+}
+
+impl Default for PvpSnapshotSync {
+    fn default() -> Self {
+        Self {
+            interval: Timer::new(PVP_SNAPSHOT_INTERVAL, TimerMode::Repeating),
+            last_sent: None,
+        }
+    }
+}
+
+impl PvpSnapshotSync {
+    fn reset(&mut self) {
+        self.interval.reset();
+        self.last_sent = None;
+    }
+}
 
 #[derive(Component)]
 pub struct PvpLobbyUiRoot;
@@ -250,6 +294,7 @@ enum NetEvent {
     RelayWaitingPeer(String),
     Connected,
     Message(PvpMessage),
+    Latency(u32),
     Failed(String),
     Disconnected(String),
 }
@@ -265,9 +310,11 @@ enum PvpMessage {
         reason: Option<String>,
     },
     TeamSelected {
+        session_id: u64,
         monster_indices: Vec<usize>,
     },
     BattleReady {
+        session_id: u64,
         seed: u64,
     },
     BattleSnapshot(Box<PvpBattleSnapshot>),
@@ -276,6 +323,9 @@ enum PvpMessage {
         seq: u32,
         intent: BattleIntent,
     },
+    RematchRequest,
+    RematchAccepted,
+    RematchRejected,
     Surrender,
     Leave {
         reason: String,
@@ -302,21 +352,32 @@ enum PvpBattleFeedback {
     TurnStarted(u32),
     CardUsed {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        cost_ap: i32,
     },
     CardDiscarded {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        ap_gain: i32,
+    },
+    CardsDrawn {
+        side: Side,
+        count: usize,
     },
     SkillUsed {
         side: Side,
+        skill_id: SkillId,
         skill_name: String,
         slot: usize,
+        cost_ap: i32,
     },
     DamageDealt {
         source: Side,
         target: Side,
         amount: i32,
+        damage_type: DamageType,
     },
     AttackMissed {
         source: Side,
@@ -338,10 +399,24 @@ enum PvpBattleFeedback {
         side: Side,
         name: String,
     },
+    ReactionTriggered {
+        source: Side,
+        target: Side,
+        reaction_id: String,
+        reaction_name: String,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PvpPendingDiscardSnapshot {
+    side: Side,
+    next_phase: BattlePhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct PvpBattleSnapshot {
+    session_id: u64,
+    battle_seed: u64,
     turn: u32,
     phase: BattlePhase,
     first_side: Side,
@@ -355,10 +430,13 @@ struct PvpBattleSnapshot {
     enemy_auras: Vec<[Option<crate::data::ElementType>; 2]>,
     player_statuses: Vec<Vec<StatusInstance>>,
     enemy_statuses: Vec<Vec<StatusInstance>>,
+    player_skill_uses: Vec<[u8; 4]>,
+    enemy_skill_uses: Vec<[u8; 4]>,
     player_ap: i32,
     enemy_ap: i32,
     player_hand: Vec<CardId>,
     enemy_hand: Vec<CardId>,
+    pending_discard: Option<PvpPendingDiscardSnapshot>,
     acknowledged_intent_seq: u32,
     player_defeated: bool,
     enemy_defeated: bool,
@@ -395,6 +473,10 @@ pub fn start_host(connection: &mut PvpConnection) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        "[host] 开始局域网建房，等待监听端口...",
+    );
     thread::spawn(move || host_thread(command_rx, event_tx));
     connection.role = Some(PvpRole::Host);
     connection.status = PvpStatus::Hosting { port: DEFAULT_PORT };
@@ -409,6 +491,10 @@ pub fn start_client(connection: &mut PvpConnection, address: String) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!("[client] 正在连接局域网对局：{address}"),
+    );
     thread::spawn(move || client_thread(address, command_rx, event_tx));
     connection.role = Some(PvpRole::Client);
     connection.status = PvpStatus::Connecting;
@@ -423,6 +509,10 @@ pub fn start_relay_host(connection: &mut PvpConnection, relay_address: String) {
     connection.stop();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!("[relay-host] 正在连接中继服务器：{relay_address}"),
+    );
     thread::spawn(move || relay_host_thread(relay_address, command_rx, event_tx));
     connection.role = Some(PvpRole::Host);
     connection.status = PvpStatus::ConnectingRelay;
@@ -443,6 +533,13 @@ pub fn start_relay_client(
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let thread_room_code = room_code.clone();
+    console_log(
+        ConsoleLogCategory::Pvp,
+        format!(
+            "[relay-client] 正在加入中继房间：{} @ {}",
+            room_code, relay_address
+        ),
+    );
     thread::spawn(move || {
         relay_client_thread(relay_address, thread_room_code, command_rx, event_tx)
     });
@@ -462,6 +559,7 @@ pub fn submit_local_team(
 ) {
     team_state.local_indices = Some(indices.clone());
     connection.send(PvpMessage::TeamSelected {
+        session_id: team_state.session_id,
         monster_indices: indices,
     });
 }
@@ -471,6 +569,10 @@ pub fn send_intent(connection: &mut PvpConnection, intent: BattleIntent) {
         return;
     }
     connection.seq = connection.seq.wrapping_add(1);
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!("[intent-send] seq={} intent={:?}", connection.seq, intent),
+    );
     connection.send(PvpMessage::Intent {
         seq: connection.seq,
         intent,
@@ -488,6 +590,18 @@ pub fn send_local_intent(
 
 pub fn surrender(connection: &PvpConnection) {
     connection.send(PvpMessage::Surrender);
+}
+
+fn request_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchRequest);
+}
+
+fn accept_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchAccepted);
+}
+
+fn reject_rematch(connection: &PvpConnection) {
+    connection.send(PvpMessage::RematchRejected);
 }
 
 pub fn data_hash(
@@ -543,8 +657,16 @@ pub fn data_hash(
 
 fn rules_hash_part(rules: &BattleRules) -> String {
     format!(
-        "rules:{}:{}:{}",
-        rules.max_team_size, rules.cards_per_round, rules.ap_per_round
+        "rules:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        rules.max_team_size,
+        rules.initial_cards,
+        rules.cards_per_round,
+        rules.ap_per_round,
+        rules.max_ap,
+        rules.max_retained_hand,
+        rules.discard_ap_gain,
+        rules.max_shield_hp_ratio,
+        rules.default_skill_uses_per_turn
     )
 }
 
@@ -562,14 +684,15 @@ fn formulas_hash_part(formulas: &BattleFormulaRules) -> String {
 
 fn skill_hash_part(skill: &SkillDef) -> String {
     format!(
-        "skill:{:?}:{}:{:?}:{}:{:?}:{:?}:{:?}",
+        "skill:{:?}:{}:{:?}:{}:{:?}:{:?}:{:?}:{:?}",
         skill.id,
         skill.name,
         skill.category,
         skill.cost_ap,
         skill.effect,
         skill.element,
-        skill.base_accuracy
+        skill.base_accuracy,
+        skill.uses_per_turn
     )
 }
 
@@ -748,12 +871,19 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
     let _ = stream.set_nodelay(true);
     let _ = event_tx.send(NetEvent::Connected);
     let mut last_rx = Instant::now();
-    let mut last_ping = Instant::now();
+    // 让首个心跳 Ping 立即发出，以便尽快得到一次延迟读数。
+    let mut last_ping = Instant::now()
+        .checked_sub(HEARTBEAT_INTERVAL)
+        .unwrap_or_else(Instant::now);
     let mut nonce = 0_u64;
+    // 记录最近一次发出的 Ping（nonce 与发送时刻），用于在收到对应 Pong 时计算 RTT。
+    let mut pending_ping: Option<(u64, Instant)> = None;
     let mut read_buffer = Vec::new();
 
     loop {
+        let mut did_work = false;
         while let Ok(command) = command_rx.try_recv() {
+            did_work = true;
             match command {
                 NetCommand::Send(message) => {
                     if let Err(err) = write_message(&mut stream, &message) {
@@ -773,6 +903,7 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
         match read_messages(&mut stream, &mut read_buffer) {
             Ok((messages, received_bytes)) => {
                 if received_bytes {
+                    did_work = true;
                     last_rx = Instant::now();
                 }
                 for message in messages {
@@ -780,7 +911,16 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
                         PvpMessage::Ping { nonce } => {
                             let _ = write_message(&mut stream, &PvpMessage::Pong { nonce });
                         }
-                        PvpMessage::Pong { .. } => {}
+                        PvpMessage::Pong { nonce } => {
+                            if let Some((sent_nonce, sent_at)) = pending_ping {
+                                if sent_nonce == nonce {
+                                    let ms = sent_at.elapsed().as_millis().min(u128::from(u32::MAX))
+                                        as u32;
+                                    let _ = event_tx.send(NetEvent::Latency(ms));
+                                    pending_ping = None;
+                                }
+                            }
+                        }
                         other => {
                             let _ = event_tx.send(NetEvent::Message(other));
                         }
@@ -800,12 +940,18 @@ fn run_stream(mut stream: TcpStream, command_rx: Receiver<NetCommand>, event_tx:
                 return;
             }
             last_ping = Instant::now();
+            pending_ping = Some((nonce, last_ping));
+            did_work = true;
         }
         if last_rx.elapsed() >= HEARTBEAT_TIMEOUT {
             let _ = event_tx.send(NetEvent::Disconnected("连接超时".to_string()));
             return;
         }
-        thread::sleep(Duration::from_millis(16));
+        if did_work {
+            thread::yield_now();
+        } else {
+            thread::sleep(NETWORK_IDLE_SLEEP);
+        }
     }
 }
 
@@ -965,22 +1111,27 @@ fn reset_pvp_state_on_lobby(
     mut connection: ResMut<PvpConnection>,
     mut input: ResMut<PvpLobbyInput>,
     mut team_state: ResMut<PvpTeamState>,
+    mut rematch_state: ResMut<PvpRematchState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
     mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
     mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
     mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
 ) {
     connection.stop();
     connection.status = PvpStatus::Idle;
     connection.seq = 0;
+    connection.latency_ms = None;
     connection.local_ip = local_lan_ip();
     reset_lobby_input(&mut input);
     reset_session_state(&mut team_state, &mut incoming_intents);
+    *rematch_state = PvpRematchState::default();
     incoming_snapshots.0.clear();
     incoming_feedbacks.0.clear();
     *pending_local_intent = PvpPendingLocalIntent::default();
     *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
+    snapshot_sync.reset();
 }
 
 fn clear_pending_error_on_exit(mut input: ResMut<PvpLobbyInput>) {
@@ -1218,6 +1369,7 @@ fn pvp_lobby_button_system(
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut input: ResMut<PvpLobbyInput>,
+    online_connection: Option<Res<crate::online::OnlineConnection>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     for interaction in &mut host_buttons {
@@ -1336,7 +1488,14 @@ fn pvp_lobby_button_system(
                 connection.stop_with_leave(Some("对方已返回大厅，联机已取消。".to_string()));
                 reset_session_state(&mut team_state, &mut incoming_intents);
                 connection.status = PvpStatus::Idle;
-                next_state.set(GameState::Lobby);
+                if online_connection
+                    .as_ref()
+                    .is_some_and(|c| c.user_id.is_some())
+                {
+                    next_state.set(GameState::OnlineHome);
+                } else {
+                    next_state.set(GameState::Lobby);
+                }
             }
             return;
         }
@@ -1569,13 +1728,19 @@ fn pvp_address_text_box_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut last_input_screen: Local<Option<PvpLobbyScreen>>,
 ) -> Result {
     if !matches!(
         input.screen,
         PvpLobbyScreen::JoinAddress | PvpLobbyScreen::RelayHostRoom | PvpLobbyScreen::RelayJoinRoom
     ) {
+        *last_input_screen = None;
         return Ok(());
     }
+    let screen = input.screen;
+    let should_request_initial_focus = *last_input_screen != Some(screen);
+    *last_input_screen = Some(screen);
+
     let ctx = contexts.ctx_mut()?;
     register_egui_cjk_font(ctx, &mut input);
     egui::Area::new(egui::Id::new("pvp_address_text_box"))
@@ -1594,7 +1759,7 @@ fn pvp_address_text_box_system(
             );
             ui.set_style(style);
             ui.set_width(360.0);
-            let enter_pressed = match input.screen {
+            let enter_pressed = match screen {
                 PvpLobbyScreen::JoinAddress => {
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut input.address)
@@ -1602,7 +1767,9 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    response.request_focus();
+                    if should_request_initial_focus {
+                        response.request_focus();
+                    }
                     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
                 PvpLobbyScreen::RelayHostRoom => {
@@ -1612,7 +1779,9 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    response.request_focus();
+                    if should_request_initial_focus {
+                        response.request_focus();
+                    }
                     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
                 PvpLobbyScreen::RelayJoinRoom => {
@@ -1629,7 +1798,7 @@ fn pvp_address_text_box_system(
                             .desired_width(360.0)
                             .font(egui::TextStyle::Heading),
                     );
-                    if input.room_code.is_empty() {
+                    if should_request_initial_focus && input.room_code.is_empty() {
                         room_response.request_focus();
                     }
                     (address_response.lost_focus() || room_response.lost_focus())
@@ -1705,10 +1874,13 @@ fn normalize_room_code(room_code: &str) -> String {
 fn pvp_poll_network_system(
     mut connection: ResMut<PvpConnection>,
     mut team_state: ResMut<PvpTeamState>,
+    mut rematch_state: ResMut<PvpRematchState>,
     mut incoming_intents: ResMut<PvpIncomingIntents>,
     mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
     mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
     mut input: ResMut<PvpLobbyInput>,
+    game_state: Res<State<GameState>>,
+    mut result_notice: ResMut<BattleResultNotice>,
     dbs: Option<Res<BattleDbs>>,
     monsters: Option<Res<MonsterPool>>,
     rules: Option<Res<BattleRules>>,
@@ -1732,6 +1904,10 @@ fn pvp_poll_network_system(
                     "局域网建房成功：{}:{port}，等待对方加入。",
                     connection.local_ip
                 );
+                console_log(
+                    ConsoleLogCategory::Pvp,
+                    format!("[host] 局域网建房成功：{}:{port}", connection.local_ip),
+                );
             }
             NetEvent::RelayRoomCreated(room_code) | NetEvent::RelayWaitingPeer(room_code) => {
                 input.room_code = room_code.clone();
@@ -1739,10 +1915,16 @@ fn pvp_poll_network_system(
                     room_code: room_code.clone(),
                 };
                 input.info = format!("服务器房间码：{room_code}，等待对方加入。");
+                console_log(
+                    ConsoleLogCategory::Pvp,
+                    format!("[relay-host] 房间就绪：{room_code}，等待对方加入"),
+                );
             }
             NetEvent::Connected => {
                 connection.status = PvpStatus::Connected;
+                connection.latency_ms = None;
                 input.info = "已连接，正在握手。".to_string();
+                console_log(ConsoleLogCategory::Pvp, "[connect] 已连接，开始协议握手");
                 if let (Some(dbs), Some(monsters), Some(rules), Some(formulas), Some(deck)) = (
                     dbs.as_ref(),
                     monsters.as_ref(),
@@ -1750,9 +1932,17 @@ fn pvp_poll_network_system(
                     formulas.as_ref(),
                     deck.as_ref(),
                 ) {
+                    let hash = data_hash(dbs, monsters, rules, formulas, deck);
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[handshake-send] protocol={} data_hash={hash}",
+                            PROTOCOL_VERSION
+                        ),
+                    );
                     connection.send(PvpMessage::Hello {
                         protocol_version: PROTOCOL_VERSION,
-                        data_hash: data_hash(dbs, monsters, rules, formulas, deck),
+                        data_hash: hash,
                     });
                 }
             }
@@ -1782,6 +1972,13 @@ fn pvp_poll_network_system(
                     } else {
                         None
                     };
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[handshake-recv] protocol={} data_hash={} accepted={}",
+                            protocol_version, remote_hash, accepted
+                        ),
+                    );
                     connection.remote_data_hash = Some(remote_hash);
                     connection.protocol_ready = accepted;
                     connection.send(PvpMessage::HelloAck {
@@ -1789,27 +1986,104 @@ fn pvp_poll_network_system(
                         reason: reason.clone(),
                     });
                     if let Some(reason) = reason {
-                        input.info = reason;
+                        input.info = reason.clone();
+                        console_log(
+                            ConsoleLogCategory::Pvp,
+                            format!("[handshake] 失败：{reason}"),
+                        );
                     } else {
                         input.info = "握手完成，请选择队伍。".to_string();
+                        console_log(ConsoleLogCategory::Pvp, "[handshake] 成功，请选择队伍");
                     }
                 }
                 PvpMessage::HelloAck { accepted, reason } => {
                     connection.protocol_ready = accepted;
                     if accepted {
                         input.info = "握手完成，请选择队伍。".to_string();
+                        console_log(ConsoleLogCategory::Pvp, "[handshake] 成功，请选择队伍");
                     } else {
                         input.info = reason.unwrap_or_else(|| "连接被拒绝".to_string());
+                        console_log(
+                            ConsoleLogCategory::Pvp,
+                            format!("[handshake] 被拒绝：{}", input.info),
+                        );
                         connection.status = PvpStatus::Failed(input.info.clone());
                     }
                 }
-                PvpMessage::TeamSelected { monster_indices } => {
-                    team_state.remote_indices = Some(monster_indices);
+                PvpMessage::TeamSelected {
+                    session_id,
+                    monster_indices,
+                } => {
+                    if session_id == team_state.session_id {
+                        team_state.remote_indices = Some(monster_indices);
+                    } else {
+                        console_log(
+                            ConsoleLogCategory::PvpDetail,
+                            format!(
+                                "[team-ignore] stale session_id={} current={}",
+                                session_id, team_state.session_id
+                            ),
+                        );
+                    }
                 }
-                PvpMessage::BattleReady { .. } => {}
-                PvpMessage::BattleSnapshot(snapshot) => incoming_snapshots.0.push(*snapshot),
-                PvpMessage::BattleFeedback(feedback) => incoming_feedbacks.0.push(feedback),
-                PvpMessage::Intent { seq, intent } => incoming_intents.0.push((seq, intent)),
+                PvpMessage::BattleReady { session_id, seed } => {
+                    if session_id == team_state.session_id {
+                        team_state.battle_seed = Some(seed);
+                    } else {
+                        console_log(
+                            ConsoleLogCategory::PvpDetail,
+                            format!(
+                                "[ready-ignore] stale session_id={} current={}",
+                                session_id, team_state.session_id
+                            ),
+                        );
+                    }
+                }
+                PvpMessage::BattleSnapshot(snapshot) => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!(
+                            "[snapshot-recv] round={} phase={:?} result={}",
+                            snapshot.turn,
+                            snapshot.phase,
+                            snapshot.result_message.as_deref().unwrap_or("<none>")
+                        ),
+                    );
+                    incoming_snapshots.0.push(*snapshot)
+                }
+                PvpMessage::BattleFeedback(feedback) => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!("[feedback-recv] {:?}", feedback),
+                    );
+                    incoming_feedbacks.0.push(feedback)
+                }
+                PvpMessage::Intent { seq, intent } => {
+                    console_log(
+                        ConsoleLogCategory::PvpDetail,
+                        format!("[intent-recv] seq={} intent={:?}", seq, intent),
+                    );
+                    incoming_intents.0.push((seq, intent))
+                }
+                PvpMessage::RematchRequest => {
+                    if *game_state.get() == GameState::Result && connection.is_connected() {
+                        rematch_state.incoming_request = true;
+                        console_log(ConsoleLogCategory::Pvp, "[rematch] 收到再来一局邀请");
+                    }
+                }
+                PvpMessage::RematchAccepted => {
+                    rematch_state.accepted = true;
+                    rematch_state.incoming_request = false;
+                    rematch_state.outgoing_request = false;
+                    console_log(ConsoleLogCategory::Pvp, "[rematch] 对方接受再来一局");
+                }
+                PvpMessage::RematchRejected => {
+                    rematch_state.incoming_request = false;
+                    rematch_state.outgoing_request = false;
+                    result_notice.text = "对方拒绝了你的邀请".to_string();
+                    result_notice.remaining = 2.5;
+                    console_log(ConsoleLogCategory::Pvp, "[rematch] 对方拒绝再来一局");
+                }
                 PvpMessage::Surrender => {
                     let reason = "对方已撤退/战斗中止".to_string();
                     input.info = reason.clone();
@@ -1821,13 +2095,20 @@ fn pvp_poll_network_system(
                 }
                 PvpMessage::Ping { .. } | PvpMessage::Pong { .. } => {}
             },
+            NetEvent::Latency(ms) => {
+                connection.latency_ms = Some(ms);
+            }
             NetEvent::Failed(reason) => {
+                console_log(ConsoleLogCategory::Pvp, format!("[error] {reason}"));
                 input.info = reason.clone();
+                connection.latency_ms = None;
                 connection.status = PvpStatus::Failed(reason);
             }
             NetEvent::Disconnected(reason) => {
                 if !matches!(connection.status, PvpStatus::Disconnected(_)) {
+                    console_log(ConsoleLogCategory::Pvp, format!("[disconnect] {reason}"));
                     input.info = reason.clone();
+                    connection.latency_ms = None;
                     connection.status = PvpStatus::Disconnected(reason);
                 }
             }
@@ -1850,6 +2131,12 @@ fn pvp_apply_remote_team_system(
     mut commands: Commands,
     mut team_state: ResMut<PvpTeamState>,
     connection: Res<PvpConnection>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
+    mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
+    mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
+    mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if team_state.battle_started || !connection.protocol_ready {
@@ -1861,6 +2148,10 @@ fn pvp_apply_remote_team_system(
     ) else {
         return;
     };
+    let Some(seed) = pvp_battle_seed(&connection, &mut team_state) else {
+        return;
+    };
+    commands.insert_resource(BattleShuffleSeed(seed));
     commands.insert_resource(BattleControlMode::PlayerVsRemote);
     commands.insert_resource(PvpTurnOrder {
         local_first: connection.role == Some(PvpRole::Host),
@@ -1869,8 +2160,34 @@ fn pvp_apply_remote_team_system(
         player_indices: local_indices,
         enemy_indices: remote_indices,
     });
+    incoming_snapshots.0.clear();
+    incoming_feedbacks.0.clear();
+    *pending_local_intent = PvpPendingLocalIntent::default();
+    *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
+    snapshot_sync.reset();
     team_state.battle_started = true;
+    // 重置战斗阶段到 Init，确保 init_battle_system 会重新初始化战斗实体与状态。
+    // 否则上一局结束时遗留的 BattlePhase（如 DeathResolve）会让再来一局直接回到上一局结算界面。
+    next_phase.set(BattlePhase::Init);
     next_state.set(GameState::Battle);
+}
+
+fn pvp_battle_seed(connection: &PvpConnection, team_state: &mut PvpTeamState) -> Option<u64> {
+    match connection.role {
+        Some(PvpRole::Host) => {
+            let seed = team_state
+                .battle_seed
+                .unwrap_or_else(new_battle_shuffle_seed);
+            team_state.battle_seed = Some(seed);
+            connection.send(PvpMessage::BattleReady {
+                session_id: team_state.session_id,
+                seed,
+            });
+            Some(seed)
+        }
+        Some(PvpRole::Client) => team_state.battle_seed,
+        None => None,
+    }
 }
 
 fn team_hp(team: &crate::battle::Team, query: &Query<&Stats, With<InBattle>>) -> Vec<i32> {
@@ -1924,14 +2241,42 @@ fn apply_team_hp(
     }
 }
 
+fn team_skill_uses(
+    team: &crate::battle::Team,
+    query: &Query<&crate::battle::SkillUses, With<InBattle>>,
+) -> Vec<[u8; 4]> {
+    team.combatants
+        .iter()
+        .map(|&entity| query.get(entity).map(|uses| uses.0).unwrap_or([0; 4]))
+        .collect()
+}
+
+fn apply_team_skill_uses(
+    team: &crate::battle::Team,
+    uses_values: &[[u8; 4]],
+    query: &mut Query<&mut crate::battle::SkillUses, With<InBattle>>,
+) {
+    for (&entity, uses) in team.combatants.iter().zip(uses_values.iter().copied()) {
+        if let Ok(mut skill_uses) = query.get_mut(entity) {
+            skill_uses.0 = uses;
+        }
+    }
+}
+
 fn apply_team_shields(
     team: &crate::battle::Team,
     shield_values: &[i32],
-    query: &mut Query<&mut Shield, With<InBattle>>,
+    max_shield_hp_ratio: f32,
+    stats_query: &mut Query<&mut Stats, With<InBattle>>,
+    shield_query: &mut Query<&mut Shield, With<InBattle>>,
 ) {
     for (&entity, shield) in team.combatants.iter().zip(shield_values.iter().copied()) {
-        if let Ok(mut shield_value) = query.get_mut(entity) {
-            shield_value.0 = shield.max(0);
+        let max_hp = stats_query
+            .get_mut(entity)
+            .map(|stats| stats.max_hp)
+            .unwrap_or_default();
+        if let Ok(mut shield_value) = shield_query.get_mut(entity) {
+            shield_value.set_capped(shield, max_hp, max_shield_hp_ratio);
         }
     }
 }
@@ -1994,6 +2339,10 @@ fn pvp_forward_host_battle_events_system(
 
     for event in events.read() {
         if let Some(feedback) = battle_event_to_pvp_feedback(event) {
+            console_log(
+                ConsoleLogCategory::PvpDetail,
+                format!("[feedback-send] {:?}", feedback),
+            );
             connection.send(PvpMessage::BattleFeedback(feedback));
         }
     }
@@ -2002,31 +2351,55 @@ fn pvp_forward_host_battle_events_system(
 fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback> {
     Some(match event {
         BattleEvent::TurnStarted(turn) => PvpBattleFeedback::TurnStarted(*turn),
-        BattleEvent::CardUsed { side, card_name } => PvpBattleFeedback::CardUsed {
+        BattleEvent::CardUsed {
+            side,
+            card_id,
+            card_name,
+            cost_ap,
+        } => PvpBattleFeedback::CardUsed {
             side: *side,
+            card_id: *card_id,
             card_name: card_name.clone(),
+            cost_ap: *cost_ap,
         },
-        BattleEvent::CardDiscarded { side, card_name } => PvpBattleFeedback::CardDiscarded {
+        BattleEvent::CardDiscarded {
+            side,
+            card_id,
+            card_name,
+            ap_gain,
+        } => PvpBattleFeedback::CardDiscarded {
             side: *side,
+            card_id: *card_id,
             card_name: card_name.clone(),
+            ap_gain: *ap_gain,
+        },
+        BattleEvent::CardsDrawn { side, count } => PvpBattleFeedback::CardsDrawn {
+            side: *side,
+            count: *count,
         },
         BattleEvent::SkillUsed {
             side,
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         } => PvpBattleFeedback::SkillUsed {
             side: *side,
+            skill_id: *skill_id,
             skill_name: skill_name.clone(),
             slot: *slot,
+            cost_ap: *cost_ap,
         },
         BattleEvent::DamageDealt {
             source,
             target,
             amount,
+            damage_type,
         } => PvpBattleFeedback::DamageDealt {
             source: *source,
             target: *target,
             amount: *amount,
+            damage_type: *damage_type,
         },
         BattleEvent::AttackMissed { source, target } => PvpBattleFeedback::AttackMissed {
             source: *source,
@@ -2048,6 +2421,17 @@ fn battle_event_to_pvp_feedback(event: &BattleEvent) -> Option<PvpBattleFeedback
             side: *side,
             name: name.clone(),
         },
+        BattleEvent::ReactionTriggered {
+            source,
+            target,
+            reaction_id,
+            reaction_name,
+        } => PvpBattleFeedback::ReactionTriggered {
+            source: *source,
+            target: *target,
+            reaction_id: reaction_id.clone(),
+            reaction_name: reaction_name.clone(),
+        },
         _ => return None,
     })
 }
@@ -2059,31 +2443,55 @@ fn should_replay_pvp_feedback_on_client(feedback: &PvpBattleFeedback) -> bool {
 fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
     match feedback {
         PvpBattleFeedback::TurnStarted(turn) => BattleEvent::TurnStarted(turn),
-        PvpBattleFeedback::CardUsed { side, card_name } => BattleEvent::CardUsed {
-            side: mirror_side(side),
+        PvpBattleFeedback::CardUsed {
+            side,
+            card_id,
             card_name,
+            cost_ap,
+        } => BattleEvent::CardUsed {
+            side: mirror_side(side),
+            card_id,
+            card_name,
+            cost_ap,
         },
-        PvpBattleFeedback::CardDiscarded { side, card_name } => BattleEvent::CardDiscarded {
-            side: mirror_side(side),
+        PvpBattleFeedback::CardDiscarded {
+            side,
+            card_id,
             card_name,
+            ap_gain,
+        } => BattleEvent::CardDiscarded {
+            side: mirror_side(side),
+            card_id,
+            card_name,
+            ap_gain,
+        },
+        PvpBattleFeedback::CardsDrawn { side, count } => BattleEvent::CardsDrawn {
+            side: mirror_side(side),
+            count,
         },
         PvpBattleFeedback::SkillUsed {
             side,
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         } => BattleEvent::SkillUsed {
             side: mirror_side(side),
+            skill_id,
             skill_name,
             slot,
+            cost_ap,
         },
         PvpBattleFeedback::DamageDealt {
             source,
             target,
             amount,
+            damage_type,
         } => BattleEvent::DamageDealt {
             source: mirror_side(source),
             target: mirror_side(target),
             amount,
+            damage_type,
         },
         PvpBattleFeedback::AttackMissed { source, target } => BattleEvent::AttackMissed {
             source: mirror_side(source),
@@ -2105,34 +2513,61 @@ fn pvp_feedback_to_battle_event(feedback: PvpBattleFeedback) -> BattleEvent {
             side: mirror_side(side),
             name,
         },
+        PvpBattleFeedback::ReactionTriggered {
+            source,
+            target,
+            reaction_id,
+            reaction_name,
+        } => BattleEvent::ReactionTriggered {
+            source: mirror_side(source),
+            target: mirror_side(target),
+            reaction_id,
+            reaction_name,
+        },
     }
+}
+
+#[derive(SystemParam)]
+struct PvpSendSnapshotResources<'w> {
+    last_remote_intent_seq: Res<'w, PvpLastRemoteIntentSeq>,
+    time: Res<'w, Time>,
+    snapshot_sync: ResMut<'w, PvpSnapshotSync>,
+    game_state: Res<'w, State<GameState>>,
+    battle_phase: Res<'w, State<BattlePhase>>,
+    turn_count: Res<'w, TurnCount>,
+    round_order: Res<'w, RoundOrder>,
+    player_team: Option<Res<'w, PlayerTeam>>,
+    enemy_team: Option<Res<'w, EnemyTeam>>,
+    hand: Res<'w, Hand>,
+    action_points: Res<'w, ActionPoints>,
+    battle_result: Res<'w, BattleResult>,
+    pending_discard: Option<Res<'w, PendingHandDiscard>>,
+    shuffle_seed: Option<Res<'w, BattleShuffleSeed>>,
+    team_state: Res<'w, PvpTeamState>,
 }
 
 fn pvp_send_host_snapshot_system(
     connection: Res<PvpConnection>,
-    last_remote_intent_seq: Res<PvpLastRemoteIntentSeq>,
     battle_mode: Res<BattleControlMode>,
-    game_state: Res<State<GameState>>,
-    battle_phase: Res<State<BattlePhase>>,
-    turn_count: Res<TurnCount>,
-    round_order: Res<RoundOrder>,
-    player_team: Option<Res<PlayerTeam>>,
-    enemy_team: Option<Res<EnemyTeam>>,
-    hand: Res<Hand>,
-    action_points: Res<ActionPoints>,
-    battle_result: Res<BattleResult>,
+    mut runtime: PvpSendSnapshotResources,
     stats_query: Query<&Stats, With<InBattle>>,
     shield_query: Query<&Shield, With<InBattle>>,
     aura_query: Query<&ElementAura, With<InBattle>>,
     status_query: Query<&StatusBoard, With<InBattle>>,
+    skill_uses_query: Query<&crate::battle::SkillUses, With<InBattle>>,
 ) {
     if *battle_mode != BattleControlMode::PlayerVsRemote
         || connection.role != Some(PvpRole::Host)
-        || !matches!(*game_state.get(), GameState::Battle | GameState::Result)
+        || !matches!(
+            *runtime.game_state.get(),
+            GameState::Battle | GameState::Result
+        )
     {
         return;
     }
-    let (Some(player_team), Some(enemy_team)) = (player_team, enemy_team) else {
+    let (Some(player_team), Some(enemy_team)) =
+        (runtime.player_team.as_ref(), runtime.enemy_team.as_ref())
+    else {
         return;
     };
     let player_hp = team_hp(&player_team.0, &stats_query);
@@ -2143,12 +2578,22 @@ fn pvp_send_host_snapshot_system(
     let enemy_auras = team_auras(&enemy_team.0, &aura_query);
     let player_statuses = team_statuses(&player_team.0, &status_query);
     let enemy_statuses = team_statuses(&enemy_team.0, &status_query);
+    let player_skill_uses = team_skill_uses(&player_team.0, &skill_uses_query);
+    let enemy_skill_uses = team_skill_uses(&enemy_team.0, &skill_uses_query);
     let host_player_defeated = !player_hp.iter().any(|hp| *hp > 0);
     let host_enemy_defeated = !enemy_hp.iter().any(|hp| *hp > 0);
-    connection.send(PvpMessage::BattleSnapshot(Box::new(PvpBattleSnapshot {
-        turn: turn_count.0,
-        phase: *battle_phase.get(),
-        first_side: round_order.first,
+    let mirrored_result = (!runtime.battle_result.message.is_empty())
+        .then(|| mirror_result_message(&runtime.battle_result.message));
+    let snapshot = PvpBattleSnapshot {
+        session_id: runtime.team_state.session_id,
+        battle_seed: runtime
+            .shuffle_seed
+            .as_ref()
+            .map(|seed| seed.0)
+            .unwrap_or(0),
+        turn: runtime.turn_count.0,
+        phase: *runtime.battle_phase.get(),
+        first_side: runtime.round_order.first,
         player_active_index: enemy_team.0.active_index,
         enemy_active_index: player_team.0.active_index,
         player_hp: enemy_hp,
@@ -2159,16 +2604,54 @@ fn pvp_send_host_snapshot_system(
         enemy_auras: player_auras,
         player_statuses: enemy_statuses,
         enemy_statuses: player_statuses,
-        player_ap: action_points.enemy,
-        enemy_ap: action_points.player,
-        player_hand: hand.enemy.clone(),
-        enemy_hand: hand.player.clone(),
-        acknowledged_intent_seq: last_remote_intent_seq.0,
+        player_skill_uses: enemy_skill_uses,
+        enemy_skill_uses: player_skill_uses,
+        player_ap: runtime.action_points.enemy,
+        enemy_ap: runtime.action_points.player,
+        player_hand: runtime.hand.enemy.clone(),
+        enemy_hand: runtime.hand.player.clone(),
+        pending_discard: runtime.pending_discard.as_ref().map(|pending| {
+            PvpPendingDiscardSnapshot {
+                side: pending.side,
+                next_phase: pending.next_phase,
+            }
+        }),
+        acknowledged_intent_seq: runtime.last_remote_intent_seq.0,
         player_defeated: host_enemy_defeated,
         enemy_defeated: host_player_defeated,
-        result_message: (!battle_result.message.is_empty())
-            .then(|| mirror_result_message(&battle_result.message)),
-    })));
+        result_message: mirrored_result,
+    };
+
+    let changed = runtime.snapshot_sync.last_sent.as_ref() != Some(&snapshot);
+    let interval_elapsed = matches!(*runtime.game_state.get(), GameState::Battle)
+        && runtime
+            .snapshot_sync
+            .interval
+            .tick(runtime.time.delta())
+            .just_finished();
+    if !changed && !interval_elapsed {
+        return;
+    }
+    if changed {
+        runtime.snapshot_sync.interval.reset();
+    }
+
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!(
+            "[snapshot-send] round={} phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} result={}",
+            snapshot.turn,
+            snapshot.phase,
+            snapshot.acknowledged_intent_seq,
+            snapshot.enemy_ap,
+            snapshot.player_ap,
+            snapshot.enemy_hand.len(),
+            snapshot.player_hand.len(),
+            snapshot.result_message.as_deref().unwrap_or("<none>")
+        ),
+    );
+    runtime.snapshot_sync.last_sent = Some(snapshot.clone());
+    connection.send(PvpMessage::BattleSnapshot(Box::new(snapshot)));
 }
 
 #[derive(SystemParam)]
@@ -2182,6 +2665,7 @@ struct PvpApplySnapshotResources<'w> {
     enemy_team: Option<ResMut<'w, EnemyTeam>>,
     hand: ResMut<'w, Hand>,
     action_points: ResMut<'w, ActionPoints>,
+    battle_rules: Res<'w, BattleRules>,
     battle_result: ResMut<'w, BattleResult>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     next_phase: ResMut<'w, NextState<BattlePhase>>,
@@ -2189,17 +2673,24 @@ struct PvpApplySnapshotResources<'w> {
 }
 
 fn pvp_apply_host_snapshot_system(
+    mut commands: Commands,
     mut runtime: PvpApplySnapshotResources,
     connection: Res<PvpConnection>,
+    game_state: Res<State<GameState>>,
+    team_state: Res<PvpTeamState>,
+    shuffle_seed: Option<Res<BattleShuffleSeed>>,
     battle_mode: Res<BattleControlMode>,
     battle_phase: Res<State<BattlePhase>>,
     mut stats_query: Query<&mut Stats, With<InBattle>>,
     mut shield_query: Query<&mut Shield, With<InBattle>>,
     mut aura_query: Query<&mut ElementAura, With<InBattle>>,
     mut status_query: Query<&mut StatusBoard, With<InBattle>>,
+    mut skill_uses_query: Query<&mut crate::battle::SkillUses, With<InBattle>>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
-    if *battle_mode != BattleControlMode::PlayerVsRemote || connection.role != Some(PvpRole::Client)
+    if *game_state.get() != GameState::Battle
+        || *battle_mode != BattleControlMode::PlayerVsRemote
+        || connection.role != Some(PvpRole::Client)
     {
         runtime.incoming.0.clear();
         runtime.incoming_feedbacks.0.clear();
@@ -2209,6 +2700,64 @@ fn pvp_apply_host_snapshot_system(
         return;
     };
     runtime.incoming.0.clear();
+    if snapshot.session_id != team_state.session_id {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-ignore] stale session_id={} current={}",
+                snapshot.session_id, team_state.session_id
+            ),
+        );
+        runtime.incoming_feedbacks.0.clear();
+        return;
+    }
+    if shuffle_seed
+        .as_ref()
+        .is_some_and(|seed| snapshot.battle_seed != seed.0)
+    {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-ignore] stale battle_seed={} current={}",
+                snapshot.battle_seed,
+                shuffle_seed.as_ref().map(|seed| seed.0).unwrap_or(0)
+            ),
+        );
+        runtime.incoming_feedbacks.0.clear();
+        return;
+    }
+    if let Some(pending_seq) = runtime.pending_local_intent.0
+        && snapshot.acknowledged_intent_seq < pending_seq
+    {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[snapshot-skip] waiting ack_seq={} current_ack={} round={} phase={:?} feedbacks_retained={}",
+                pending_seq,
+                snapshot.acknowledged_intent_seq,
+                snapshot.turn,
+                snapshot.phase,
+                runtime.incoming_feedbacks.0.len()
+            ),
+        );
+        return;
+    }
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!(
+            "[snapshot-apply] round={} host_phase={:?} local_phase={:?} ack_seq={} 我方AP={} 敌方AP={} 我方手牌={} 敌方手牌={} feedbacks={} result={}",
+            snapshot.turn,
+            snapshot.phase,
+            host_phase_for_local_phase(snapshot.phase),
+            snapshot.acknowledged_intent_seq,
+            snapshot.player_ap,
+            snapshot.enemy_ap,
+            snapshot.player_hand.len(),
+            snapshot.enemy_hand.len(),
+            runtime.incoming_feedbacks.0.len(),
+            snapshot.result_message.as_deref().unwrap_or("<none>")
+        ),
+    );
 
     runtime.turn_count.0 = snapshot.turn;
     runtime
@@ -2218,6 +2767,14 @@ fn pvp_apply_host_snapshot_system(
         player: snapshot.player_hand,
         enemy: snapshot.enemy_hand,
     };
+    if let Some(pending) = snapshot.pending_discard {
+        commands.insert_resource(PendingHandDiscard {
+            side: mirror_side(pending.side),
+            next_phase: host_phase_for_local_phase(pending.next_phase),
+        });
+    } else {
+        commands.remove_resource::<PendingHandDiscard>();
+    }
     runtime.action_points.player = snapshot.player_ap;
     runtime.action_points.enemy = snapshot.enemy_ap;
     if runtime
@@ -2239,7 +2796,13 @@ fn pvp_apply_host_snapshot_system(
             .player_active_index
             .min(player_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&player_team.0, &snapshot.player_hp, &mut stats_query);
-        apply_team_shields(&player_team.0, &snapshot.player_shields, &mut shield_query);
+        apply_team_shields(
+            &player_team.0,
+            &snapshot.player_shields,
+            runtime.battle_rules.max_shield_hp_ratio,
+            &mut stats_query,
+            &mut shield_query,
+        );
         apply_team_auras(&player_team.0, &snapshot.player_auras, &mut aura_query);
         apply_team_statuses(
             &player_team.0,
@@ -2247,13 +2810,24 @@ fn pvp_apply_host_snapshot_system(
             &mut stats_query,
             &mut status_query,
         );
+        apply_team_skill_uses(
+            &player_team.0,
+            &snapshot.player_skill_uses,
+            &mut skill_uses_query,
+        );
     }
     if let Some(enemy_team) = runtime.enemy_team.as_mut() {
         enemy_team.0.active_index = snapshot
             .enemy_active_index
             .min(enemy_team.0.combatants.len().saturating_sub(1));
         apply_team_hp(&enemy_team.0, &snapshot.enemy_hp, &mut stats_query);
-        apply_team_shields(&enemy_team.0, &snapshot.enemy_shields, &mut shield_query);
+        apply_team_shields(
+            &enemy_team.0,
+            &snapshot.enemy_shields,
+            runtime.battle_rules.max_shield_hp_ratio,
+            &mut stats_query,
+            &mut shield_query,
+        );
         apply_team_auras(&enemy_team.0, &snapshot.enemy_auras, &mut aura_query);
         apply_team_statuses(
             &enemy_team.0,
@@ -2261,10 +2835,19 @@ fn pvp_apply_host_snapshot_system(
             &mut stats_query,
             &mut status_query,
         );
+        apply_team_skill_uses(
+            &enemy_team.0,
+            &snapshot.enemy_skill_uses,
+            &mut skill_uses_query,
+        );
     }
 
     for feedback in runtime.incoming_feedbacks.0.drain(..) {
         if should_replay_pvp_feedback_on_client(&feedback) {
+            console_log(
+                ConsoleLogCategory::PvpDetail,
+                format!("[feedback-apply] {:?}", feedback),
+            );
             event_writer.write(pvp_feedback_to_battle_event(feedback));
         }
     }
@@ -2293,6 +2876,7 @@ fn pvp_apply_remote_intents_system(
     mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
     connection: Res<PvpConnection>,
     battle_phase: Res<State<BattlePhase>>,
+    pending_discard: Option<Res<PendingHandDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut selected: ResMut<SelectedCards>,
@@ -2305,9 +2889,13 @@ fn pvp_apply_remote_intents_system(
     dbs: Res<BattleDbs>,
     mut event_writer: MessageWriter<BattleEvent>,
 ) {
+    let remote_discard_phase = *battle_phase.get() == BattlePhase::Discard
+        && pending_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy);
     if *battle_mode != BattleControlMode::PlayerVsRemote
         || connection.role != Some(PvpRole::Host)
-        || *battle_phase.get() != BattlePhase::EnemyTurn
+        || (*battle_phase.get() != BattlePhase::EnemyTurn && !remote_discard_phase)
     {
         return;
     }
@@ -2316,6 +2904,20 @@ fn pvp_apply_remote_intents_system(
     };
     incoming.0.remove(0);
     last_remote_intent_seq.0 = last_remote_intent_seq.0.max(seq);
+    console_log(
+        ConsoleLogCategory::PvpDetail,
+        format!("[intent-apply] seq={} intent={:?}", seq, intent),
+    );
+    if remote_discard_phase && !matches!(intent, BattleIntent::DiscardCard { .. }) {
+        console_log(
+            ConsoleLogCategory::PvpDetail,
+            format!(
+                "[intent-ignore] discard phase only accepts discard intents: {:?}",
+                intent
+            ),
+        );
+        return;
+    }
     match intent {
         BattleIntent::UseSkill { slot } => {
             let Some(enemy_team) = enemy_team.as_ref() else {
@@ -2464,7 +3066,9 @@ fn apply_remote_card(
         action_points.enemy += 1;
         event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
+            card_id,
             card_name,
+            ap_gain: 1,
         });
         return;
     }
@@ -2476,15 +3080,12 @@ fn apply_remote_card(
     }
     hand.enemy.remove(card_index);
     action_points.enemy -= card.cost_ap;
-    match card.effect {
-        CardEffect::GainAp { amount } => action_points.enemy += amount,
-        CardEffect::NextAttackBoost { amount } => pending_boosts.enemy.next_attack_bonus += amount,
-        CardEffect::NextShieldBoost { amount } => pending_boosts.enemy.next_shield_bonus += amount,
-        CardEffect::NextHealBoost { amount } => pending_boosts.enemy.next_heal_bonus += amount,
-    }
+    let _ = pending_boosts;
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
+        card_id,
         card_name,
+        cost_ap: card.cost_ap,
     });
 }
 
@@ -2492,7 +3093,6 @@ fn pvp_handle_battle_disconnect_system(
     mut connection: ResMut<PvpConnection>,
     battle_mode: Res<BattleControlMode>,
     game_state: Res<State<GameState>>,
-    mut battle_log: ResMut<BattleLog>,
     mut battle_result: ResMut<BattleResult>,
     mut next_state: ResMut<NextState<GameState>>,
     mut event_writer: MessageWriter<BattleEvent>,
@@ -2508,13 +3108,130 @@ fn pvp_handle_battle_disconnect_system(
     let Some(reason) = reason else {
         return;
     };
+    let message = format!("联机中断：{reason}");
     event_writer.write(BattleEvent::NetworkInterrupted {
         reason: reason.clone(),
     });
-    let message = format!("联机中断：{reason}");
-    battle_result.message = message.clone();
-    push_battle_line(&mut battle_log, message);
+    battle_result.message = message;
     connection.stop();
     connection.status = PvpStatus::Idle;
     next_state.set(GameState::Result);
+}
+
+fn pvp_result_rematch_system(
+    mut pending_action: ResMut<PendingBattleResultAction>,
+    mut rematch_state: ResMut<PvpRematchState>,
+    connection: Res<PvpConnection>,
+    battle_mode: Res<BattleControlMode>,
+    mut team_state: ResMut<PvpTeamState>,
+    mut incoming_intents: ResMut<PvpIncomingIntents>,
+    mut incoming_snapshots: ResMut<PvpIncomingSnapshots>,
+    mut incoming_feedbacks: ResMut<PvpIncomingFeedbacks>,
+    mut pending_local_intent: ResMut<PvpPendingLocalIntent>,
+    mut last_remote_intent_seq: ResMut<PvpLastRemoteIntentSeq>,
+    mut snapshot_sync: ResMut<PvpSnapshotSync>,
+    mut selection_state: ResMut<crate::team_selection::SelectionState>,
+    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
+    mut battle_result: ResMut<BattleResult>,
+    mut result_notice: ResMut<BattleResultNotice>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if *battle_mode != BattleControlMode::PlayerVsRemote {
+        return;
+    }
+
+    if rematch_state.accepted {
+        rematch_state.accepted = false;
+        enter_pvp_rematch_selection(
+            &mut team_state,
+            &mut incoming_intents,
+            &mut incoming_snapshots,
+            &mut incoming_feedbacks,
+            &mut pending_local_intent,
+            &mut last_remote_intent_seq,
+            &mut snapshot_sync,
+            &mut selection_state,
+            &mut entry_mode,
+            &mut battle_result,
+            &mut next_state,
+        );
+        return;
+    }
+
+    let Some(action) = pending_action.0 else {
+        return;
+    };
+    match action {
+        BattleResultAction::Rematch => {
+            if connection.is_connected() {
+                request_rematch(&connection);
+                rematch_state.outgoing_request = true;
+                result_notice.text = "已邀请对方再来一局".to_string();
+                result_notice.remaining = 2.0;
+            } else {
+                rematch_state.outgoing_request = false;
+                result_notice.text = "对方已离开房间，无法再来一局。".to_string();
+                result_notice.remaining = 2.5;
+            }
+            pending_action.0 = None;
+        }
+        BattleResultAction::AcceptRematch => {
+            if connection.is_connected() {
+                accept_rematch(&connection);
+            }
+            rematch_state.incoming_request = false;
+            pending_action.0 = None;
+            enter_pvp_rematch_selection(
+                &mut team_state,
+                &mut incoming_intents,
+                &mut incoming_snapshots,
+                &mut incoming_feedbacks,
+                &mut pending_local_intent,
+                &mut last_remote_intent_seq,
+                &mut snapshot_sync,
+                &mut selection_state,
+                &mut entry_mode,
+                &mut battle_result,
+                &mut next_state,
+            );
+        }
+        BattleResultAction::RejectRematch => {
+            if connection.is_connected() {
+                reject_rematch(&connection);
+            }
+            rematch_state.incoming_request = false;
+            result_notice.text = "已拒绝对方邀请".to_string();
+            result_notice.remaining = 2.0;
+            pending_action.0 = None;
+        }
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_pvp_rematch_selection(
+    team_state: &mut PvpTeamState,
+    incoming_intents: &mut PvpIncomingIntents,
+    incoming_snapshots: &mut PvpIncomingSnapshots,
+    incoming_feedbacks: &mut PvpIncomingFeedbacks,
+    pending_local_intent: &mut PvpPendingLocalIntent,
+    last_remote_intent_seq: &mut PvpLastRemoteIntentSeq,
+    snapshot_sync: &mut PvpSnapshotSync,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    battle_result: &mut BattleResult,
+    next_state: &mut NextState<GameState>,
+) {
+    *team_state = PvpTeamState::default();
+    incoming_intents.0.clear();
+    incoming_snapshots.0.clear();
+    incoming_feedbacks.0.clear();
+    *pending_local_intent = PvpPendingLocalIntent::default();
+    *last_remote_intent_seq = PvpLastRemoteIntentSeq::default();
+    snapshot_sync.reset();
+    selection_state.reset();
+    *entry_mode = crate::team_selection::SelectionEntryMode::Pvp;
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    next_state.set(GameState::TeamSelection);
 }

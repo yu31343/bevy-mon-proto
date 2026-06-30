@@ -14,10 +14,12 @@
 
 //! 程序入口：注册插件与状态机，启动 Bevy App。
 mod battle;
+pub(crate) mod console_log;
 mod data;
 mod game_state;
 mod lobby;
 mod map; // 新增
+mod online;
 mod pvp;
 mod spine_anim;
 mod team_selection;
@@ -25,6 +27,7 @@ mod ui;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
+use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
 use game_state::{BattlePhase, GameState};
 
 fn main() {
@@ -32,6 +35,8 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
+        .add_plugins(FramepacePlugin)
+        .add_systems(Startup, setup_framerate_limit)
         .init_state::<GameState>()
         .init_state::<BattlePhase>()
         .add_plugins((
@@ -39,10 +44,15 @@ fn main() {
             ui::UiPlugin,
             lobby::LobbyPlugin,
             map::MapPlugin, // 新增
+            online::OnlinePlugin,
             pvp::PvpPlugin,
             team_selection::TeamSelectionPlugin,
             battle::BattlePlugin,
             spine_anim::SpineAnimPlugin,
         ))
         .run();
+}
+
+fn setup_framerate_limit(mut settings: ResMut<FramepaceSettings>) {
+    settings.limiter = Limiter::from_framerate(60.0);
 }

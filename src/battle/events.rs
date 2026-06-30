@@ -1,8 +1,15 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use crate::data::ElementType;
+use crate::data::{CardId, ElementType, SkillId};
 
 use super::{Side, TurnAction};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DamageType {
+    Direct,
+    Fixed,
+}
 
 /// 战斗事件：逻辑层发出，日志/UI 统一消费。
 #[derive(Message, Debug, Clone)]
@@ -10,22 +17,33 @@ pub enum BattleEvent {
     TurnStarted(u32),
     CardUsed {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        cost_ap: i32,
     },
     CardDiscarded {
         side: Side,
+        card_id: CardId,
         card_name: String,
+        ap_gain: i32,
+    },
+    CardsDrawn {
+        side: Side,
+        count: usize,
     },
     SkillUsed {
         side: Side,
+        skill_id: SkillId,
         skill_name: String,
         /// 技能在 4 格栏中的索引（用于 UI 高亮）。
         slot: usize,
+        cost_ap: i32,
     },
     DamageDealt {
         source: Side,
         target: Side,
         amount: i32,
+        damage_type: DamageType,
     },
     AttackMissed {
         source: Side,
@@ -52,6 +70,7 @@ pub enum BattleEvent {
     ReactionTriggered {
         source: Side,
         target: Side,
+        reaction_id: String,
         reaction_name: String,
     },
     WindSpreadTriggered {

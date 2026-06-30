@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import secrets
-import selectors
 import socket
 import threading
 import time
@@ -33,12 +32,15 @@ def main():
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
+    serve(args.host, args.port)
 
+
+def serve(host=DEFAULT_HOST, port=DEFAULT_PORT):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind((args.host, args.port))
+        listener.bind((host, port))
         listener.listen()
-        print(f"relay listening on {args.host}:{args.port}", flush=True)
+        print(f"relay listening on {host}:{port}", flush=True)
         while True:
             conn, addr = listener.accept()
             thread = threading.Thread(target=handle_connection, args=(conn, addr), daemon=True)
@@ -144,23 +146,25 @@ def clean_expired_rooms_locked():
 def wait_for_client_or_host_close(host_conn, client_queue):
     deadline = time.monotonic() + ROOM_WAIT_TIMEOUT
     host_conn.setblocking(False)
-    selector = selectors.DefaultSelector()
-    selector.register(host_conn, selectors.EVENT_READ)
     try:
         while time.monotonic() < deadline:
+            # 等待客户端加入（阻塞最多 0.5 秒）
             try:
-                return client_queue.get_nowait()
+                return client_queue.get(timeout=0.5)
             except Empty:
                 pass
-            events = selector.select(timeout=0.1)
-            if events:
+            # 检查建房方是否仍然连接
+            try:
                 data = host_conn.recv(1, socket.MSG_PEEK)
                 if not data:
                     raise RuntimeError("建房方已断开，房间已关闭")
-                raise RuntimeError("建房方在配对前发送了无效数据")
+            except BlockingIOError:
+                # 没有数据可读，建房方仍然连接
+                pass
+            except ConnectionError:
+                raise RuntimeError("建房方已断开，房间已关闭")
         raise RuntimeError("等待对手超时，房间已关闭")
     finally:
-        selector.unregister(host_conn)
         host_conn.setblocking(True)
 
 

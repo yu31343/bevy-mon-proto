@@ -1,14 +1,20 @@
 //! 战斗系统组件定义
 
-use std::{collections::VecDeque, fmt};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    console_log::{ConsoleLogCategory, log as console_log, log_with_prefix},
     data::{
-        AttributeStageBounds, AttributeType, CardId, ElementType, SkillId, StatusCategory,
-        StatusDef, StatusTickTiming,
+        AttributeStageBounds, AttributeType, BattleDbs, BattleRules, CardId, ElementType, SkillId,
+        StatusCategory, StatusDef, StatusTickTiming,
     },
     game_state::BattlePhase,
 };
@@ -73,8 +79,57 @@ pub struct SkillList(pub [SkillId; 4]);
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkillCount(pub usize);
 
+/// 每只精灵当前行动回合各技能槽（与 `SkillList` 槽位一一对应）的剩余释放次数。
+/// `slot >= SkillCount.0` 的空槽恒为 0，UI/AI/扣减一律忽略。
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SkillUses(pub [u8; 4]);
+
+impl SkillUses {
+    /// 依据技能配置为某只精灵生成满额剩余次数。
+    pub fn full(
+        skills: &SkillList,
+        count: SkillCount,
+        dbs: &BattleDbs,
+        rules: &BattleRules,
+    ) -> Self {
+        let mut uses = [0u8; 4];
+        let active = count.0.min(4);
+        for (slot, value) in uses.iter_mut().enumerate().take(active) {
+            *value = dbs.skill_uses_per_turn(skills.0[slot], rules);
+        }
+        Self(uses)
+    }
+
+    /// 指定槽位是否还有剩余释放次数。
+    pub fn has_remaining(&self, slot: usize) -> bool {
+        self.0.get(slot).is_some_and(|&n| n > 0)
+    }
+}
+
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Shield(pub i32);
+
+impl Shield {
+    pub fn max_for_hp(max_hp: i32, max_hp_ratio: f32) -> i32 {
+        ((max_hp.max(0) as f32) * max_hp_ratio.max(0.0)).floor() as i32
+    }
+
+    pub fn capped_value(value: i32, max_hp: i32, max_hp_ratio: f32) -> i32 {
+        value.clamp(0, Self::max_for_hp(max_hp, max_hp_ratio))
+    }
+
+    pub fn set_capped(&mut self, value: i32, max_hp: i32, max_hp_ratio: f32) {
+        self.0 = Self::capped_value(value, max_hp, max_hp_ratio);
+    }
+
+    pub fn gain_capped(&mut self, amount: i32, max_hp: i32, max_hp_ratio: f32) -> i32 {
+        let max_shield = Self::max_for_hp(max_hp, max_hp_ratio);
+        let before = Self::capped_value(self.0, max_hp, max_hp_ratio);
+        let gained = amount.max(0).min(max_shield.saturating_sub(before));
+        self.0 = before + gained;
+        gained
+    }
+}
 
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ElementAura {
@@ -146,13 +201,13 @@ impl ElementAura {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusStageModifier {
     pub attribute: AttributeType,
     pub amount: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusInstance {
     pub id: String,
     pub name: String,
@@ -437,6 +492,50 @@ pub struct TurnContext {
     pub enemy_action: Option<TurnAction>,
 }
 
+pub const BATTLE_ACTION_COOLDOWN_SECONDS: f32 = 2.0;
+
+/// 战斗行动冷却，按阵营独立计时。
+///
+/// 之所以分阵营，是因为联机（PVP）模式下敌我技能的 2 秒冷却不能互相影响：
+/// 对方使用技能只应锁定对方的操作，不应让我方按钮变灰；反之亦然。
+/// 本地 UI 始终代表本地玩家（`Side::Player`），因此按钮锁定只看玩家侧计时。
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct BattleActionCooldown {
+    pub player: f32,
+    pub enemy: f32,
+}
+
+impl BattleActionCooldown {
+    pub fn remaining(self, side: Side) -> f32 {
+        match side {
+            Side::Player => self.player,
+            Side::Enemy => self.enemy,
+        }
+    }
+
+    pub fn ready(self, side: Side) -> bool {
+        self.remaining(side) <= 0.0
+    }
+
+    pub fn start(&mut self, side: Side) {
+        let slot = match side {
+            Side::Player => &mut self.player,
+            Side::Enemy => &mut self.enemy,
+        };
+        *slot = BATTLE_ACTION_COOLDOWN_SECONDS;
+    }
+
+    pub fn reset(&mut self) {
+        self.player = 0.0;
+        self.enemy = 0.0;
+    }
+
+    pub fn tick(&mut self, delta_secs: f32) {
+        self.player = (self.player - delta_secs).max(0.0);
+        self.enemy = (self.enemy - delta_secs).max(0.0);
+    }
+}
+
 #[derive(Resource, Debug, Default)]
 pub struct BattleLog(pub VecDeque<String>);
 
@@ -444,6 +543,24 @@ pub struct BattleLog(pub VecDeque<String>);
 pub struct BattleResult {
     pub message: String,
     pub export_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BattleResultAction {
+    Return,
+    RestartSameTeams,
+    Rematch,
+    AcceptRematch,
+    RejectRematch,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct PendingBattleResultAction(pub Option<BattleResultAction>);
+
+#[derive(Resource, Debug, Default)]
+pub struct BattleResultNotice {
+    pub text: String,
+    pub remaining: f32,
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -471,6 +588,23 @@ impl Default for PendingKoResolution {
 
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct TurnCount(pub u32);
+
+pub const ROUND_TRANSITION_SECONDS: f32 = 1.0;
+
+#[derive(Resource, Debug, Clone)]
+pub struct RoundTransition {
+    pub timer: Timer,
+    pub pending_next_phase: Option<BattlePhase>,
+}
+
+impl Default for RoundTransition {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.0, TimerMode::Once),
+            pending_next_phase: None,
+        }
+    }
+}
 
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ActionPoints {
@@ -534,17 +668,154 @@ pub struct Hand {
     pub enemy: Vec<CardId>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct BattleShuffleSeed(pub u64);
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct CardPiles {
+    pub draw: Vec<CardId>,
+    pub discard: Vec<CardId>,
+    pub shuffle_seed: u64,
+    pub reshuffle_counter: u32,
+}
+
+impl CardPiles {
+    pub fn from_deck(deck: &[CardId], seed: u64) -> Self {
+        Self {
+            draw: shuffled_cards(deck, seed),
+            discard: Vec::new(),
+            shuffle_seed: seed,
+            reshuffle_counter: 0,
+        }
+    }
+
+    pub fn push_discard(&mut self, _side: Side, card_id: CardId) {
+        self.discard.push(card_id);
+    }
+
+    pub fn draw_one(&mut self, fallback_deck: &[CardId]) -> Option<CardId> {
+        if self.draw.is_empty() {
+            if !self.discard.is_empty() {
+                console_log(
+                    ConsoleLogCategory::CardsDetail,
+                    format!(
+                        "牌堆耗尽：将弃牌堆 {} 张重洗进入牌堆；重洗次数={}",
+                        self.discard.len(),
+                        self.reshuffle_counter.wrapping_add(1)
+                    ),
+                );
+                self.draw = shuffled_cards(&self.discard, self.reshuffle_seed(1));
+                self.discard.clear();
+                self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
+            } else if !fallback_deck.is_empty() {
+                console_log(
+                    ConsoleLogCategory::CardsDetail,
+                    format!(
+                        "牌堆与弃牌堆为空：使用基础牌组 {} 张重建牌堆；重洗次数={}",
+                        fallback_deck.len(),
+                        self.reshuffle_counter.wrapping_add(1)
+                    ),
+                );
+                self.draw = shuffled_cards(fallback_deck, self.reshuffle_seed(17));
+                self.reshuffle_counter = self.reshuffle_counter.wrapping_add(1);
+            }
+        }
+        self.draw.pop()
+    }
+
+    fn reshuffle_seed(&self, salt: u64) -> u64 {
+        mix_seed(
+            self.shuffle_seed
+                ^ (self.reshuffle_counter as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ salt,
+        )
+    }
+}
+
+static BATTLE_SHUFFLE_SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn new_battle_shuffle_seed() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let time_seed = (now as u64) ^ ((now >> 64) as u64);
+    let counter = BATTLE_SHUFFLE_SEED_COUNTER
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1);
+    mix_seed(time_seed ^ counter.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+fn shuffled_cards(cards: &[CardId], seed: u64) -> Vec<CardId> {
+    let mut result = cards.to_vec();
+    if result.len() <= 1 {
+        return result;
+    }
+    let mut state = mix_seed(seed);
+    for i in (1..result.len()).rev() {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let j = (state as usize) % (i + 1);
+        result.swap(i, j);
+    }
+    result
+}
+
+fn mix_seed(mut seed: u64) -> u64 {
+    seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    seed = (seed ^ (seed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    seed = (seed ^ (seed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    seed ^ (seed >> 31)
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct PendingBoost {
     pub next_attack_bonus: i32,
     pub next_shield_bonus: i32,
     pub next_heal_bonus: i32,
+    pub next_element_attachment_ap: Option<i32>,
+    pub next_reaction_fixed_damage: Option<i32>,
+    pub next_wind_spread_damage: Option<(i32, Vec<crate::data::ElementType>)>,
+    pub next_aura_attack_draw: Option<(usize, String)>,
+    pub next_skill_cost_draw: Option<(i32, usize, String)>,
+    pub next_switch_draw: Option<(usize, String)>,
+    pub next_knockout_draw: Option<(usize, String)>,
+    pub shield_absorb_ap: Option<i32>,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PendingBoosts {
     pub player: PendingBoost,
     pub enemy: PendingBoost,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SideTurnMemory {
+    pub knocked_out_opponent_this_turn: bool,
+    pub switched_this_turn: bool,
+}
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct CardTurnMemory {
+    pub player: SideTurnMemory,
+    pub enemy: SideTurnMemory,
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PendingHandDiscard {
+    pub side: Side,
+    pub next_phase: BattlePhase,
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PendingGuardCounterClear {
+    pub acting_side: Side,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct PendingTacticalDiscard {
+    pub side: Side,
+    pub draw: usize,
+    pub source_card: String,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -597,7 +868,7 @@ pub const BATTLE_LOG_LIMIT: usize = 30;
 
 pub fn push_battle_line(log: &mut BattleLog, line: impl Into<String>) {
     let line = line.into();
-    println!("{line}");
+    console_log(ConsoleLogCategory::Battle, &line);
     log.0.push_back(line);
     while log.0.len() > BATTLE_LOG_LIMIT {
         log.0.pop_front();
@@ -610,11 +881,26 @@ pub fn push_structured_battle_line(
     summary: impl Into<String>,
     detail: impl Into<String>,
 ) {
-    log.0.push_back(StructuredLogEntry {
+    let entry = StructuredLogEntry {
         phase: phase.into(),
         summary: summary.into(),
         detail: detail.into(),
-    });
+    };
+    let should_print = !matches!(
+        entry.phase.as_str(),
+        phase if phase.starts_with("trace-")
+            || phase.starts_with("state-")
+            || phase.starts_with("formula-")
+            || phase.starts_with("status-")
+    );
+    if should_print {
+        log_with_prefix(
+            ConsoleLogCategory::BattleDebug,
+            format!("[{}]", entry.phase),
+            format!("{}：{}", entry.summary, entry.detail),
+        );
+    }
+    log.0.push_back(entry);
     while log.0.len() > BATTLE_LOG_LIMIT {
         log.0.pop_front();
     }
@@ -637,6 +923,16 @@ pub fn push_replay_log_entry(
 
 pub fn record_action_trace(trace: &mut ActionTrace, mut entry: ActionTraceEntry) {
     entry.seq = trace.0.len() as u64 + 1;
+    log_with_prefix(
+        ConsoleLogCategory::Trace,
+        format!(
+            "[seq {}][round {}][{}]",
+            entry.seq,
+            entry.round,
+            side_phase_label(entry.side)
+        ),
+        format!("{}：{}", entry.action, entry.detail),
+    );
     trace.0.push(entry);
 }
 
@@ -774,7 +1070,7 @@ pub fn note_round_phase(log: &mut StructuredBattleLog, round: u32, detail: impl 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{SkillId, StatusCategory, StatusTickTiming};
+    use crate::data::{CardId, SkillId, StatusCategory, StatusTickTiming};
 
     fn test_stats() -> Stats {
         Stats {
@@ -789,6 +1085,58 @@ mod tests {
             spd_stage: 0,
             acc_stage: 0,
         }
+    }
+
+    #[test]
+    fn shield_gain_is_capped_at_half_max_hp() {
+        let mut shield = Shield(8);
+
+        let gained = shield.gain_capped(10, 21, 0.5);
+
+        assert_eq!(gained, 2);
+        assert_eq!(shield.0, 10);
+    }
+
+    #[test]
+    fn shield_set_clamps_to_half_max_hp() {
+        let mut shield = Shield(0);
+
+        shield.set_capped(99, 20, 0.5);
+
+        assert_eq!(shield.0, 10);
+    }
+
+    #[test]
+    fn shared_card_pile_draws_from_one_deck() {
+        let deck = [
+            CardId::GainAp,
+            CardId::NextAttackBoost,
+            CardId::NextShieldBoost,
+        ];
+        let mut piles = CardPiles::from_deck(&deck, 42);
+        let initial_draw = piles.draw.clone();
+
+        let first = piles.draw_one(&deck);
+        let second = piles.draw_one(&deck);
+
+        assert_eq!(first, initial_draw.last().copied());
+        assert_eq!(second, initial_draw.get(initial_draw.len() - 2).copied());
+        assert_eq!(piles.draw.len(), deck.len() - 2);
+    }
+
+    #[test]
+    fn shared_card_pile_keeps_one_discard_for_both_sides() {
+        let deck = [
+            CardId::GainAp,
+            CardId::NextAttackBoost,
+            CardId::NextShieldBoost,
+        ];
+        let mut piles = CardPiles::from_deck(&deck, 42);
+
+        piles.push_discard(Side::Player, CardId::GainAp);
+        piles.push_discard(Side::Enemy, CardId::NextAttackBoost);
+
+        assert_eq!(piles.discard, vec![CardId::GainAp, CardId::NextAttackBoost]);
     }
 
     #[test]

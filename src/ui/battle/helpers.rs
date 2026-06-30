@@ -295,6 +295,7 @@ pub(crate) fn phase_label(phase: BattlePhase) -> &'static str {
         BattlePhase::RoundStart => "回合开始",
         BattlePhase::PlayerTurn => "玩家回合",
         BattlePhase::EnemyTurn => "敌方回合",
+        BattlePhase::Discard => "弃牌阶段",
         BattlePhase::CheckEnd => "胜负判定",
         BattlePhase::DeathResolve => "死亡结算",
     }
@@ -378,7 +379,7 @@ pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     let labels = statuses
         .entries
         .iter()
-        .filter(|entry| entry.category != StatusCategory::Aura)
+        .filter(|entry| entry.category != StatusCategory::Aura && entry.stage_modifiers.is_empty())
         .map(|entry| entry.name.as_str())
         .collect::<Vec<_>>();
 
@@ -387,6 +388,14 @@ pub(crate) fn status_label(statuses: &StatusBoard) -> String {
     } else {
         labels.join("/")
     }
+}
+
+/// 主面板/待机面板状态行的可见性规则：排除附着与纯属性阶段类（stage_shift_/card_stage_）状态。
+pub(crate) fn is_status_line_visible(status_id: &str, category: StatusCategory) -> bool {
+    category != StatusCategory::Aura
+        && !status_id.starts_with("stage_shift_")
+        && !status_id.starts_with("card_stage_")
+        && !status_id.starts_with("debug_cheat_")
 }
 
 #[allow(dead_code)]
@@ -555,16 +564,115 @@ pub(crate) fn card_hotkey_label(index: usize) -> &'static str {
         2 => "C",
         3 => "V",
         4 => "B",
+        5 => "N",
+        6 => "A",
+        7 => "S",
+        8 => "D",
+        9 => "G",
+        10 => "H",
+        11 => "J",
+        12 => "K",
+        13 => "L",
+        14 => "U",
+        15 => "I",
+        16 => "O",
+        17 => "P",
         _ => "",
     }
 }
 
 pub(crate) fn card_description(card: &CardDef) -> String {
-    match card.effect {
+    match &card.effect {
         CardEffect::GainAp { amount } => format!("效果：获得 +{} AP。", amount),
         CardEffect::NextAttackBoost { amount } => format!("效果：下次进攻 +{}。", amount),
         CardEffect::NextShieldBoost { amount } => format!("效果：下次护盾 +{}。", amount),
         CardEffect::NextHealBoost { amount } => format!("效果：下次治疗 +{}。", amount),
+        CardEffect::NextElementAttachmentGainAp { amount } => {
+            format!("效果：下次元素附着/反应成功时获得 +{} AP。", amount)
+        }
+        CardEffect::NextReactionFixedDamage {
+            amount,
+            ignore_shield,
+        } => {
+            let shield_text = if *ignore_shield {
+                "，无视护盾"
+            } else {
+                ""
+            };
+            format!(
+                "效果：下次触发元素反应时追加 {} 点固定伤害{}。",
+                amount, shield_text
+            )
+        }
+        CardEffect::NextWindSpreadDamage {
+            amount,
+            elements,
+            ignore_shield,
+        } => {
+            let shield_text = if *ignore_shield {
+                "，无视护盾"
+            } else {
+                ""
+            };
+            format!(
+                "效果：下次风扩散 {:?} 时追加 {} 点固定伤害{}。",
+                elements, amount, shield_text
+            )
+        }
+        CardEffect::NextAuraAttackDraw { amount } => {
+            format!("效果：下次攻击命中已有附着目标时抽 {} 张牌。", amount)
+        }
+        CardEffect::DiscardOtherDrawGainAp { draw, gain_ap } => {
+            format!(
+                "效果：弃置 1 张其他手牌，抽 {} 张牌，获得 +{} AP。",
+                draw, gain_ap
+            )
+        }
+        CardEffect::NextSkillCostDraw { skill_cost, draw } => {
+            format!("效果：下次使用 {} AP 技能后抽 {} 张牌。", skill_cost, draw)
+        }
+        CardEffect::DrawIfKnockedOutThisTurn { amount } => {
+            format!("效果：若本行动内击倒敌方精灵，抽 {} 张牌。", amount)
+        }
+        CardEffect::GainShield { amount } => format!("效果：己方前场获得 {} 点护盾。", amount),
+        CardEffect::ShieldAbsorbGainAp { amount } => {
+            format!(
+                "效果：敌方下次行动结束前，己方护盾吸收伤害时获得 +{} AP。",
+                amount
+            )
+        }
+        CardEffect::ModifyStages {
+            attribute,
+            amount,
+            duration_turns,
+        } => {
+            format!(
+                "效果：己方前场 {:?} 等级 {:+}，持续 {} 回合。",
+                attribute, amount, duration_turns
+            )
+        }
+        CardEffect::CleanseOrGainAp { fallback_ap, .. } => {
+            format!(
+                "效果：清除 1 个普通附着/Debuff/特殊负面状态；若失败则获得 +{} AP。",
+                fallback_ap
+            )
+        }
+        CardEffect::DrawAndGainApIfAliveTeam {
+            draw,
+            min_alive,
+            gain_ap,
+        } => {
+            format!(
+                "效果：抽 {} 张牌；若己方至少 {} 只未倒下，额外获得 +{} AP。",
+                draw, min_alive, gain_ap
+            )
+        }
+        CardEffect::GainShieldDrawIfSwitchedThisTurn { shield, draw } => {
+            format!(
+                "效果：己方前场获得 {} 点护盾；本行动结束前发生换人时，额外抽 {} 张牌。",
+                shield, draw
+            )
+        }
     }
 }
 
@@ -577,6 +685,59 @@ pub(crate) fn element_color(element: ElementType, theme: &super::theme::UiTheme)
         ElementType::Dark => theme.aura_dark,
         ElementType::Thunder => theme.aura_thunder,
         ElementType::Wind => theme.aura_wind,
+    }
+}
+
+/// 手牌卡按效果归类（七圣召唤风：以类别而非元素区分卡面）。
+#[derive(Clone, Copy)]
+enum CardCategory {
+    Attack,
+    Shield,
+    Buff,
+    Resource,
+    Utility,
+}
+
+fn card_category(card: &CardDef) -> CardCategory {
+    use CardEffect::*;
+    match &card.effect {
+        NextAttackBoost { .. }
+        | NextReactionFixedDamage { .. }
+        | NextWindSpreadDamage { .. }
+        | NextAuraAttackDraw { .. } => CardCategory::Attack,
+        NextShieldBoost { .. } | GainShield { .. } | GainShieldDrawIfSwitchedThisTurn { .. } => {
+            CardCategory::Shield
+        }
+        NextHealBoost { .. } | ModifyStages { .. } => CardCategory::Buff,
+        GainAp { .. }
+        | NextElementAttachmentGainAp { .. }
+        | ShieldAbsorbGainAp { .. }
+        | DiscardOtherDrawGainAp { .. }
+        | DrawAndGainApIfAliveTeam { .. }
+        | CleanseOrGainAp { .. } => CardCategory::Resource,
+        NextSkillCostDraw { .. } | DrawIfKnockedOutThisTurn { .. } => CardCategory::Utility,
+    }
+}
+
+/// 卡牌类别色带/边框颜色。
+pub(crate) fn card_category_color(card: &CardDef, theme: &super::theme::UiTheme) -> Color {
+    match card_category(card) {
+        CardCategory::Attack => theme.card_cat_attack,
+        CardCategory::Shield => theme.card_cat_shield,
+        CardCategory::Buff => theme.card_cat_buff,
+        CardCategory::Resource => theme.card_cat_resource,
+        CardCategory::Utility => theme.card_cat_utility,
+    }
+}
+
+/// 卡牌类别短标签（显示在卡面顶部色带）。
+pub(crate) fn card_category_label(card: &CardDef) -> &'static str {
+    match card_category(card) {
+        CardCategory::Attack => "进攻",
+        CardCategory::Shield => "护盾",
+        CardCategory::Buff => "增益",
+        CardCategory::Resource => "资源",
+        CardCategory::Utility => "战术",
     }
 }
 
@@ -661,20 +822,19 @@ pub(crate) fn effective_acc_value(stats: &Stats, rules: &crate::data::BattleForm
         .round() as i32
 }
 
-pub(crate) fn stage_prefix(stage: i32) -> String {
-    if stage == 0 {
-        String::new()
-    } else {
-        format!("{:+} ", stage)
-    }
+pub(crate) enum DebugTokenContent {
+    Text(String, Color),
+    Image(&'static str),
 }
 
-pub(crate) fn replace_debug_tokens(
+pub(crate) fn replace_debug_tokens_with_images(
     commands: &mut Commands,
     line_entity: Entity,
     children: Option<&Children>,
+    asset_server: &AssetServer,
     font: &TextFont,
-    items: &[(String, Color)],
+    items: &[DebugTokenContent],
+    icon_size: f32,
     token_kind: impl Component + Clone,
 ) {
     if let Some(children) = children {
@@ -683,14 +843,29 @@ pub(crate) fn replace_debug_tokens(
         }
     }
     commands.entity(line_entity).with_children(|line| {
-        for (idx, (text, color)) in items.iter().enumerate() {
-            let prefix = if idx == 0 { "" } else { "" };
-            line.spawn((
-                Text::new(format!("{prefix}{text}")),
-                font.clone(),
-                TextColor(*color),
-                token_kind.clone(),
-            ));
+        for item in items {
+            match item {
+                DebugTokenContent::Text(text, color) => {
+                    line.spawn((
+                        Text::new(text.clone()),
+                        font.clone(),
+                        TextColor(*color),
+                        token_kind.clone(),
+                    ));
+                }
+                DebugTokenContent::Image(path) => {
+                    line.spawn((
+                        Node {
+                            width: Val::Px(icon_size),
+                            height: Val::Px(icon_size),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        ImageNode::new(asset_server.load(*path)),
+                        token_kind.clone(),
+                    ));
+                }
+            }
         }
     });
 }

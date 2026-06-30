@@ -3,16 +3,21 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 
 use crate::{
     battle::{
-        ActionTrace, BattleEvent, BattleLog, BattleResult, Combatant, ElementAura, InBattle,
-        PendingKoResolution, ReplayEventLog, RoundOrder, Shield, Side, Stats, StructuredBattleLog,
-        TurnContext, TurnCount, battle_phase_for_side, note_action_phase, note_structured_phase,
-        push_battle_line, push_named_action_trace, transfer_status_by_id,
+        ActionTrace, BattleControlMode, BattleEvent, BattleLog, BattlePerformanceOutcome,
+        BattlePerformanceReport, BattlePerformanceStats, BattleResult, BattleResultAction,
+        BattleResultNotice, Combatant, ElementAura, InBattle, PendingBattleResultAction,
+        PendingKoResolution, PerformanceTeamSnapshot, ReplayEventLog, RoundOrder, Shield, Side,
+        Stats, StructuredBattleLog, TurnContext, TurnCount, battle_phase_for_side,
+        build_performance_report, format_performance_report, note_action_phase,
+        note_structured_phase, push_battle_line, push_named_action_trace, transfer_status_by_id,
     },
+    data::TeamSelections,
     game_state::{BattlePhase, GameState},
+    pvp,
 };
 
 use super::{abort_battle, process_round_end_status_durations};
@@ -205,6 +210,7 @@ pub fn check_end_system(
                         side: Side::Player,
                         round: turn_count.0,
                         formula_rules: &formula_rules,
+                        pending_boosts: None,
                         event_writer: &mut event_writer,
                         formula_writer: &mut formula_writer,
                         status_writer: &mut status_writer,
@@ -223,6 +229,7 @@ pub fn check_end_system(
                         side: Side::Enemy,
                         round: turn_count.0,
                         formula_rules: &formula_rules,
+                        pending_boosts: None,
                         event_writer: &mut event_writer,
                         formula_writer: &mut formula_writer,
                         status_writer: &mut status_writer,
@@ -233,6 +240,13 @@ pub fn check_end_system(
         }
         next_phase.set(BattlePhase::RoundStart);
     }
+}
+
+#[derive(SystemParam)]
+pub struct ResolveKoPerformance<'w> {
+    battle_mode: Res<'w, BattleControlMode>,
+    stats: Res<'w, BattlePerformanceStats>,
+    report: ResMut<'w, BattlePerformanceReport>,
 }
 
 pub fn resolve_ko_system(
@@ -252,6 +266,7 @@ pub fn resolve_ko_system(
     turn_count: Res<TurnCount>,
     turn_ctx: Res<TurnContext>,
     round_order: Res<RoundOrder>,
+    mut performance: ResolveKoPerformance,
     mut event_writer: MessageWriter<BattleEvent>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut next_game_state: ResMut<NextState<GameState>>,
@@ -350,12 +365,32 @@ pub fn resolve_ko_system(
     }
 
     if pending_ko.player_defeated || pending_ko.enemy_defeated {
-        battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
-            "平局！按 R 返回大厅。".to_string()
-        } else if pending_ko.enemy_defeated {
-            "胜利！全歼敌方。按 R 返回大厅。".to_string()
+        if *performance.battle_mode == BattleControlMode::PlayerVsRemote {
+            performance.report.summary = None;
         } else {
-            "失败！队伍全灭。按 R 返回大厅。".to_string()
+            let outcome = if pending_ko.player_defeated && pending_ko.enemy_defeated {
+                BattlePerformanceOutcome::Draw
+            } else if pending_ko.enemy_defeated {
+                BattlePerformanceOutcome::Victory
+            } else {
+                BattlePerformanceOutcome::Defeat
+            };
+            let (player_snapshot, enemy_snapshot) = performance_team_snapshots(&mut query);
+            performance.report.summary = Some(build_performance_report(
+                &performance.stats,
+                outcome,
+                turn_count.0,
+                player_snapshot,
+                enemy_snapshot,
+            ));
+        }
+
+        battle_result.message = if pending_ko.player_defeated && pending_ko.enemy_defeated {
+            "平局！按 R 返回。".to_string()
+        } else if pending_ko.enemy_defeated {
+            "胜利！全歼敌方。按 R 返回。".to_string()
+        } else {
+            "失败！队伍全灭。按 R 返回。".to_string()
         };
         note_structured_phase(
             &mut structured_log,
@@ -404,6 +439,34 @@ pub fn resolve_ko_system(
     }
 }
 
+fn performance_team_snapshots(
+    query: &mut Query<
+        (
+            &Combatant,
+            &mut Stats,
+            &Name,
+            &mut crate::battle::StatusBoard,
+        ),
+        With<InBattle>,
+    >,
+) -> (PerformanceTeamSnapshot, PerformanceTeamSnapshot) {
+    let mut player = PerformanceTeamSnapshot::default();
+    let mut enemy = PerformanceTeamSnapshot::default();
+    for (combatant, stats, _, _) in query.iter_mut() {
+        let snapshot = match combatant.side {
+            Side::Player => &mut player,
+            Side::Enemy => &mut enemy,
+        };
+        snapshot.current_hp += stats.hp.max(0);
+        snapshot.max_hp += stats.max_hp.max(0);
+        snapshot.member_count += 1;
+        if stats.hp > 0 {
+            snapshot.alive_count += 1;
+        }
+    }
+    (player, enemy)
+}
+
 fn sanitize_filename_segment(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -426,6 +489,7 @@ fn write_export_logs(
     battle_result: &BattleResult,
     replay_log: &ReplayEventLog,
     action_trace: &ActionTrace,
+    performance_report: Option<&BattlePerformanceReport>,
 ) -> Result<String, String> {
     fs::create_dir_all(export_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
 
@@ -444,61 +508,249 @@ fn write_export_logs(
     fs::write(&action_path, action_text)
         .map_err(|err| format!("写入 {:?} 失败：{err}", action_path))?;
 
-    Ok(format!(
-        "已导出：{} 与 {}",
-        replay_path.display(),
-        action_path.display()
-    ))
+    let mut exported_paths = vec![
+        replay_path.display().to_string(),
+        action_path.display().to_string(),
+    ];
+    if let Some(summary) = performance_report.and_then(|report| report.summary.as_ref()) {
+        let performance_path = export_dir.join(format!("{result_slug}_performance.txt"));
+        fs::write(&performance_path, format_performance_report(summary))
+            .map_err(|err| format!("写入 {:?} 失败：{err}", performance_path))?;
+        exported_paths.push(performance_path.display().to_string());
+    }
+
+    Ok(format!("已导出：{}", exported_paths.join("、")))
 }
 
 fn export_logs(
     battle_result: &BattleResult,
     replay_log: &ReplayEventLog,
     action_trace: &ActionTrace,
+    performance_report: &BattlePerformanceReport,
 ) -> Result<String, String> {
     let export_dir = PathBuf::from("battle_logs");
-    write_export_logs(&export_dir, battle_result, replay_log, action_trace)
+    write_export_logs(
+        &export_dir,
+        battle_result,
+        replay_log,
+        action_trace,
+        Some(performance_report),
+    )
+}
+
+#[derive(SystemParam)]
+pub struct ResultRuntime<'w> {
+    selection_state: ResMut<'w, crate::team_selection::SelectionState>,
+    entry_mode: ResMut<'w, crate::team_selection::SelectionEntryMode>,
+    map_battle_context: ResMut<'w, crate::data::MapBattleContext>,
+    current_map: ResMut<'w, crate::map::components::CurrentMap>,
+    team_selections: Option<ResMut<'w, TeamSelections>>,
+    replay_log: Res<'w, ReplayEventLog>,
+    action_trace: Res<'w, ActionTrace>,
+    performance_report: Res<'w, BattlePerformanceReport>,
+    battle_mode: ResMut<'w, BattleControlMode>,
+    ui_control_side: ResMut<'w, crate::battle::UiControlSide>,
+    selected_cards: ResMut<'w, crate::battle::SelectedCards>,
+    battle_result: ResMut<'w, BattleResult>,
+    result_notice: ResMut<'w, BattleResultNotice>,
+    pending_action: ResMut<'w, PendingBattleResultAction>,
+    pvp_connection: Option<ResMut<'w, pvp::PvpConnection>>,
+    online_connection: Option<Res<'w, crate::online::OnlineConnection>>,
+    next_phase: ResMut<'w, NextState<BattlePhase>>,
+    next_game_state: ResMut<'w, NextState<GameState>>,
 }
 
 pub fn restart_from_result_system(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut selection_state: ResMut<crate::team_selection::SelectionState>,
-    mut entry_mode: ResMut<crate::team_selection::SelectionEntryMode>,
-    team_selections: Option<ResMut<crate::data::TeamSelections>>,
-    replay_log: Res<ReplayEventLog>,
-    action_trace: Res<ActionTrace>,
-    mut battle_mode: ResMut<crate::battle::BattleControlMode>,
-    mut ui_control_side: ResMut<crate::battle::UiControlSide>,
-    mut selected_cards: ResMut<crate::battle::SelectedCards>,
-    mut battle_result: ResMut<BattleResult>,
-    mut next_phase: ResMut<NextState<BattlePhase>>,
-    mut next_game_state: ResMut<NextState<GameState>>,
+    time: Res<Time>,
+    mut runtime: ResultRuntime,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyL) {
-        battle_result.export_status = Some(
-            match export_logs(&battle_result, &replay_log, &action_trace) {
-                Ok(message) => message,
-                Err(message) => format!("导出失败：{message}"),
-            },
-        );
-    }
-
-    if keyboard.just_pressed(KeyCode::KeyR) {
-        battle_result.message.clear();
-        battle_result.export_status = None;
-        selection_state.reset();
-        *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
-        *battle_mode = crate::battle::BattleControlMode::PlayerVsAi;
-        ui_control_side.0 = Side::Player;
-        *selected_cards = crate::battle::SelectedCards::default();
-        if let Some(mut team_selections) = team_selections {
-            team_selections.player_indices.clear();
-            team_selections.enemy_indices.clear();
+    if runtime.result_notice.remaining > 0.0 {
+        runtime.result_notice.remaining =
+            (runtime.result_notice.remaining - time.delta_secs()).max(0.0);
+        if runtime.result_notice.remaining == 0.0 {
+            runtime.result_notice.text.clear();
         }
-
-        next_phase.set(BattlePhase::Init);
-        next_game_state.set(GameState::Map); // 修改为返回地图
     }
+
+    if keyboard.just_pressed(KeyCode::KeyL) {
+        match export_logs(
+            &runtime.battle_result,
+            &runtime.replay_log,
+            &runtime.action_trace,
+            &runtime.performance_report,
+        ) {
+            Ok(_) => {
+                runtime.result_notice.text = "导出成功".to_string();
+                runtime.result_notice.remaining = 2.0;
+            }
+            Err(message) => {
+                runtime.result_notice.text = format!("导出失败：{message}");
+                runtime.result_notice.remaining = 2.5;
+            }
+        }
+    }
+
+    let keyboard_action = keyboard
+        .just_pressed(KeyCode::KeyR)
+        .then_some(BattleResultAction::Return);
+    let action = keyboard_action.or(runtime.pending_action.0);
+    let Some(action) = action else {
+        return;
+    };
+
+    let is_pvp = *runtime.battle_mode == BattleControlMode::PlayerVsRemote;
+    match action {
+        BattleResultAction::Return => {
+            runtime.pending_action.0 = None;
+            return_from_result(
+                is_pvp,
+                &mut runtime.selection_state,
+                &mut runtime.entry_mode,
+                &mut runtime.map_battle_context,
+                &mut runtime.current_map,
+                runtime.team_selections.as_deref_mut(),
+                &mut runtime.battle_mode,
+                &mut runtime.ui_control_side,
+                &mut runtime.selected_cards,
+                &mut runtime.battle_result,
+                runtime.pvp_connection.as_deref_mut(),
+                runtime.online_connection.as_deref(),
+                &mut runtime.next_phase,
+                &mut runtime.next_game_state,
+            );
+        }
+        BattleResultAction::RestartSameTeams if !is_pvp => {
+            runtime.pending_action.0 = None;
+            runtime.battle_result.message.clear();
+            runtime.battle_result.export_status = None;
+            runtime.result_notice.text.clear();
+            runtime.result_notice.remaining = 0.0;
+            *runtime.selected_cards = crate::battle::SelectedCards::default();
+            runtime.next_phase.set(BattlePhase::Init);
+            runtime.next_game_state.set(GameState::Battle);
+        }
+        BattleResultAction::Rematch if !is_pvp => {
+            runtime.pending_action.0 = None;
+            let previous_battle_mode = *runtime.battle_mode;
+            rematch_from_result(
+                previous_battle_mode,
+                &mut runtime.selection_state,
+                &mut runtime.entry_mode,
+                &mut runtime.map_battle_context,
+                runtime.team_selections.as_deref_mut(),
+                &mut runtime.battle_mode,
+                &mut runtime.ui_control_side,
+                &mut runtime.selected_cards,
+                &mut runtime.battle_result,
+                &mut runtime.result_notice,
+                &mut runtime.next_phase,
+                &mut runtime.next_game_state,
+            );
+        }
+        BattleResultAction::RestartSameTeams => {
+            runtime.pending_action.0 = None;
+        }
+        BattleResultAction::Rematch
+        | BattleResultAction::AcceptRematch
+        | BattleResultAction::RejectRematch => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn return_from_result(
+    is_pvp: bool,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    map_battle_context: &mut crate::data::MapBattleContext,
+    current_map: &mut crate::map::components::CurrentMap,
+    team_selections: Option<&mut TeamSelections>,
+    battle_mode: &mut BattleControlMode,
+    ui_control_side: &mut crate::battle::UiControlSide,
+    selected_cards: &mut crate::battle::SelectedCards,
+    battle_result: &mut BattleResult,
+    pvp_connection: Option<&mut pvp::PvpConnection>,
+    online_connection: Option<&crate::online::OnlineConnection>,
+    next_phase: &mut NextState<BattlePhase>,
+    next_game_state: &mut NextState<GameState>,
+) {
+    let return_map = map_battle_context.return_map.take();
+    map_battle_context.enemy_monster_index = None;
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    selection_state.reset();
+    *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+    *battle_mode = BattleControlMode::PlayerVsAi;
+    ui_control_side.0 = Side::Player;
+    *selected_cards = crate::battle::SelectedCards::default();
+    if let Some(team_selections) = team_selections {
+        team_selections.player_indices.clear();
+        team_selections.enemy_indices.clear();
+    }
+
+    if is_pvp {
+        if let Some(connection) = pvp_connection {
+            connection.stop_with_leave(Some("对方已退出结算界面。".to_string()));
+            connection.status = pvp::PvpStatus::Idle;
+        }
+    }
+
+    next_phase.set(BattlePhase::Init);
+    if !is_pvp {
+        if let Some(map) = return_map {
+            *current_map = map;
+            next_game_state.set(GameState::Map);
+            return;
+        }
+    }
+    // 如果是从在线系统进入的对战，返回在线主页
+    if is_pvp && online_connection.is_some_and(|c| c.user_id.is_some()) {
+        next_game_state.set(GameState::OnlineHome);
+    } else {
+        next_game_state.set(GameState::Lobby);
+    }
+}
+
+fn rematch_from_result(
+    previous_battle_mode: BattleControlMode,
+    selection_state: &mut crate::team_selection::SelectionState,
+    entry_mode: &mut crate::team_selection::SelectionEntryMode,
+    map_battle_context: &mut crate::data::MapBattleContext,
+    team_selections: Option<&mut TeamSelections>,
+    battle_mode: &mut BattleControlMode,
+    ui_control_side: &mut crate::battle::UiControlSide,
+    selected_cards: &mut crate::battle::SelectedCards,
+    battle_result: &mut BattleResult,
+    result_notice: &mut BattleResultNotice,
+    next_phase: &mut NextState<BattlePhase>,
+    next_game_state: &mut NextState<GameState>,
+) {
+    selection_state.reset();
+    match previous_battle_mode {
+        BattleControlMode::DebugPlayerControlsBoth => {
+            *entry_mode = crate::team_selection::SelectionEntryMode::Debug;
+            *battle_mode = BattleControlMode::DebugPlayerControlsBoth;
+        }
+        _ => {
+            *entry_mode = crate::team_selection::SelectionEntryMode::VsAi;
+            *battle_mode = BattleControlMode::PlayerVsAi;
+        }
+    }
+    ui_control_side.0 = Side::Player;
+    *selected_cards = crate::battle::SelectedCards::default();
+    if let Some(team_selections) = team_selections {
+        if map_battle_context.return_map.is_some() {
+            map_battle_context.enemy_monster_index = team_selections.enemy_indices.first().copied();
+        }
+        team_selections.player_indices.clear();
+        team_selections.enemy_indices.clear();
+    }
+    battle_result.message.clear();
+    battle_result.export_status = None;
+    result_notice.text.clear();
+    result_notice.remaining = 0.0;
+    next_phase.set(BattlePhase::Init);
+    next_game_state.set(GameState::TeamSelection);
 }
 
 #[cfg(test)]
@@ -507,9 +759,10 @@ mod tests {
     use crate::{
         battle::{
             ActionTraceEntry, BattleEvent, BattleFormulaEvent, BattleLifecycleEvent,
-            BattleStateEvent, BattleStatusEvent, BattleTraceEvent, ElementAura, EnemyTeam,
-            PlayerTeam, ReplayEventLog, Shield, Side, StatusBoard, StatusInstance,
-            StructuredBattleLog, Team, systems::consume_battle_events_system,
+            BattlePerformanceReport, BattlePerformanceStats, BattleStateEvent, BattleStatusEvent,
+            BattleTraceEvent, ElementAura, EnemyTeam, PlayerTeam, ReplayEventLog, Shield, Side,
+            StatusBoard, StatusInstance, StructuredBattleLog, Team,
+            systems::consume_battle_events_system,
         },
         data::{BattleFormulaRules, ElementType, StatusCategory, StatusTickTiming},
         game_state::GameState,
@@ -552,6 +805,9 @@ mod tests {
         app.add_plugins(TimePlugin);
         app.init_resource::<Messages<BattleEvent>>();
         app.insert_resource(pending_ko);
+        app.insert_resource(BattleControlMode::PlayerVsAi);
+        app.insert_resource(BattlePerformanceStats::default());
+        app.insert_resource(BattlePerformanceReport::default());
         app.insert_resource(TurnCount(5));
         app.insert_resource(TurnContext::default());
         app.insert_resource(RoundOrder::default());
@@ -1039,9 +1295,14 @@ mod tests {
             detail: "玩家释放火拳".to_string(),
         }]);
 
-        let export_message =
-            write_export_logs(&export_dir, &battle_result, &replay_log, &action_trace)
-                .expect("export should succeed");
+        let export_message = write_export_logs(
+            &export_dir,
+            &battle_result,
+            &replay_log,
+            &action_trace,
+            None,
+        )
+        .expect("export should succeed");
 
         let slug = sanitize_filename_segment(&battle_result.message);
         let replay_path = export_dir.join(format!("{slug}_replay.ron"));
@@ -1132,8 +1393,10 @@ mod tests {
             .resource_mut::<Messages<BattleEvent>>()
             .write(BattleEvent::SkillUsed {
                 side: Side::Player,
+                skill_id: crate::data::SkillId::FirePunch,
                 skill_name: "火拳".to_string(),
                 slot: 0,
+                cost_ap: 2,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleEvent>>()
@@ -1141,6 +1404,7 @@ mod tests {
                 source: Side::Player,
                 target: Side::Enemy,
                 amount: 7,
+                damage_type: crate::battle::DamageType::Direct,
             });
         app.world_mut()
             .resource_mut::<Messages<BattleTraceEvent>>()
@@ -1194,7 +1458,7 @@ mod tests {
         assert_eq!(replay_log.0[0].summary, "BattleEvent");
         assert_eq!(replay_log.0[0].detail, "玩家 使用了 火拳。");
         assert_eq!(replay_log.0[1].seq, 2);
-        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点实际伤害。");
+        assert_eq!(replay_log.0[1].detail, "玩家 对 敌方 造成了 7 点直接伤害。");
         assert_eq!(replay_log.0[2].phase, "trace-r3");
         assert_eq!(replay_log.0[2].summary, "skill:FirePunch");
         assert_eq!(replay_log.0[3].phase, "battle-result");
@@ -1205,7 +1469,7 @@ mod tests {
         assert_eq!(replay_log.0[5].summary, "burning_aura:applied");
 
         let export_message =
-            write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+            write_export_logs(&export_dir, battle_result, replay_log, &action_trace, None)
                 .expect("export should succeed");
         let slug = sanitize_filename_segment(&battle_result.message);
         let replay_path = export_dir.join(format!("{slug}_replay.ron"));
@@ -1218,7 +1482,7 @@ mod tests {
 
         assert!(replay_text.contains("phase: \"battle-event\""));
         assert!(replay_text.contains("detail: \"玩家 使用了 火拳。\""));
-        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点实际伤害。\""));
+        assert!(replay_text.contains("detail: \"玩家 对 敌方 造成了 7 点直接伤害。\""));
         assert!(replay_text.contains("phase: \"trace-r3\""));
         assert!(replay_text.contains("summary: \"skill:FirePunch\""));
         assert!(replay_text.contains("phase: \"battle-result\""));
@@ -1316,7 +1580,7 @@ mod tests {
             },
         ]);
         let battle_result = app.world().resource::<BattleResult>();
-        write_export_logs(&export_dir, battle_result, replay_log, &action_trace)
+        write_export_logs(&export_dir, battle_result, replay_log, &action_trace, None)
             .expect("export should succeed");
 
         let slug = sanitize_filename_segment(&battle_result.message);

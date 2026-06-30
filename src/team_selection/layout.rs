@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    data::{BattleRules, MonsterPool},
+    console_log::{ConsoleLogCategory, log as console_log},
+    data::{AiDifficulty, BattleRules, MonsterPool},
     team_selection::{
-        BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
+        AiDifficultyButton, AiDifficultyButtonText, AiDifficultySelectorRoot,
+        AiDifficultySummaryText, BackToLobbyButton, BackToLobbyButtonText, ConfirmSelectionButton,
         ConfirmSelectionButtonText, MonsterCardButton, MonsterCardSelectionIndicator,
         SelectionCountText, SelectionInstructionsText, SelectionOrderText, SelectionTitleText,
-        SelectionUiRoot,
+        SelectionUiRoot, ai_difficulty_label,
     },
     ui::battle::{resources::UiFontHandle, theme::UiTheme},
 };
@@ -25,9 +27,12 @@ pub fn setup_selection_ui(
         return;
     }
 
-    println!(
-        "正在创建队伍选择界面... 可选精灵数: {}",
-        monster_pool.monsters.len()
+    console_log(
+        ConsoleLogCategory::Selection,
+        format!(
+            "正在创建队伍选择界面；可选精灵数={}",
+            monster_pool.monsters.len()
+        ),
     );
 
     let font_handle = ui_font.as_ref().map(|f| f.0.clone());
@@ -86,6 +91,76 @@ pub fn setup_selection_ui(
                 },
                 SelectionCountText,
             ));
+
+            root.spawn((
+                Node {
+                    width: Val::Percent(90.0),
+                    max_width: Val::Px(1000.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(8.0),
+                    margin: UiRect::bottom(Val::Px(18.0)),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(10.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.08, 0.12, 0.62)),
+                BorderColor::all(Color::srgba(0.3, 0.45, 0.7, 0.55)),
+                AiDifficultySelectorRoot,
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new("AI 难度（人机对战）"),
+                    make_text_font(16.0, font_handle.as_ref()),
+                    TextColor(Color::srgb(0.85, 0.92, 1.0)),
+                ));
+                panel
+                    .spawn((Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },))
+                    .with_children(|row| {
+                        for difficulty in [
+                            AiDifficulty::Easy,
+                            AiDifficulty::Normal,
+                            AiDifficulty::Hard,
+                            AiDifficulty::Expert,
+                        ] {
+                            row.spawn((
+                                Button,
+                                Node {
+                                    width: Val::Px(96.0),
+                                    height: Val::Px(34.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(theme.radius_button),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.button_idle),
+                                BorderColor::all(theme.button_border_idle),
+                                theme.button_shadow(),
+                                AiDifficultyButton { difficulty },
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new(ai_difficulty_label(difficulty)),
+                                    make_text_font(15.0, font_handle.as_ref()),
+                                    TextColor(Color::WHITE),
+                                    AiDifficultyButtonText { difficulty },
+                                ));
+                            });
+                        }
+                    });
+                panel.spawn((
+                    Text::new("当前：普通 — 标准体验：基础规划，使用公开信息。"),
+                    make_text_font(13.0, font_handle.as_ref()),
+                    TextColor(Color::srgb(0.78, 0.82, 0.9)),
+                    AiDifficultySummaryText,
+                ));
+            });
 
             // Scrollable container for monster cards
             root.spawn((

@@ -3,14 +3,74 @@ use bevy::prelude::*;
 use super::{element_text, side_text};
 use crate::{
     battle::{
-        BattleEvent, BattleFormulaEvent, BattleLifecycleEvent, BattleLog, BattleResult,
-        BattleStateEvent, BattleStatusEvent, BattleTraceEvent, Combatant, ElementAura, EnemyTeam,
-        InBattle, PlayerTeam, ReplayEventLog, Shield, Side, Stats, StatusBoard,
+        BattleActionCooldown, BattleControlMode, BattleEvent, BattleFormulaEvent,
+        BattleLifecycleEvent, BattleLog, BattlePerformanceStats, BattleResult, BattleStateEvent,
+        BattleStatusEvent, BattleTraceEvent, Combatant, ElementAura, EnemyTeam, InBattle,
+        PendingHandDiscard, PlayerTeam, ReplayEventLog, Shield, Side, Stats, StatusBoard,
         StructuredBattleLog, TurnCount, push_battle_line, push_replay_log_entry,
-        push_structured_battle_line,
+        push_structured_battle_line, record_performance_event,
     },
+    console_log::{ConsoleLogCategory, log as console_log},
+    data::BattleDbs,
     game_state::GameState,
 };
+
+pub fn tick_battle_action_cooldown_system(
+    time: Res<Time>,
+    mut cooldown: ResMut<BattleActionCooldown>,
+) {
+    cooldown.tick(time.delta_secs());
+}
+
+pub fn start_battle_action_cooldown_system(
+    mut events: MessageReader<BattleEvent>,
+    mut cooldown: ResMut<BattleActionCooldown>,
+) {
+    // 仅启动使用技能那一侧的冷却，避免对方技能误锁我方操作（PVP）。
+    for event in events.read() {
+        if let BattleEvent::SkillUsed { side, .. } = event {
+            cooldown.start(*side);
+        }
+    }
+}
+
+pub fn track_performance_events_system(
+    mut events: MessageReader<BattleEvent>,
+    mut stats: ResMut<BattlePerformanceStats>,
+    dbs: Res<BattleDbs>,
+    battle_mode: Res<BattleControlMode>,
+) {
+    if *battle_mode == BattleControlMode::PlayerVsRemote {
+        events.clear();
+        return;
+    }
+
+    for event in events.read() {
+        record_performance_event(&mut stats, &dbs, event);
+    }
+}
+
+/// 本地玩家侧行动冷却是否结束——用于门控玩家输入相关系统。
+pub fn player_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
+    cooldown.ready(Side::Player)
+}
+
+/// 敌方侧行动冷却是否结束——用于门控 AI / 远程意图执行系统。
+pub fn enemy_action_cooldown_ready(cooldown: Res<BattleActionCooldown>) -> bool {
+    cooldown.ready(Side::Enemy)
+}
+
+/// 弃牌阶段的冷却门控：按正在弃牌的那一侧判断。
+/// 没有待弃牌资源时默认以玩家侧就绪为准。
+pub fn discard_action_cooldown_ready(
+    cooldown: Res<BattleActionCooldown>,
+    pending: Option<Res<PendingHandDiscard>>,
+) -> bool {
+    match pending.as_ref().map(|p| p.side) {
+        Some(Side::Enemy) => cooldown.ready(Side::Enemy),
+        _ => cooldown.ready(Side::Player),
+    }
+}
 
 pub fn consume_battle_events_system(
     mut events: MessageReader<BattleEvent>,
@@ -110,12 +170,17 @@ pub fn consume_battle_events_system(
     for event in events.read() {
         let line = match event {
             BattleEvent::TurnStarted(turn) => format!("--- 第 {turn} 回合 ---"),
-            BattleEvent::CardUsed { side, card_name } => {
+            BattleEvent::CardUsed {
+                side, card_name, ..
+            } => {
                 format!("{} 使用了卡牌：{}。", side_text(*side), card_name)
             }
-            BattleEvent::CardDiscarded { side, card_name } => {
+            BattleEvent::CardDiscarded {
+                side, card_name, ..
+            } => {
                 format!("{} 弃置了卡牌：{}。", side_text(*side), card_name)
             }
+            BattleEvent::CardsDrawn { .. } => continue,
             BattleEvent::ElementAuraApplied {
                 side,
                 from,
@@ -155,6 +220,7 @@ pub fn consume_battle_events_system(
                 source,
                 target,
                 reaction_name,
+                ..
             } => format!(
                 "{} 对 {} 触发了元素反应：{}。",
                 side_text(*source),
@@ -195,11 +261,16 @@ pub fn consume_battle_events_system(
                 source,
                 target,
                 amount,
+                damage_type,
             } => format!(
-                "{} 对 {} 造成了 {} 点实际伤害。",
+                "{} 对 {} 造成了 {} 点{}伤害。",
                 side_text(*source),
                 side_text(*target),
-                amount
+                amount,
+                match damage_type {
+                    crate::battle::DamageType::Direct => "直接",
+                    crate::battle::DamageType::Fixed => "固定",
+                }
             ),
             BattleEvent::AttackMissed { source, target } => format!(
                 "{} 对 {} 的攻击未命中。",
@@ -233,15 +304,21 @@ pub fn consume_battle_events_system(
             if let (Some(player_team), Some(enemy_team)) =
                 (player_team.as_ref(), enemy_team.as_ref())
             {
+                let snapshot_detail = format!(
+                    "我方 => {}\n敌方 => {}",
+                    snapshot_side(&player_team.0, Side::Player, &combat_query),
+                    snapshot_side(&enemy_team.0, Side::Enemy, &combat_query)
+                );
+                let phase = format!("state-r{}", turn_count.0);
                 push_structured_battle_line(
                     &mut structured_log,
-                    format!("state-r{}", turn_count.0),
+                    phase.clone(),
                     "双方状态快照",
-                    format!(
-                        "我方 => {}\n敌方 => {}",
-                        snapshot_side(&player_team.0, Side::Player, &combat_query),
-                        snapshot_side(&enemy_team.0, Side::Enemy, &combat_query)
-                    ),
+                    snapshot_detail.clone(),
+                );
+                console_log(
+                    ConsoleLogCategory::State,
+                    format!("[{}] 双方状态快照\n{}", phase, snapshot_detail),
                 );
             }
         }
@@ -249,7 +326,10 @@ pub fn consume_battle_events_system(
 
     for event in trace_events.read() {
         let phase = format!("trace-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.action, event.detail);
+        console_log(
+            ConsoleLogCategory::Trace,
+            format!("[{}] {}\n{}", phase, event.action, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -266,7 +346,10 @@ pub fn consume_battle_events_system(
 
     for event in state_events.read() {
         let phase = format!("state-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.summary, event.detail);
+        console_log(
+            ConsoleLogCategory::State,
+            format!("[{}] {}\n{}", phase, event.summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -282,7 +365,10 @@ pub fn consume_battle_events_system(
     }
 
     for event in lifecycle_events.read() {
-        println!("[{}] {}\n{}", event.phase, event.summary, event.detail);
+        console_log(
+            ConsoleLogCategory::BattleDebug,
+            format!("[{}] {}\n{}", event.phase, event.summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             event.phase.clone(),
@@ -299,7 +385,10 @@ pub fn consume_battle_events_system(
 
     for event in formula_events.read() {
         let phase = format!("formula-r{}", event.round);
-        println!("[{}] {}\n{}", phase, event.action, event.detail);
+        console_log(
+            ConsoleLogCategory::Formula,
+            format!("[{}] {}\n{}", phase, event.action, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -317,7 +406,10 @@ pub fn consume_battle_events_system(
     for event in status_events.read() {
         let summary = format!("{}:{}", event.status_id, event.action);
         let phase = format!("status-r{}", event.round);
-        println!("[{}] {}\n{}", phase, summary, event.detail);
+        console_log(
+            ConsoleLogCategory::Status,
+            format!("[{}] {}\n{}", phase, summary, event.detail),
+        );
         push_replay_log_entry(
             &mut replay_log,
             phase.clone(),
@@ -332,8 +424,8 @@ pub fn consume_battle_events_system(
             Some(last) => last != &result.message,
             None => true,
         };
-        if should_print {
-            println!("{}", result.message);
+        if should_print && !log.0.iter().any(|line| line == &result.message) {
+            console_log(ConsoleLogCategory::Result, &result.message);
             *last_printed_result = Some(result.message.clone());
         }
     } else {

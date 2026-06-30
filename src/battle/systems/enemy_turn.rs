@@ -4,15 +4,18 @@ use crate::{
     battle::{
         ActionPoints, ActionTrace, BattleControlMode, BattleEvent, BattleFormulaEvent, BattleLog,
         BattleResult, BattleStatusEvent, Combatant, ElementAura, Hand, InBattle, PendingBoosts,
-        PendingKoResolution, RoundOrder, Shield, Side, SkillCount, SkillList, Stats,
-        StructuredBattleLog, TurnAction, TurnContext, TurnCount, next_phase_after_side_end,
-        note_action_phase, push_named_action_trace, push_turn_action_trace, transfer_status_by_id,
+        PendingKoResolution, PendingTacticalDiscard, RoundOrder, Shield, Side, SkillCount,
+        SkillList, SkillUses, Stats, StructuredBattleLog, TurnAction, TurnContext, TurnCount,
+        next_phase_after_side_end, note_action_phase, push_named_action_trace,
+        push_turn_action_trace, transfer_status_by_id,
     },
+    console_log::{ConsoleLogCategory, log as console_log, log_enabled},
     data::{
-        BattleDbs, CardEffect, ElementType, SkillCategory, SkillDef, SkillEffect, SkillId,
-        StatusCategory,
+        AiDifficulty, AiPlayerInfoVisibility, BattleDbs, BattleRules, CardDef, CardEffect,
+        EnemyAiConfig, StatusCategory,
     },
     game_state::{BattlePhase, GameState},
+    ui::battle::{components::BattleUiNotice, systems::HandFullEndTurnWarning},
 };
 
 use super::{
@@ -21,592 +24,72 @@ use super::{
     skill_target_mode,
 };
 
+use crate::battle::ai::{
+    EnemyAiContext, EnemyAiPlan, EnemyAiSkillKind, EnemyPlannedAction, EnemySwitchCandidate,
+    ScoredEnemySkill, best_action_value, build_player_threat_context, choose_enemy_discard_card,
+    choose_enemy_plan_candidates, choose_enemy_skill_with_threat, enemy_skill_candidate_report,
+    enemy_switch_candidate_report, score_card_for_skill,
+};
+
 const ENEMY_AI_INITIAL_DELAY: f32 = 0.35;
-const ENEMY_AI_ACTION_DELAY: f32 = 1.25;
+const ENEMY_AI_ACTION_DELAY: f32 = 0.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EnemyAiSkillKind {
-    Attack,
-    Heal,
-    Shield,
-    Debuff,
+#[derive(Default)]
+pub(crate) struct EnemyAiTurnState {
+    delay: f32,
+    started: bool,
+    switched_this_turn: bool,
+    attacks_used: u8,
 }
 
-#[derive(Debug, Clone)]
-struct EnemyAiContext {
-    enemy_hp: i32,
-    enemy_max_hp: i32,
-    enemy_shield: i32,
-    enemy_atk: i32,
-    enemy_has_aura: bool,
-    enemy_has_cleansable_debuff: bool,
-    player_def: i32,
-    player_hp: i32,
-    player_shield: i32,
-    target_element: crate::data::ElementType,
-    target_attached_auras: [Option<crate::data::ElementType>; 2],
-    target_status_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ScoredEnemySkill {
-    slot: usize,
-    skill_id: SkillId,
-    score: f32,
-    kind: EnemyAiSkillKind,
-}
-
-#[derive(Debug, Clone)]
-struct EnemySwitchCandidate {
-    index: usize,
-    hp: i32,
-    max_hp: i32,
-    shield: i32,
-    atk: i32,
-    element: ElementType,
-    skill_ids: [SkillId; 4],
-    skill_count: usize,
-    status_ids: Vec<String>,
-    has_aura: bool,
-    has_cleansable_debuff: bool,
-}
-
-#[derive(Debug, Clone)]
-struct ScoredEnemySwitch {
-    index: usize,
-    score: f32,
-}
-
-fn enemy_hp_ratio(ctx: &EnemyAiContext) -> f32 {
-    if ctx.enemy_max_hp <= 0 {
-        0.0
-    } else {
-        ctx.enemy_hp.max(0) as f32 / ctx.enemy_max_hp as f32
+impl EnemyAiTurnState {
+    fn reset(&mut self) {
+        self.delay = 0.0;
+        self.started = false;
+        self.switched_this_turn = false;
+        self.attacks_used = 0;
     }
 }
 
-fn primary_effect(effect: &SkillEffect) -> Option<&SkillEffect> {
-    match effect {
-        SkillEffect::Sequence { effects } => effects.first().and_then(primary_effect),
-        SkillEffect::Conditional { .. } => None,
-        _ => Some(effect),
-    }
+fn attack_limit_reached(state: &EnemyAiTurnState, config: &EnemyAiConfig) -> bool {
+    config
+        .max_attack_actions_per_turn
+        .is_some_and(|max| state.attacks_used >= max)
 }
 
-fn primary_attack_power(effect: &SkillEffect) -> Option<i32> {
-    match primary_effect(effect)? {
-        SkillEffect::Attack { power, .. } => Some(*power),
-        _ => None,
-    }
-}
-
-fn condition_matches_precast(
-    condition: &crate::data::SkillCondition,
-    ctx: &EnemyAiContext,
-) -> bool {
-    match condition {
-        crate::data::SkillCondition::TargetHadAura { element } => ctx
-            .target_attached_auras
-            .iter()
-            .flatten()
-            .any(|aura| aura == element),
-        crate::data::SkillCondition::TargetHadStatus { status_id } => {
-            ctx.target_status_ids.iter().any(|id| id == status_id)
+fn plan_uses_attack(plan: &EnemyAiPlan) -> bool {
+    match &plan.action {
+        EnemyPlannedAction::UseSkill(skill) | EnemyPlannedAction::UseCardForSkill { skill, .. } => {
+            skill.kind == EnemyAiSkillKind::Attack
         }
-        crate::data::SkillCondition::TargetHadNoShield => ctx.player_shield <= 0,
-        crate::data::SkillCondition::Any { conditions } => conditions
-            .iter()
-            .any(|nested| condition_matches_precast(nested, ctx)),
-        crate::data::SkillCondition::All { conditions } => conditions
-            .iter()
-            .all(|nested| condition_matches_precast(nested, ctx)),
-        crate::data::SkillCondition::LastReactionName { .. }
-        | crate::data::SkillCondition::LastWindSpreadSucceeded
-        | crate::data::SkillCondition::LastWindSpreadFailed
-        | crate::data::SkillCondition::LastCleanseSucceeded
-        | crate::data::SkillCondition::LastCleanseFailed
-        | crate::data::SkillCondition::LastTargetFainted => false,
+        _ => false,
     }
 }
 
-fn conditional_bonus_score(effect: &SkillEffect, ctx: &EnemyAiContext) -> f32 {
-    match effect {
-        SkillEffect::Conditional { branches } => branches
-            .iter()
-            .filter(|branch| condition_matches_precast(&branch.condition, ctx))
-            .map(|branch| match branch.effect.as_ref() {
-                SkillEffect::DealFixedDamage { amount, .. } => *amount as f32,
-                SkillEffect::DealStatDifferenceDamage { .. } => 10.0,
-                SkillEffect::Dispel { status_ids, .. } => dispel_value(status_ids, ctx),
-                SkillEffect::ModifyStages { .. } | SkillEffect::ApplyStatus { .. } => 8.0,
-                SkillEffect::Heal { amount } => (*amount as f32) * 0.6,
-                SkillEffect::Shield { amount } => (*amount as f32) * 0.4,
-                _ => 0.0,
-            })
-            .sum(),
-        _ => 0.0,
+fn choose_enemy_plan_with_jitter(
+    plans: &[EnemyAiPlan],
+    random_score_jitter: f32,
+    rng: &mut crate::battle::AccuracyRng,
+) -> Option<EnemyAiPlan> {
+    if random_score_jitter <= 0.0 || plans.len() <= 1 {
+        return plans.first().cloned();
     }
-}
 
-fn dispel_value(status_ids: &[String], ctx: &EnemyAiContext) -> f32 {
-    let removed_count = status_ids
+    plans
         .iter()
-        .map(|status_id| {
-            if matches!(
-                status_id.as_str(),
-                "stage_shift_buff" | "stage_shift_debuff"
-            ) {
-                ctx.target_status_ids
-                    .iter()
-                    .filter(|id| *id == status_id || id.starts_with(&format!("{status_id}_")))
-                    .count()
-            } else if ctx.target_status_ids.iter().any(|id| id == status_id) {
-                1
-            } else {
-                0
-            }
+        .cloned()
+        .enumerate()
+        .map(|(index, plan)| {
+            let jitter = (rng.next_unit_f32() * 2.0 - 1.0) * random_score_jitter;
+            (index, plan, jitter)
         })
-        .sum::<usize>();
-
-    removed_count as f32 * 12.0
-}
-
-fn cleanse_value(
-    prefer_aura: bool,
-    fallback_to_debuff: bool,
-    amount: usize,
-    ctx: &EnemyAiContext,
-) -> f32 {
-    let mut value = 0.0;
-    let mut remaining = amount;
-    let mut aura_available = ctx.enemy_has_aura;
-    let mut debuff_available = ctx.enemy_has_cleansable_debuff;
-
-    while remaining > 0 {
-        if prefer_aura && aura_available {
-            value += 18.0;
-            aura_available = false;
-            remaining -= 1;
-            continue;
-        }
-        if fallback_to_debuff && debuff_available {
-            value += 14.0;
-            debuff_available = false;
-            remaining -= 1;
-            continue;
-        }
-        break;
-    }
-
-    value
-}
-
-fn estimate_attack_value(skill: &SkillDef, ctx: &EnemyAiContext, dbs: &BattleDbs) -> f32 {
-    estimate_attack_value_with_atk(skill, ctx.enemy_atk, ctx, dbs)
-}
-
-fn estimate_attack_value_with_atk(
-    skill: &SkillDef,
-    attacker_atk: i32,
-    ctx: &EnemyAiContext,
-    dbs: &BattleDbs,
-) -> f32 {
-    let Some(power) = primary_attack_power(&skill.effect) else {
-        return 0.0;
-    };
-
-    let raw = (power + attacker_atk - ctx.player_def).max(1) as f32;
-    let effectiveness = if let Some(skill_element) = skill.element {
-        let defender_element = if ctx.player_shield > 0 {
-            ctx.target_element
-        } else {
-            ctx.target_attached_auras
-                .iter()
-                .flatten()
-                .copied()
-                .next()
-                .unwrap_or(ctx.target_element)
-        };
-        dbs.elements
-            .get_effectiveness(skill_element, defender_element)
-    } else {
-        1.0
-    };
-
-    let theoretical_damage = (raw * effectiveness).max(1.0);
-    let hp_damage = (theoretical_damage - ctx.player_shield.max(0) as f32).max(0.0);
-    let mut score = hp_damage;
-
-    if effectiveness > 1.0 {
-        score += 18.0 + (effectiveness - 1.0) * 22.0;
-    } else if effectiveness < 1.0 {
-        score -= 16.0 + (1.0 - effectiveness) * 24.0;
-    }
-
-    if hp_damage >= ctx.player_hp.max(0) as f32 {
-        score += 28.0;
-    }
-
-    score
-}
-
-fn score_enemy_skill(
-    slot: usize,
-    skill_id: SkillId,
-    skill: &SkillDef,
-    ctx: &EnemyAiContext,
-    dbs: &BattleDbs,
-) -> ScoredEnemySkill {
-    let hp_ratio = enemy_hp_ratio(ctx);
-
-    match &skill.effect {
-        SkillEffect::Attack { .. } => {
-            let mut score = estimate_attack_value(skill, ctx, dbs);
-            score += 10.0;
-            if hp_ratio >= 0.7 {
-                score += 12.0;
-            } else if hp_ratio <= 0.35 {
-                score -= 2.0;
-            }
-            ScoredEnemySkill {
-                slot,
-                skill_id,
-                score,
-                kind: EnemyAiSkillKind::Attack,
-            }
-        }
-        SkillEffect::Heal { amount } => {
-            let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0) as f32;
-            let effective_heal = (*amount as f32).min(missing_hp);
-            let urgency = 1.0 - hp_ratio;
-            let mut score = effective_heal * (0.5 + urgency * 1.8);
-
-            if hp_ratio <= 0.25 {
-                score += 35.0;
-            } else if hp_ratio <= 0.4 {
-                score += 18.0;
-            } else if hp_ratio >= 0.8 {
-                score -= 24.0;
-            }
-
-            ScoredEnemySkill {
-                slot,
-                skill_id,
-                score,
-                kind: EnemyAiSkillKind::Heal,
-            }
-        }
-        SkillEffect::Shield { amount } => {
-            let mut score = *amount as f32 + 5.0;
-            if ctx.enemy_shield <= 0 {
-                score += 2.0;
-            }
-            if hp_ratio <= 0.35 {
-                score += 3.0;
-            }
-            ScoredEnemySkill {
-                slot,
-                skill_id,
-                score,
-                kind: EnemyAiSkillKind::Shield,
-            }
-        }
-        SkillEffect::ApplyStatus { .. }
-        | SkillEffect::ModifyStages { .. }
-        | SkillEffect::Cleanse { .. }
-        | SkillEffect::Dispel { .. }
-        | SkillEffect::DealFixedDamage { .. }
-        | SkillEffect::DealStatDifferenceDamage { .. }
-        | SkillEffect::Conditional { .. } => {
-            let mut score = 40.0 + (1.0 - hp_ratio) * 8.0;
-            if skill.category == SkillCategory::EnemyDebuff {
-                score += 10.0;
-            }
-            ScoredEnemySkill {
-                slot,
-                skill_id,
-                score,
-                kind: EnemyAiSkillKind::Debuff,
-            }
-        }
-        SkillEffect::Sequence { effects } => {
-            let contains_attack = effects
-                .iter()
-                .any(|effect| matches!(effect, SkillEffect::Attack { .. }));
-            let contains_heal = effects
-                .iter()
-                .any(|effect| matches!(effect, SkillEffect::Heal { .. }));
-            let contains_shield = effects
-                .iter()
-                .any(|effect| matches!(effect, SkillEffect::Shield { .. }));
-            let contains_debuff = effects.iter().any(|effect| {
-                matches!(
-                    effect,
-                    SkillEffect::ApplyStatus { .. }
-                        | SkillEffect::ModifyStages { .. }
-                        | SkillEffect::Cleanse { .. }
-                        | SkillEffect::Dispel { .. }
-                        | SkillEffect::DealFixedDamage { .. }
-                        | SkillEffect::Conditional { .. }
-                )
-            });
-            let conditional_bonus = effects
-                .iter()
-                .map(|effect| conditional_bonus_score(effect, ctx))
-                .sum::<f32>();
-            let followup_bonus = effects
-                .iter()
-                .skip(1)
-                .map(|effect| match effect {
-                    SkillEffect::Dispel { status_ids, .. } => dispel_value(status_ids, ctx),
-                    _ => 0.0,
-                })
-                .sum::<f32>();
-            let (score, kind) = match primary_effect(&skill.effect) {
-                Some(SkillEffect::Attack { .. }) => (
-                    estimate_attack_value(skill, ctx, dbs)
-                        + 14.0
-                        + conditional_bonus
-                        + followup_bonus,
-                    EnemyAiSkillKind::Attack,
-                ),
-                Some(SkillEffect::Heal { amount }) => {
-                    let missing_hp = (ctx.enemy_max_hp - ctx.enemy_hp).max(0) as f32;
-                    let effective_heal = (*amount as f32).min(missing_hp);
-                    let urgency = 1.0 - hp_ratio;
-                    let mut score = effective_heal * (0.5 + urgency * 1.8);
-                    if hp_ratio <= 0.25 {
-                        score += 35.0;
-                    } else if hp_ratio <= 0.4 {
-                        score += 18.0;
-                    } else if hp_ratio >= 0.8 {
-                        score -= 24.0;
-                    }
-                    (score, EnemyAiSkillKind::Heal)
-                }
-                Some(SkillEffect::Shield { amount }) => {
-                    let mut score = *amount as f32 + 5.0;
-                    if ctx.enemy_shield <= 0 {
-                        score += 2.0;
-                    }
-                    if hp_ratio <= 0.35 {
-                        score += 3.0;
-                    }
-                    (score, EnemyAiSkillKind::Shield)
-                }
-                Some(SkillEffect::Cleanse {
-                    prefer_aura,
-                    fallback_to_debuff,
-                    amount,
-                }) => {
-                    let score = cleanse_value(*prefer_aura, *fallback_to_debuff, *amount, ctx)
-                        + 18.0
-                        + (1.0 - hp_ratio) * 10.0;
-                    (score, EnemyAiSkillKind::Heal)
-                }
-                Some(SkillEffect::Dispel { status_ids, .. }) => (
-                    24.0 + dispel_value(status_ids, ctx),
-                    EnemyAiSkillKind::Debuff,
-                ),
-                Some(SkillEffect::ApplyStatus { .. })
-                | Some(SkillEffect::ModifyStages { .. })
-                | Some(SkillEffect::DealFixedDamage { .. })
-                | Some(SkillEffect::DealStatDifferenceDamage { .. })
-                | Some(SkillEffect::Conditional { .. }) => {
-                    let mut score = 40.0 + (1.0 - hp_ratio) * 8.0;
-                    if skill.category == SkillCategory::EnemyDebuff {
-                        score += 10.0;
-                    }
-                    (score, EnemyAiSkillKind::Debuff)
-                }
-                Some(SkillEffect::Sequence { .. }) | None => {
-                    if contains_attack {
-                        (
-                            estimate_attack_value(skill, ctx, dbs) + 14.0,
-                            EnemyAiSkillKind::Attack,
-                        )
-                    } else if contains_heal {
-                        (32.0 + (1.0 - hp_ratio) * 28.0, EnemyAiSkillKind::Heal)
-                    } else if contains_shield {
-                        (30.0 + (1.0 - hp_ratio) * 16.0, EnemyAiSkillKind::Shield)
-                    } else if contains_debuff {
-                        (48.0, EnemyAiSkillKind::Debuff)
-                    } else {
-                        (20.0, EnemyAiSkillKind::Debuff)
-                    }
-                }
-            };
-            ScoredEnemySkill {
-                slot,
-                skill_id,
-                score,
-                kind,
-            }
-        }
-    }
-}
-
-fn best_attack_value(
-    skill_ids: &[SkillId; 4],
-    skill_count: usize,
-    attacker_atk: i32,
-    current_ap: i32,
-    dbs: &BattleDbs,
-    ctx: &EnemyAiContext,
-) -> f32 {
-    skill_ids
-        .iter()
-        .copied()
-        .take(skill_count)
-        .filter_map(|skill_id| dbs.skills.get(&skill_id))
-        .filter(|skill| current_ap >= skill.cost_ap)
-        .map(|skill| estimate_attack_value_with_atk(skill, attacker_atk, ctx, dbs))
-        .fold(0.0, f32::max)
-}
-
-fn status_pressure(status_ids: &[String], has_aura: bool, has_cleansable_debuff: bool) -> f32 {
-    let damaging_statuses = status_ids
-        .iter()
-        .filter(|id| {
-            matches!(
-                id.as_str(),
-                "burning"
-                    | "seeded"
-                    | "conduct_from_thunder"
-                    | "conduct_from_water"
-                    | "burning_from_fire"
-                    | "burning_from_grass"
-            )
-        })
-        .count() as f32;
-
-    damaging_statuses * 8.0
-        + if has_aura { 4.0 } else { 0.0 }
-        + if has_cleansable_debuff { 6.0 } else { 0.0 }
-}
-
-fn score_switch_candidate(
-    current: &EnemySwitchCandidate,
-    candidate: &EnemySwitchCandidate,
-    current_best_attack: f32,
-    current_ap: i32,
-    dbs: &BattleDbs,
-    ctx: &EnemyAiContext,
-) -> f32 {
-    if candidate.hp <= 0 {
-        return f32::MIN;
-    }
-
-    let current_hp_ratio = if current.max_hp <= 0 {
-        0.0
-    } else {
-        current.hp.max(0) as f32 / current.max_hp as f32
-    };
-    let candidate_hp_ratio = if candidate.max_hp <= 0 {
-        0.0
-    } else {
-        candidate.hp.max(0) as f32 / candidate.max_hp as f32
-    };
-    let current_defense = dbs
-        .elements
-        .get_effectiveness(ctx.target_element, current.element);
-    let candidate_defense = dbs
-        .elements
-        .get_effectiveness(ctx.target_element, candidate.element);
-    let defensive_gain = (current_defense - candidate_defense) * 34.0;
-    let health_gain = (candidate_hp_ratio - current_hp_ratio) * 30.0;
-    let shield_gain = (candidate.shield - current.shield) as f32 * 0.35;
-    let pressure_relief = status_pressure(
-        &current.status_ids,
-        current.has_aura,
-        current.has_cleansable_debuff,
-    ) - status_pressure(
-        &candidate.status_ids,
-        candidate.has_aura,
-        candidate.has_cleansable_debuff,
-    );
-    let candidate_attack = best_attack_value(
-        &candidate.skill_ids,
-        candidate.skill_count,
-        candidate.atk,
-        current_ap - 1,
-        dbs,
-        ctx,
-    );
-    let attack_gain = (candidate_attack - current_best_attack) * 0.5;
-    let danger_bonus = if current_hp_ratio <= 0.25 { 20.0 } else { 0.0 };
-
-    defensive_gain + health_gain + shield_gain + pressure_relief + attack_gain + danger_bonus - 12.0
-}
-
-fn choose_enemy_switch(
-    current: &EnemySwitchCandidate,
-    candidates: &[EnemySwitchCandidate],
-    current_best_attack: f32,
-    current_ap: i32,
-    dbs: &BattleDbs,
-    ctx: &EnemyAiContext,
-    already_switched: bool,
-) -> Option<ScoredEnemySwitch> {
-    if already_switched {
-        return None;
-    }
-    if current_ap < 2 {
-        return None;
-    }
-
-    candidates
-        .iter()
-        .filter(|candidate| candidate.index != current.index && candidate.hp > 0)
-        .map(|candidate| ScoredEnemySwitch {
-            index: candidate.index,
-            score: score_switch_candidate(
-                current,
-                candidate,
-                current_best_attack,
-                current_ap,
-                dbs,
-                ctx,
-            ),
-        })
-        .filter(|candidate| candidate.score >= 18.0)
-        .max_by(|a, b| {
-            a.score
-                .partial_cmp(&b.score)
+        .max_by(|(index_a, plan_a, jitter_a), (index_b, plan_b, jitter_b)| {
+            (plan_a.score + *jitter_a)
+                .partial_cmp(&(plan_b.score + *jitter_b))
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.index.cmp(&a.index))
+                .then_with(|| index_b.cmp(index_a))
         })
-}
-
-fn choose_enemy_skill(
-    skill_ids: &[SkillId; 4],
-    skill_count: usize,
-    current_ap: i32,
-    dbs: &BattleDbs,
-    ctx: &EnemyAiContext,
-) -> Option<ScoredEnemySkill> {
-    let mut best: Option<ScoredEnemySkill> = None;
-
-    for (slot, skill_id) in skill_ids.iter().copied().take(skill_count).enumerate() {
-        let Some(skill) = dbs.skills.get(&skill_id) else {
-            continue;
-        };
-        let cost = skill.cost_ap;
-        if current_ap < cost {
-            continue;
-        }
-
-        let scored = score_enemy_skill(slot, skill_id, skill, ctx, dbs);
-        match best {
-            Some(current_best)
-                if scored.score < current_best.score
-                    || (scored.score == current_best.score && scored.slot >= current_best.slot) => {
-            }
-            _ => best = Some(scored),
-        }
-    }
-
-    best
+        .map(|(_, plan, _)| plan)
 }
 
 #[derive(SystemParam)]
@@ -621,6 +104,7 @@ pub(crate) struct EnemyTurnEventWriters<'w> {
     event_writer: MessageWriter<'w, BattleEvent>,
     formula_writer: MessageWriter<'w, BattleFormulaEvent>,
     status_writer: MessageWriter<'w, BattleStatusEvent>,
+    ui_notices: MessageWriter<'w, BattleUiNotice>,
 }
 
 #[derive(SystemParam)]
@@ -631,6 +115,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     pending_boosts: ResMut<'w, PendingBoosts>,
     pending_ko: ResMut<'w, PendingKoResolution>,
     dbs: Res<'w, BattleDbs>,
+    battle_rules: Res<'w, BattleRules>,
     formula_rules: Res<'w, crate::data::BattleFormulaRules>,
     accuracy_rng: ResMut<'w, crate::battle::AccuracyRng>,
     player_team: Res<'w, crate::battle::PlayerTeam>,
@@ -638,6 +123,7 @@ pub(crate) struct EnemyTurnRuntime<'w> {
     battle_log: ResMut<'w, BattleLog>,
     battle_result: ResMut<'w, BattleResult>,
     next_game_state: ResMut<'w, NextState<GameState>>,
+    ai_config: Res<'w, EnemyAiConfig>,
 }
 
 fn finalize_enemy_turn(
@@ -645,6 +131,11 @@ fn finalize_enemy_turn(
     enemy_team: &crate::battle::EnemyTeam,
     turn_ctx: &mut TurnContext,
     round_order: &RoundOrder,
+    pending_boosts: &mut PendingBoosts,
+    action_points: &mut ActionPoints,
+    hand: &Hand,
+    battle_rules: &BattleRules,
+    commands: &mut Commands,
     formula_rules: &crate::data::BattleFormulaRules,
     logs: &mut EnemyTurnLogs,
     writers: &mut EnemyTurnEventWriters,
@@ -663,7 +154,7 @@ fn finalize_enemy_turn(
         ),
         With<InBattle>,
     >,
-    ai_state: &mut (f32, bool, bool),
+    ai_state: &mut EnemyAiTurnState,
 ) {
     let team_entities = enemy_team.0.combatants.clone();
     for entity in team_entities {
@@ -679,6 +170,7 @@ fn finalize_enemy_turn(
                     side: Side::Enemy,
                     round: logs.turn_count.0,
                     formula_rules,
+                    pending_boosts: Some(&mut *pending_boosts),
                     event_writer: &mut writers.event_writer,
                     formula_writer: &mut writers.formula_writer,
                     status_writer: &mut writers.status_writer,
@@ -687,57 +179,91 @@ fn finalize_enemy_turn(
             );
         }
     }
+    super::clear_action_scoped_card_effects(Side::Enemy, pending_boosts);
+    commands.insert_resource(crate::battle::PendingGuardCounterClear {
+        acting_side: Side::Enemy,
+    });
     turn_ctx.enemy_ended = true;
-    ai_state.0 = 0.0;
-    ai_state.1 = false;
-    ai_state.2 = false;
+    ai_state.reset();
     if let Ok((_, _, stats, _, _, _, _, _, _)) = exec_query.get(e_entity) {
         if stats.hp <= 0 {
+            super::clamp_ap_to_max(Side::Enemy, battle_rules, action_points);
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
     }
-    next_phase.set(next_phase_after_side_end(round_order, Side::Enemy));
+    super::enter_discard_phase_or_continue(
+        Side::Enemy,
+        next_phase_after_side_end(round_order, Side::Enemy),
+        hand,
+        battle_rules,
+        action_points,
+        commands,
+        next_phase,
+    );
+}
+
+fn skill_card_pending_slot_available(card: &CardDef, pending_boosts: &PendingBoosts) -> bool {
+    let pending = &pending_boosts.enemy;
+    match &card.effect {
+        CardEffect::NextAttackBoost { .. } => pending.next_attack_bonus == 0,
+        CardEffect::NextShieldBoost { .. } => pending.next_shield_bonus == 0,
+        CardEffect::NextHealBoost { .. } => pending.next_heal_bonus == 0,
+        CardEffect::NextElementAttachmentGainAp { .. } => {
+            pending.next_element_attachment_ap.is_none()
+        }
+        CardEffect::NextReactionFixedDamage { .. } => pending.next_reaction_fixed_damage.is_none(),
+        CardEffect::NextWindSpreadDamage { .. } => pending.next_wind_spread_damage.is_none(),
+        CardEffect::NextAuraAttackDraw { .. } => pending.next_aura_attack_draw.is_none(),
+        CardEffect::NextSkillCostDraw { .. } => pending.next_skill_cost_draw.is_none(),
+        CardEffect::DrawIfKnockedOutThisTurn { .. } => pending.next_knockout_draw.is_none(),
+        _ => true,
+    }
 }
 
 fn try_play_boost_card_for_skill(
     chosen_skill: ScoredEnemySkill,
     hand: &mut Hand,
     action_points: &mut ActionPoints,
-    pending_boosts: &mut PendingBoosts,
+    pending_boosts: &PendingBoosts,
     dbs: &BattleDbs,
+    ai_ctx: &EnemyAiContext,
+    weights: &crate::data::EnemyAiWeights,
     event_writer: &mut MessageWriter<BattleEvent>,
 ) -> bool {
     let Some(skill) = dbs.skills.get(&chosen_skill.skill_id) else {
         return false;
     };
     let skill_cost = skill.cost_ap;
-    let desired_card = match chosen_skill.kind {
-        EnemyAiSkillKind::Attack if pending_boosts.enemy.next_attack_bonus == 0 => {
-            Some(CardEffect::NextAttackBoost { amount: 0 })
-        }
-        EnemyAiSkillKind::Heal if pending_boosts.enemy.next_heal_bonus == 0 => {
-            Some(CardEffect::NextHealBoost { amount: 0 })
-        }
-        EnemyAiSkillKind::Shield if pending_boosts.enemy.next_shield_bonus == 0 => {
-            Some(CardEffect::NextShieldBoost { amount: 0 })
-        }
-        EnemyAiSkillKind::Debuff if pending_boosts.enemy.next_attack_bonus == 0 => {
-            Some(CardEffect::NextAttackBoost { amount: 0 })
-        }
-        _ => None,
-    };
-
-    let Some(desired_card) = desired_card else {
-        return false;
-    };
-
-    let Some((idx, _)) = hand.enemy.iter().enumerate().find(|(_, cid)| {
-        dbs.cards.get(cid).is_some_and(|card| {
-            std::mem::discriminant(&card.effect) == std::mem::discriminant(&desired_card)
-                && card.cost_ap <= action_points.enemy - skill_cost
+    let available_ap_after_skill = action_points.enemy - skill_cost;
+    let Some((idx, _score)) = hand
+        .enemy
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(idx, card_id)| {
+            let card = dbs.cards.get(&card_id)?;
+            skill_card_pending_slot_available(card, pending_boosts)
+                .then(|| {
+                    score_card_for_skill(
+                        card,
+                        chosen_skill.kind,
+                        skill,
+                        ai_ctx,
+                        dbs,
+                        available_ap_after_skill,
+                        weights,
+                    )
+                    .map(|score| (idx, score))
+                })
+                .flatten()
         })
-    }) else {
+        .max_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.0.cmp(&a.0))
+        })
+    else {
         return false;
     };
 
@@ -747,25 +273,24 @@ fn try_play_boost_card_for_skill(
     };
 
     action_points.enemy -= card.cost_ap;
-    match card.effect {
-        CardEffect::NextAttackBoost { amount } => pending_boosts.enemy.next_attack_bonus += amount,
-        CardEffect::NextHealBoost { amount } => pending_boosts.enemy.next_heal_bonus += amount,
-        CardEffect::NextShieldBoost { amount } => pending_boosts.enemy.next_shield_bonus += amount,
-        CardEffect::GainAp { amount } => action_points.enemy += amount,
-    }
     event_writer.write(BattleEvent::CardUsed {
         side: Side::Enemy,
+        card_id,
         card_name: card.name.to_string(),
+        cost_ap: card.cost_ap,
     });
     true
 }
 
 pub fn enemy_turn_input_system(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut selected: ResMut<crate::battle::SelectedCards>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
+    mut hand_full_warning: ResMut<HandFullEndTurnWarning>,
     mut runtime: EnemyTurnRuntime,
     mut logs: EnemyTurnLogs,
     mut writers: EnemyTurnEventWriters,
@@ -783,6 +308,7 @@ pub fn enemy_turn_input_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     if !matches!(
         *battle_mode,
@@ -798,6 +324,7 @@ pub fn enemy_turn_input_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &runtime.player_team;
@@ -840,9 +367,15 @@ pub fn enemy_turn_input_system(
     };
 
     if !remote_controlled && let Some(target_index) = switch_target {
-        if action_points.enemy >= 1
-            && target_index < enemy_team.0.combatants.len()
-            && target_index != enemy_team.0.active_index
+        if target_index >= enemy_team.0.combatants.len()
+            || target_index == enemy_team.0.active_index
+        {
+            return;
+        }
+        if action_points.enemy < 1 {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+            return;
+        }
         {
             let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
             let target_entity = enemy_team.0.combatants[target_index];
@@ -887,6 +420,74 @@ pub fn enemy_turn_input_system(
         return;
     }
 
+    if !remote_controlled
+        && pending_tactical_discard
+            .as_ref()
+            .is_some_and(|pending| pending.side == Side::Enemy)
+    {
+        for (key, idx) in [
+            (KeyCode::KeyZ, 0_usize),
+            (KeyCode::KeyX, 1_usize),
+            (KeyCode::KeyC, 2_usize),
+            (KeyCode::KeyV, 3_usize),
+            (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
+        ] {
+            if !keyboard.just_pressed(key) {
+                continue;
+            }
+            if idx >= hand.enemy.len() {
+                return;
+            }
+            let card_id = hand.enemy.remove(idx);
+            action_points.enemy += 1;
+            let card_name = dbs
+                .cards
+                .get(&card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| format!("{card_id:?}"));
+            writers.event_writer.write(BattleEvent::CardDiscarded {
+                side: Side::Enemy,
+                card_id,
+                card_name: card_name.clone(),
+                ap_gain: 1,
+            });
+            note_action_phase(
+                &mut logs.structured_log,
+                logs.turn_count.0,
+                Side::Enemy,
+                "敌方战术整理",
+                format!(
+                    "弃置卡牌={}；获得AP=1；当前AP={}",
+                    card_name, action_points.enemy
+                ),
+            );
+            push_named_action_trace(
+                &mut logs.action_trace,
+                logs.turn_count.0,
+                Side::Enemy,
+                "tactical_discard",
+                format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+            );
+            selected.enemy.index = None;
+            selected.enemy.discard_armed = false;
+            return;
+        }
+        return;
+    }
+
     if !remote_controlled && keyboard.just_pressed(KeyCode::KeyF) {
         if hand.enemy.is_empty() {
             return;
@@ -904,7 +505,9 @@ pub fn enemy_turn_input_system(
             .unwrap_or_else(|| format!("{card_id:?}"));
         writers.event_writer.write(BattleEvent::CardDiscarded {
             side: Side::Enemy,
+            card_id,
             card_name: card_name.clone(),
+            ap_gain: 1,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -947,17 +550,35 @@ pub fn enemy_turn_input_system(
             return;
         };
         let cost = skill.cost_ap;
+        if !skill_uses_q
+            .get(e_entity)
+            .is_ok_and(|uses| uses.has_remaining(slot))
+        {
+            writers.ui_notices.write(BattleUiNotice {
+                text: "次数不足"
+            });
+            turn_ctx.enemy_action = None;
+            return;
+        }
         if action_points.enemy < cost {
+            writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
             turn_ctx.enemy_action = None;
             return;
         }
         action_points.enemy -= cost;
         turn_ctx.enemy_action = None;
+        if let Ok(mut uses) = skill_uses_q.get_mut(e_entity) {
+            if let Some(remaining) = uses.0.get_mut(slot) {
+                *remaining = remaining.saturating_sub(1);
+            }
+        }
 
         writers.event_writer.write(BattleEvent::SkillUsed {
             side: Side::Enemy,
+            skill_id,
             skill_name: skill.name.clone(),
             slot,
+            cost_ap: cost,
         });
         note_action_phase(
             &mut logs.structured_log,
@@ -1074,6 +695,7 @@ pub fn enemy_turn_input_system(
                         }),
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -1151,6 +773,7 @@ pub fn enemy_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -1211,6 +834,7 @@ pub fn enemy_turn_input_system(
                         None,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -1264,6 +888,7 @@ pub fn enemy_turn_input_system(
                     &mut e_statuses_m,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1288,6 +913,7 @@ pub fn enemy_turn_input_system(
                     &mut p_statuses_m,
                     pending_boosts,
                     &formula_rules,
+                    battle_rules,
                     accuracy_rng,
                     &dbs.elements,
                     &dbs.statuses,
@@ -1324,6 +950,19 @@ pub fn enemy_turn_input_system(
             (KeyCode::KeyC, 2_usize),
             (KeyCode::KeyV, 3_usize),
             (KeyCode::KeyB, 4_usize),
+            (KeyCode::KeyN, 5_usize),
+            (KeyCode::KeyA, 6_usize),
+            (KeyCode::KeyS, 7_usize),
+            (KeyCode::KeyD, 8_usize),
+            (KeyCode::KeyG, 9_usize),
+            (KeyCode::KeyH, 10_usize),
+            (KeyCode::KeyJ, 11_usize),
+            (KeyCode::KeyK, 12_usize),
+            (KeyCode::KeyL, 13_usize),
+            (KeyCode::KeyU, 14_usize),
+            (KeyCode::KeyI, 15_usize),
+            (KeyCode::KeyO, 16_usize),
+            (KeyCode::KeyP, 17_usize),
         ] {
             if keyboard.just_pressed(key) {
                 if idx >= hand.enemy.len() {
@@ -1339,7 +978,9 @@ pub fn enemy_turn_input_system(
                         .unwrap_or_else(|| format!("{card_id:?}"));
                     writers.event_writer.write(BattleEvent::CardDiscarded {
                         side: Side::Enemy,
+                        card_id,
                         card_name: card_name.clone(),
+                        ap_gain: 1,
                     });
                     note_action_phase(
                         &mut logs.structured_log,
@@ -1368,71 +1009,58 @@ pub fn enemy_turn_input_system(
                 }
                 let card_id = hand.enemy[idx];
                 if let Some(card) = dbs.cards.get(&card_id) {
-                    if action_points.enemy >= card.cost_ap {
-                        hand.enemy.remove(idx);
-                        action_points.enemy -= card.cost_ap;
+                    if action_points.enemy < card.cost_ap {
+                        writers.ui_notices.write(BattleUiNotice { text: "AP不足" });
+                        return;
+                    }
+                    hand.enemy.remove(idx);
+                    action_points.enemy -= card.cost_ap;
 
-                        let card_name = card.name.to_string();
-                        writers.event_writer.write(BattleEvent::CardUsed {
-                            side: Side::Enemy,
-                            card_name: card_name.clone(),
-                        });
+                    let card_name = card.name.to_string();
+                    writers.event_writer.write(BattleEvent::CardUsed {
+                        side: Side::Enemy,
+                        card_id,
+                        card_name: card_name.clone(),
+                        cost_ap: card.cost_ap,
+                    });
 
-                        let effect_detail = match card.effect {
-                            CardEffect::GainAp { amount } => {
-                                action_points.enemy += amount;
-                                format!("获得AP={amount}")
-                            }
-                            CardEffect::NextAttackBoost { amount } => {
-                                pending_boosts.enemy.next_attack_bonus = amount;
-                                format!("下次攻击加成={amount}")
-                            }
-                            CardEffect::NextShieldBoost { amount } => {
-                                pending_boosts.enemy.next_shield_bonus = amount;
-                                format!("下次护盾加成={amount}")
-                            }
-                            CardEffect::NextHealBoost { amount } => {
-                                pending_boosts.enemy.next_heal_bonus = amount;
-                                format!("下次治疗加成={amount}")
-                            }
-                        };
-                        note_action_phase(
-                            &mut logs.structured_log,
-                            logs.turn_count.0,
-                            Side::Enemy,
-                            "敌方使用卡牌",
-                            format!(
-                                "卡牌={}；消耗AP={}；效果={}；当前AP={}",
-                                card_name, card.cost_ap, effect_detail, action_points.enemy
-                            ),
-                        );
-                        push_named_action_trace(
-                            &mut logs.action_trace,
-                            logs.turn_count.0,
-                            Side::Enemy,
-                            "use_card",
-                            format!(
-                                "卡牌={}；效果={}；当前AP={}",
-                                card_name, effect_detail, action_points.enemy
-                            ),
-                        );
+                    let effect_detail = "效果已排入卡牌结算".to_string();
+                    note_action_phase(
+                        &mut logs.structured_log,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "敌方使用卡牌",
+                        format!(
+                            "卡牌={}；消耗AP={}；效果={}；当前AP={}",
+                            card_name, card.cost_ap, effect_detail, action_points.enemy
+                        ),
+                    );
+                    push_named_action_trace(
+                        &mut logs.action_trace,
+                        logs.turn_count.0,
+                        Side::Enemy,
+                        "use_card",
+                        format!(
+                            "卡牌={}；效果={}；当前AP={}",
+                            card_name, effect_detail, action_points.enemy
+                        ),
+                    );
 
-                        selected.enemy.index = None;
-                        selected.enemy.discard_armed = false;
+                    selected.enemy.index = None;
+                    selected.enemy.discard_armed = false;
 
-                        let should_go_check_end = exec_query
-                            .get(p_entity)
+                    let should_go_check_end = exec_query
+                        .get(p_entity)
+                        .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
+                        .unwrap_or(false)
+                        || exec_query
+                            .get(e_entity)
                             .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                            .unwrap_or(false)
-                            || exec_query
-                                .get(e_entity)
-                                .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
-                                .unwrap_or(false);
-                        if should_go_check_end {
-                            pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-                            next_phase.set(BattlePhase::CheckEnd);
-                            return;
-                        }
+                            .unwrap_or(false);
+                    if should_go_check_end {
+                        pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
+                        next_phase.set(BattlePhase::CheckEnd);
+                        return;
                     }
                 }
                 return;
@@ -1466,6 +1094,10 @@ pub fn enemy_turn_input_system(
         }
 
         if keyboard.just_pressed(KeyCode::KeyE) {
+            if hand.enemy.len() > battle_rules.max_retained_hand {
+                hand_full_warning.trigger_end_turn_blocked();
+                return;
+            }
             turn_ctx.enemy_end_requested = true;
         }
     }
@@ -1485,12 +1117,17 @@ pub fn enemy_turn_input_system(
             format!("敌方主动结束回合；剩余AP={}", action_points.enemy),
         );
         turn_ctx.enemy_end_requested = false;
-        let mut ai_state = (0.0_f32, false, false);
+        let mut ai_state = EnemyAiTurnState::default();
         finalize_enemy_turn(
             e_entity,
             enemy_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
+            action_points,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -1501,199 +1138,17 @@ pub fn enemy_turn_input_system(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::data::{EffectTarget, ElementDb, ElementType, ReactionDb, StatusDb};
-    use std::collections::HashMap;
-
-    fn test_ai_context(target_status_ids: Vec<String>) -> EnemyAiContext {
-        EnemyAiContext {
-            enemy_hp: 20,
-            enemy_max_hp: 20,
-            enemy_shield: 0,
-            enemy_atk: 5,
-            enemy_has_aura: false,
-            enemy_has_cleansable_debuff: false,
-            player_def: 5,
-            player_hp: 20,
-            player_shield: 0,
-            target_element: ElementType::Dark,
-            target_attached_auras: [None, None],
-            target_status_ids,
-        }
-    }
-
-    fn test_dbs(skill: SkillDef) -> BattleDbs {
-        BattleDbs {
-            skills: HashMap::from([(skill.id, skill)]),
-            cards: HashMap::new(),
-            elements: ElementDb::default(),
-            statuses: StatusDb::default(),
-            reactions: ReactionDb::default(),
-        }
-    }
-
-    fn test_switch_dbs() -> BattleDbs {
-        let attack = SkillDef {
-            id: SkillId::WaterBlade,
-            name: "水刃".to_string(),
-            category: SkillCategory::ElementAttack,
-            cost_ap: 1,
-            effect: SkillEffect::Attack {
-                power: 12,
-                lifesteal_ratio: None,
-                ignore_shield: false,
-            },
-            element: Some(ElementType::Water),
-            base_accuracy: None,
-        };
-        BattleDbs {
-            skills: HashMap::from([(attack.id, attack)]),
-            cards: HashMap::new(),
-            elements: ElementDb::from_default_config(),
-            statuses: StatusDb::default(),
-            reactions: ReactionDb::default(),
-        }
-    }
-
-    fn test_switch_candidate(
-        index: usize,
-        hp: i32,
-        max_hp: i32,
-        shield: i32,
-        element: ElementType,
-    ) -> EnemySwitchCandidate {
-        EnemySwitchCandidate {
-            index,
-            hp,
-            max_hp,
-            shield,
-            atk: 8,
-            element,
-            skill_ids: [SkillId::WaterBlade; 4],
-            skill_count: 1,
-            status_ids: Vec::new(),
-            has_aura: false,
-            has_cleansable_debuff: false,
-        }
-    }
-
-    #[test]
-    fn enemy_switch_prefers_healthy_resistant_candidate_when_current_is_low() {
-        let dbs = test_switch_dbs();
-        let mut ctx = test_ai_context(Vec::new());
-        ctx.target_element = ElementType::Water;
-        let current = test_switch_candidate(0, 5, 40, 0, ElementType::Fire);
-        let candidate = test_switch_candidate(1, 34, 40, 0, ElementType::Grass);
-
-        let chosen = choose_enemy_switch(
-            &current,
-            &[current.clone(), candidate],
-            0.0,
-            3,
-            &dbs,
-            &ctx,
-            false,
-        )
-        .expect("low HP and bad matchup should make switching valuable");
-
-        assert_eq!(chosen.index, 1);
-        assert!(chosen.score >= 18.0);
-    }
-
-    #[test]
-    fn enemy_switch_requires_ap_after_switch_and_only_once_per_turn() {
-        let dbs = test_switch_dbs();
-        let mut ctx = test_ai_context(Vec::new());
-        ctx.target_element = ElementType::Water;
-        let current = test_switch_candidate(0, 5, 40, 0, ElementType::Fire);
-        let candidate = test_switch_candidate(1, 34, 40, 0, ElementType::Grass);
-        let candidates = [current.clone(), candidate];
-
-        assert!(choose_enemy_switch(&current, &candidates, 0.0, 1, &dbs, &ctx, false).is_none());
-        assert!(choose_enemy_switch(&current, &candidates, 0.0, 3, &dbs, &ctx, true).is_none());
-    }
-
-    #[test]
-    fn enemy_switch_ignores_defeated_candidates() {
-        let dbs = test_switch_dbs();
-        let mut ctx = test_ai_context(Vec::new());
-        ctx.target_element = ElementType::Water;
-        let current = test_switch_candidate(0, 5, 40, 0, ElementType::Fire);
-        let defeated = test_switch_candidate(1, 0, 40, 0, ElementType::Grass);
-
-        assert!(
-            choose_enemy_switch(
-                &current,
-                &[current.clone(), defeated],
-                0.0,
-                3,
-                &dbs,
-                &ctx,
-                false
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn dispel_score_uses_target_stage_shift_prefix_matches() {
-        let skill = SkillDef {
-            id: SkillId::SacredJudgment,
-            name: "圣辉裁决".to_string(),
-            category: SkillCategory::SpecialAttack,
-            cost_ap: 4,
-            effect: SkillEffect::Sequence {
-                effects: vec![
-                    SkillEffect::Attack {
-                        power: 1,
-                        lifesteal_ratio: None,
-                        ignore_shield: true,
-                    },
-                    SkillEffect::Dispel {
-                        status_ids: vec!["stage_shift_buff".to_string()],
-                        target: EffectTarget::Opponent,
-                    },
-                ],
-            },
-            element: Some(ElementType::Light),
-            base_accuracy: None,
-        };
-        let dbs = test_dbs(skill.clone());
-        let without_buff = test_ai_context(vec!["cursed".to_string()]);
-        let with_buff = test_ai_context(vec![
-            "stage_shift_buff_atk_1".to_string(),
-            "stage_shift_buff_def_2".to_string(),
-            "stage_shift_debuff_acc_1".to_string(),
-        ]);
-
-        let score_without_buff =
-            score_enemy_skill(0, SkillId::SacredJudgment, &skill, &without_buff, &dbs).score;
-        let score_with_buff =
-            score_enemy_skill(0, SkillId::SacredJudgment, &skill, &with_buff, &dbs).score;
-
-        assert_eq!(
-            dispel_value(&["stage_shift_buff".to_string()], &with_buff),
-            24.0
-        );
-        assert_eq!(
-            dispel_value(&["stage_shift_buff".to_string()], &without_buff),
-            0.0
-        );
-        assert!(score_with_buff > score_without_buff);
-    }
-}
-
 pub fn enemy_turn_ai_system(
+    mut commands: Commands,
     time: Res<Time>,
+    pending_tactical_discard: Option<Res<PendingTacticalDiscard>>,
     battle_mode: Res<BattleControlMode>,
     mut turn_ctx: ResMut<TurnContext>,
     mut next_phase: ResMut<NextState<BattlePhase>>,
     mut runtime: EnemyTurnRuntime,
     mut logs: EnemyTurnLogs,
     mut writers: EnemyTurnEventWriters,
-    mut ai_state: Local<(f32, bool, bool)>,
+    mut ai_state: Local<EnemyAiTurnState>,
     mut exec_query: Query<
         (
             Entity,
@@ -1708,14 +1163,13 @@ pub fn enemy_turn_ai_system(
         ),
         With<InBattle>,
     >,
+    mut skill_uses_q: Query<&mut SkillUses, With<InBattle>>,
 ) {
     if matches!(
         *battle_mode,
         BattleControlMode::DebugPlayerControlsBoth | BattleControlMode::PlayerVsRemote
     ) {
-        ai_state.0 = 0.0;
-        ai_state.1 = false;
-        ai_state.2 = false;
+        ai_state.reset();
         return;
     }
 
@@ -1725,6 +1179,7 @@ pub fn enemy_turn_ai_system(
     let pending_boosts = &mut runtime.pending_boosts;
     let pending_ko = &mut runtime.pending_ko;
     let dbs = &runtime.dbs;
+    let battle_rules = &runtime.battle_rules;
     let formula_rules = &runtime.formula_rules;
     let accuracy_rng = &mut runtime.accuracy_rng;
     let player_team = &runtime.player_team;
@@ -1732,24 +1187,77 @@ pub fn enemy_turn_ai_system(
     let battle_log = &mut runtime.battle_log;
     let battle_result = &mut runtime.battle_result;
     let next_game_state = &mut runtime.next_game_state;
+    let ai_config = &runtime.ai_config;
 
-    if ai_state.0 > 0.0 {
-        ai_state.0 = (ai_state.0 - time.delta_secs()).max(0.0);
+    if ai_state.delay > 0.0 {
+        ai_state.delay = (ai_state.delay - time.delta_secs()).max(0.0);
         return;
     }
 
     if turn_ctx.enemy_ended {
-        ai_state.0 = 0.0;
-        ai_state.1 = false;
-        ai_state.2 = false;
+        ai_state.reset();
         return;
     }
 
-    if !ai_state.1 {
-        ai_state.1 = true;
-        ai_state.0 = ENEMY_AI_INITIAL_DELAY;
+    if !ai_state.started {
+        ai_state.started = true;
+        ai_state.delay = ENEMY_AI_INITIAL_DELAY;
         return;
     }
+
+    if pending_tactical_discard
+        .as_ref()
+        .is_some_and(|pending| pending.side == Side::Enemy)
+    {
+        if hand.enemy.is_empty() {
+            commands.remove_resource::<PendingTacticalDiscard>();
+            return;
+        }
+        let discard_choice = choose_enemy_discard_card(&hand.enemy, &dbs, &ai_config.weights);
+        let discard_score = discard_choice.as_ref().map(|choice| choice.score);
+        let card_id = hand
+            .enemy
+            .remove(discard_choice.map(|choice| choice.index).unwrap_or(0));
+        action_points.enemy += 1;
+        let card_name = dbs
+            .cards
+            .get(&card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| format!("{card_id:?}"));
+        writers.event_writer.write(BattleEvent::CardDiscarded {
+            side: Side::Enemy,
+            card_id,
+            card_name: card_name.clone(),
+            ap_gain: 1,
+        });
+        note_action_phase(
+            &mut logs.structured_log,
+            logs.turn_count.0,
+            Side::Enemy,
+            "敌方战术整理",
+            format!(
+                "弃置卡牌={}；保留评分={:.2}；获得AP=1；当前AP={}",
+                card_name,
+                discard_score.unwrap_or(0.0),
+                action_points.enemy
+            ),
+        );
+        push_named_action_trace(
+            &mut logs.action_trace,
+            logs.turn_count.0,
+            Side::Enemy,
+            "tactical_discard",
+            format!(
+                "弃置卡牌={}；保留评分={:.2}；当前AP={}",
+                card_name,
+                discard_score.unwrap_or(0.0),
+                action_points.enemy
+            ),
+        );
+        ai_state.delay = ENEMY_AI_ACTION_DELAY;
+        return;
+    }
+
     let Some(p_entity) = player_team.0.active_combatant() else {
         abort_battle(
             "敌方 AI：玩家上场精灵无效。",
@@ -1770,6 +1278,10 @@ pub fn enemy_turn_ai_system(
     };
 
     if action_points.enemy <= 0 {
+        console_log(
+            ConsoleLogCategory::Ai,
+            format!("[round {}][enemy] 结束回合：无可用 AP", logs.turn_count.0),
+        );
         note_action_phase(
             &mut logs.structured_log,
             logs.turn_count.0,
@@ -1789,6 +1301,11 @@ pub fn enemy_turn_ai_system(
             enemy_team,
             &mut turn_ctx,
             &round_order,
+            pending_boosts,
+            action_points,
+            hand,
+            battle_rules,
+            &mut commands,
             &formula_rules,
             &mut logs,
             &mut writers,
@@ -1811,14 +1328,12 @@ pub fn enemy_turn_ai_system(
                 .unwrap_or(false);
         if should_go_check_end {
             pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-            ai_state.0 = 0.0;
-            ai_state.1 = false;
-            ai_state.2 = false;
+            ai_state.reset();
             next_phase.set(BattlePhase::CheckEnd);
             return;
         }
 
-        let Ok((_, p_combatant, p_stats, _, _, p_shield, p_statuses, p_aura, _)) =
+        let Ok((_, p_combatant, p_stats, p_skills, p_skill_count, p_shield, p_statuses, p_aura, _)) =
             exec_query.get(p_entity)
         else {
             break;
@@ -1830,10 +1345,14 @@ pub fn enemy_turn_ai_system(
         };
 
         let p_element = p_combatant.element;
+        let p_atk = p_stats.atk;
+        let p_skills_arr = p_skills.0;
+        let p_skill_count = p_skill_count.0;
         let e_hp = e_stats.hp;
         let e_max_hp = e_stats.max_hp;
         let e_shield_value = e_shield.0;
         let e_atk = e_stats.atk;
+        let e_def = e_stats.def;
         let e_skills_arr = e_skills.0;
         let e_skill_count = e_skill_count.0;
         let p_hp = p_stats.hp;
@@ -1853,43 +1372,157 @@ pub fn enemy_turn_ai_system(
             )
         });
 
+        let e_skill_uses = skill_uses_q
+            .get(e_entity)
+            .map(|uses| uses.0)
+            .unwrap_or([0u8; 4]);
+
         let ai_ctx = EnemyAiContext {
             enemy_hp: e_hp,
             enemy_max_hp: e_max_hp,
             enemy_shield: e_shield_value,
+            max_shield_hp_ratio: battle_rules.max_shield_hp_ratio,
             enemy_atk: e_atk,
+            enemy_def: e_def,
+            enemy_atk_stage: e_stats.atk_stage,
+            enemy_def_stage: e_stats.def_stage,
+            enemy_spd_stage: e_stats.spd_stage,
+            enemy_acc_stage: e_stats.acc_stage,
+            enemy_element: e_combatant.element,
+            enemy_attached_auras: e_aura.slots,
+            enemy_status_ids: e_statuses
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
             enemy_has_aura,
             enemy_has_cleansable_debuff,
+            player_atk_stage: p_stats.atk_stage,
+            player_def_stage: p_stats.def_stage,
+            player_spd_stage: p_stats.spd_stage,
+            player_acc_stage: p_stats.acc_stage,
             player_def: p_def,
             player_hp: p_hp,
             player_shield: p_shield_value,
             target_element: p_element,
             target_attached_auras: p_attached_aura,
             target_status_ids: p_status_ids,
+            skill_uses_remaining: e_skill_uses,
         };
+        let player_info_visible = !matches!(
+            ai_config.player_info_visibility,
+            AiPlayerInfoVisibility::None
+        );
+        let high_difficulty = matches!(
+            ai_config.difficulty,
+            AiDifficulty::Hard | AiDifficulty::Expert
+        );
+        let include_player_hand = matches!(
+            ai_config.player_info_visibility,
+            AiPlayerInfoVisibility::Full
+        );
+        let player_threat = player_info_visible.then(|| {
+            build_player_threat_context(
+                p_skills_arr,
+                p_skill_count,
+                p_atk,
+                action_points.player,
+                &hand.player,
+                high_difficulty && include_player_hand,
+                &dbs,
+            )
+        });
+        let advanced_player_threat = high_difficulty.then_some(player_threat).flatten();
 
-        let chosen_skill = choose_enemy_skill(
+        if log_enabled(ConsoleLogCategory::AiDetail) {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] AI配置：难度={:?}；搜索深度={}；候选数={}；换人阈值={:.2}；随机扰动={:.2}；攻击上限={:?}；已攻击={}；权重={:?}",
+                    logs.turn_count.0,
+                    ai_config.difficulty,
+                    ai_config.search_depth,
+                    ai_config.top_candidates,
+                    ai_config.switch_score_threshold,
+                    ai_config.random_score_jitter,
+                    ai_config.max_attack_actions_per_turn,
+                    ai_state.attacks_used,
+                    ai_config.weights
+                ),
+            );
+            if let Some(threat) = advanced_player_threat {
+                console_log(
+                    ConsoleLogCategory::AiDetail,
+                    format!(
+                        "[round {}][enemy] 高难度玩家威胁：玩家AP={}；预测AP={}；攻击加成={}；固定伤害加成={}；防守潜力={:.2}",
+                        logs.turn_count.0,
+                        threat.current_ap,
+                        threat.projected_ap,
+                        threat.attack_bonus,
+                        threat.fixed_damage_bonus,
+                        threat.defensive_value
+                    ),
+                );
+            }
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 技能候选列表：{}",
+                    logs.turn_count.0,
+                    enemy_skill_candidate_report(
+                        &e_skills_arr,
+                        e_skill_count,
+                        action_points.enemy,
+                        &dbs,
+                        &ai_ctx,
+                        &ai_config.weights
+                    )
+                ),
+            );
+        }
+        let chosen_skill = choose_enemy_skill_with_threat(
             &e_skills_arr,
             e_skill_count,
             action_points.enemy,
             &dbs,
             &ai_ctx,
+            &ai_config.weights,
+            advanced_player_threat.as_ref(),
         );
-        let current_best_attack = best_attack_value(
-            &e_skills_arr,
-            e_skill_count,
-            e_atk,
-            action_points.enemy,
-            &dbs,
-            &ai_ctx,
-        );
+        if let Some(candidate) = chosen_skill
+            && let Some(skill) = dbs.skills.get(&candidate.skill_id)
+        {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 技能候选最优：{}；槽位={}；类型={:?}；得分={:.2}；当前AP={}；敌方HP={}/{}；玩家HP={}；玩家护盾={}",
+                    logs.turn_count.0,
+                    skill.name,
+                    candidate.slot,
+                    candidate.kind,
+                    candidate.score,
+                    action_points.enemy,
+                    e_hp,
+                    e_max_hp,
+                    p_hp,
+                    p_shield_value
+                ),
+            );
+        }
         let current_switch_candidate = EnemySwitchCandidate {
             index: enemy_team.0.active_index,
             hp: e_hp,
             max_hp: e_max_hp,
             shield: e_shield_value,
+            max_shield_hp_ratio: battle_rules.max_shield_hp_ratio,
             atk: e_atk,
+            def: e_def,
+            atk_stage: e_stats.atk_stage,
+            def_stage: e_stats.def_stage,
+            spd_stage: e_stats.spd_stage,
+            acc_stage: e_stats.acc_stage,
             element: e_combatant.element,
+            attached_auras: e_aura.slots,
             skill_ids: e_skills_arr,
             skill_count: e_skill_count,
             status_ids: e_statuses
@@ -1900,6 +1533,13 @@ pub fn enemy_turn_ai_system(
             has_aura: enemy_has_aura,
             has_cleansable_debuff: enemy_has_cleansable_debuff,
         };
+        let current_best_action = best_action_value(
+            &current_switch_candidate,
+            action_points.enemy,
+            &dbs,
+            &ai_ctx,
+            &ai_config.weights,
+        );
         let enemy_switch_candidates = enemy_team
             .0
             .combatants
@@ -1917,8 +1557,15 @@ pub fn enemy_turn_ai_system(
                     hp: stats.hp,
                     max_hp: stats.max_hp,
                     shield: shield.0,
+                    max_shield_hp_ratio: battle_rules.max_shield_hp_ratio,
                     atk: stats.atk,
+                    def: stats.def,
+                    atk_stage: stats.atk_stage,
+                    def_stage: stats.def_stage,
+                    spd_stage: stats.spd_stage,
+                    acc_stage: stats.acc_stage,
                     element: combatant.element,
+                    attached_auras: aura.slots,
                     skill_ids: skills.0,
                     skill_count: skill_count.0,
                     status_ids: statuses
@@ -1936,28 +1583,114 @@ pub fn enemy_turn_ai_system(
                 })
             })
             .collect::<Vec<_>>();
+        let switch_context = Some((
+            &current_switch_candidate,
+            enemy_switch_candidates.as_slice(),
+            current_best_action,
+            ai_state.switched_this_turn,
+            ai_config.switch_score_threshold,
+            player_threat,
+        ));
+        if log_enabled(ConsoleLogCategory::AiDetail) {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] 换人候选列表：{}",
+                    logs.turn_count.0,
+                    enemy_switch_candidate_report(
+                        &current_switch_candidate,
+                        &enemy_switch_candidates,
+                        current_best_action,
+                        action_points.enemy,
+                        &dbs,
+                        &ai_ctx,
+                        ai_state.switched_this_turn,
+                        ai_config.switch_score_threshold,
+                        &ai_config.weights,
+                        player_threat.as_ref()
+                    )
+                ),
+            );
+        }
+        let mut plan_candidates = choose_enemy_plan_candidates(
+            &hand.enemy,
+            action_points.enemy,
+            &e_skills_arr,
+            e_skill_count,
+            &dbs,
+            &ai_ctx,
+            switch_context,
+            &ai_config.weights,
+            advanced_player_threat.as_ref(),
+            ai_config.search_depth,
+            ai_config.top_candidates,
+        );
+        if attack_limit_reached(&ai_state, ai_config) {
+            plan_candidates.retain(|plan| !plan_uses_attack(plan));
+        }
+        let planned_action = choose_enemy_plan_with_jitter(
+            &plan_candidates,
+            ai_config.random_score_jitter,
+            accuracy_rng,
+        );
+        if log_enabled(ConsoleLogCategory::AiDetail) {
+            console_log(
+                ConsoleLogCategory::AiDetail,
+                format!(
+                    "[round {}][enemy] Top行动规划：{}",
+                    logs.turn_count.0,
+                    plan_candidates
+                        .iter()
+                        .enumerate()
+                        .map(|(index, plan)| format!(
+                            "#{} {}；总分={:.2}",
+                            index + 1,
+                            plan.summary,
+                            plan.score
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ),
+            );
+        }
 
+        let planned_card_skill = match planned_action.as_ref().map(|plan| &plan.action) {
+            Some(EnemyPlannedAction::UseCardForSkill { card_index, skill }) => {
+                let _planned_card_index = *card_index;
+                Some(*skill)
+            }
+            _ => None,
+        };
         let mut played_card = false;
-        if let Some(chosen_skill) = chosen_skill {
+        if let Some(chosen_skill) = planned_card_skill {
             played_card = try_play_boost_card_for_skill(
                 chosen_skill,
                 hand,
                 action_points,
                 pending_boosts,
                 &dbs,
+                &ai_ctx,
+                &ai_config.weights,
                 &mut writers.event_writer,
             );
         }
 
         if played_card {
-            if let Some(chosen_skill) = chosen_skill {
+            if let Some(chosen_skill) = planned_card_skill {
+                console_log(
+                    ConsoleLogCategory::Ai,
+                    format!(
+                        "[round {}][enemy] 先使用辅助卡辅助技能槽位{}；当前AP={}",
+                        logs.turn_count.0, chosen_skill.slot, action_points.enemy
+                    ),
+                );
                 note_action_phase(
                     &mut logs.structured_log,
                     logs.turn_count.0,
                     Side::Enemy,
                     "敌方使用卡牌",
                     format!(
-                        "为技能槽位{}预先使用增益卡；当前AP={}",
+                        "为技能槽位{}预先使用辅助卡；当前AP={}",
                         chosen_skill.slot, action_points.enemy
                     ),
                 );
@@ -1967,7 +1700,7 @@ pub fn enemy_turn_ai_system(
                     Side::Enemy,
                     "use_card",
                     format!(
-                        "为技能槽位{}预先使用增益卡；当前AP={}",
+                        "为技能槽位{}预先使用辅助卡；当前AP={}",
                         chosen_skill.slot, action_points.enemy
                     ),
                 );
@@ -1976,15 +1709,9 @@ pub fn enemy_turn_ai_system(
             break;
         }
 
-        if let Some(chosen_switch) = choose_enemy_switch(
-            &current_switch_candidate,
-            &enemy_switch_candidates,
-            current_best_attack,
-            action_points.enemy,
-            &dbs,
-            &ai_ctx,
-            ai_state.2,
-        ) {
+        if let Some(EnemyPlannedAction::Switch(chosen_switch)) =
+            planned_action.as_ref().map(|plan| &plan.action)
+        {
             let current_entity = enemy_team.0.combatants[enemy_team.0.active_index];
             let target_entity = enemy_team.0.combatants[chosen_switch.index];
             let Ok(
@@ -2010,6 +1737,13 @@ pub fn enemy_turn_ai_system(
                     side: Side::Enemy,
                     name: name.to_string(),
                 });
+                console_log(
+                    ConsoleLogCategory::Ai,
+                    format!(
+                        "[round {}][enemy] 选择换人：{}；得分={:.2}；当前AP={}",
+                        logs.turn_count.0, name, chosen_switch.score, action_points.enemy
+                    ),
+                );
                 note_action_phase(
                     &mut logs.structured_log,
                     logs.turn_count.0,
@@ -2030,19 +1764,17 @@ pub fn enemy_turn_ai_system(
                         name, chosen_switch.score, action_points.enemy
                     ),
                 );
-                ai_state.2 = true;
+                ai_state.switched_this_turn = true;
                 acted_this_update = true;
                 break;
             }
         }
 
-        if let Some(chosen_skill) = choose_enemy_skill(
-            &e_skills_arr,
-            e_skill_count,
-            action_points.enemy,
-            &dbs,
-            &ai_ctx,
-        ) {
+        let planned_skill = match planned_action.as_ref().map(|plan| &plan.action) {
+            Some(EnemyPlannedAction::UseSkill(skill)) => Some(*skill),
+            _ => None,
+        };
+        if let Some(chosen_skill) = planned_skill {
             let slot = chosen_skill.slot;
             let skill_id = chosen_skill.skill_id;
             let Some(skill) = dbs.skills.get(&skill_id) else {
@@ -2055,13 +1787,32 @@ pub fn enemy_turn_ai_system(
             }
 
             action_points.enemy -= cost;
+            if let Ok(mut uses) = skill_uses_q.get_mut(e_entity) {
+                if let Some(remaining) = uses.0.get_mut(slot) {
+                    *remaining = remaining.saturating_sub(1);
+                }
+            }
 
             // 技能使用事件
             writers.event_writer.write(BattleEvent::SkillUsed {
                 side: Side::Enemy,
+                skill_id,
                 skill_name: skill.name.clone(),
                 slot,
+                cost_ap: cost,
             });
+            console_log(
+                ConsoleLogCategory::Ai,
+                format!(
+                    "[round {}][enemy] 选择技能：{}；槽位={}；得分={:.2}；AP {} -> {}",
+                    logs.turn_count.0,
+                    skill.name,
+                    slot,
+                    chosen_skill.score,
+                    action_points.enemy + cost,
+                    action_points.enemy
+                ),
+            );
             note_action_phase(
                 &mut logs.structured_log,
                 logs.turn_count.0,
@@ -2180,6 +1931,7 @@ pub fn enemy_turn_ai_system(
                             }),
                             pending_boosts,
                             &formula_rules,
+                            battle_rules,
                             accuracy_rng,
                             &dbs.elements,
                             &dbs.statuses,
@@ -2258,6 +2010,7 @@ pub fn enemy_turn_ai_system(
                             None,
                             pending_boosts,
                             &formula_rules,
+                            battle_rules,
                             accuracy_rng,
                             &dbs.elements,
                             &dbs.statuses,
@@ -2319,6 +2072,7 @@ pub fn enemy_turn_ai_system(
                             None,
                             pending_boosts,
                             &formula_rules,
+                            battle_rules,
                             accuracy_rng,
                             &dbs.elements,
                             &dbs.statuses,
@@ -2372,6 +2126,7 @@ pub fn enemy_turn_ai_system(
                         &mut e_statuses_m,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -2396,6 +2151,7 @@ pub fn enemy_turn_ai_system(
                         &mut p_statuses_m,
                         pending_boosts,
                         &formula_rules,
+                        battle_rules,
                         accuracy_rng,
                         &dbs.elements,
                         &dbs.statuses,
@@ -2409,6 +2165,10 @@ pub fn enemy_turn_ai_system(
                 };
             }
 
+            if chosen_skill.kind == EnemyAiSkillKind::Attack {
+                ai_state.attacks_used = ai_state.attacks_used.saturating_add(1);
+            }
+
             let should_go_check_end = exec_query
                 .get(p_entity)
                 .map(|(_, _, s, _, _, _, _, _, _)| s.hp <= 0)
@@ -2419,18 +2179,96 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or(false);
             if should_go_check_end {
                 pending_ko.resume_phase = Some(BattlePhase::EnemyTurn);
-                ai_state.0 = 0.0;
-                ai_state.1 = false;
-                ai_state.2 = false;
+                ai_state.reset();
                 next_phase.set(BattlePhase::CheckEnd);
                 return;
             }
             acted_this_update = true;
             break;
         } else {
-            // 没有可用技能：弃牌换 AP（或直接结束）
+            // 规划器未选择技能时，按规划使用资源卡或弃牌换 AP。
+            let planned_immediate_card = match planned_action.as_ref().map(|plan| &plan.action) {
+                Some(EnemyPlannedAction::ImmediateCard(card)) => Some(card.clone()),
+                _ => None,
+            };
+            if let Some(immediate_card) = planned_immediate_card {
+                let card_id = hand.enemy.remove(immediate_card.index);
+                let (card_name, card_cost) = dbs
+                    .cards
+                    .get(&card_id)
+                    .map(|card| (card.name.to_string(), card.cost_ap))
+                    .unwrap_or_else(|| (format!("{card_id:?}"), 0));
+                action_points.enemy -= card_cost;
+                writers.event_writer.write(BattleEvent::CardUsed {
+                    side: Side::Enemy,
+                    card_id,
+                    card_name: card_name.clone(),
+                    cost_ap: card_cost,
+                });
+                console_log(
+                    ConsoleLogCategory::Ai,
+                    format!(
+                        "[round {}][enemy] 无可用技能，先使用资源卡：{}；卡牌评分={:.2}；AP {} -> {}",
+                        logs.turn_count.0,
+                        card_name,
+                        immediate_card.score,
+                        action_points.enemy + card_cost,
+                        action_points.enemy
+                    ),
+                );
+                note_action_phase(
+                    &mut logs.structured_log,
+                    logs.turn_count.0,
+                    Side::Enemy,
+                    "敌方使用卡牌",
+                    format!(
+                        "卡牌={}；评分={:.2}；消耗AP={}；当前AP={}",
+                        card_name, immediate_card.score, card_cost, action_points.enemy
+                    ),
+                );
+                push_named_action_trace(
+                    &mut logs.action_trace,
+                    logs.turn_count.0,
+                    Side::Enemy,
+                    "use_card",
+                    format!(
+                        "卡牌={}；评分={:.2}；当前AP={}",
+                        card_name, immediate_card.score, action_points.enemy
+                    ),
+                );
+                acted_this_update = true;
+                break;
+            }
+
             if !hand.enemy.is_empty() {
-                let card_id = hand.enemy.remove(0);
+                let discard_choice = match planned_action.as_ref().map(|plan| &plan.action) {
+                    Some(EnemyPlannedAction::Discard(discard)) => Some(discard.clone()),
+                    _ => None,
+                };
+                if discard_choice.is_none() {
+                    break;
+                }
+                let discard_index = discard_choice
+                    .as_ref()
+                    .map(|choice| choice.index)
+                    .unwrap_or(0);
+                let keep_score = discard_choice
+                    .as_ref()
+                    .map(|choice| choice.keep_score)
+                    .unwrap_or(0.0);
+                let followup_score = discard_choice
+                    .as_ref()
+                    .map(|choice| choice.followup_score)
+                    .unwrap_or(0.0);
+                let followup = discard_choice
+                    .as_ref()
+                    .map(|choice| format!("{:?}", choice.followup))
+                    .unwrap_or_else(|| "None".to_string());
+                let sequence_score = discard_choice
+                    .as_ref()
+                    .map(|choice| choice.score)
+                    .unwrap_or(0.0);
+                let card_id = hand.enemy.remove(discard_index);
                 action_points.enemy += 1;
                 let card_name = dbs
                     .cards
@@ -2439,7 +2277,9 @@ pub fn enemy_turn_ai_system(
                     .unwrap_or_else(|| format!("{card_id:?}"));
                 writers.event_writer.write(BattleEvent::CardDiscarded {
                     side: Side::Enemy,
+                    card_id,
                     card_name: card_name.clone(),
+                    ap_gain: 1,
                 });
                 note_action_phase(
                     &mut logs.structured_log,
@@ -2447,8 +2287,13 @@ pub fn enemy_turn_ai_system(
                     Side::Enemy,
                     "敌方弃牌",
                     format!(
-                        "弃置卡牌={}；获得AP=1；当前AP={}",
-                        card_name, action_points.enemy
+                        "弃置卡牌={}；序列评分={:.2}；保留评分={:.2}；后续={}; 后续评分={:.2}；获得AP=1；当前AP={}",
+                        card_name,
+                        sequence_score,
+                        keep_score,
+                        followup,
+                        followup_score,
+                        action_points.enemy
                     ),
                 );
                 push_named_action_trace(
@@ -2456,7 +2301,15 @@ pub fn enemy_turn_ai_system(
                     logs.turn_count.0,
                     Side::Enemy,
                     "discard_card",
-                    format!("弃置卡牌={}；当前AP={}", card_name, action_points.enemy),
+                    format!(
+                        "弃置卡牌={}；序列评分={:.2}；保留评分={:.2}；后续={}; 后续评分={:.2}；当前AP={}",
+                        card_name,
+                        sequence_score,
+                        keep_score,
+                        followup,
+                        followup_score,
+                        action_points.enemy
+                    ),
                 );
                 acted_this_update = true;
                 break;
@@ -2466,8 +2319,8 @@ pub fn enemy_turn_ai_system(
         }
     }
 
-    if acted_this_update && action_points.enemy > 0 {
-        ai_state.0 = ENEMY_AI_ACTION_DELAY; // 敌方每两个操作之间间隔 0.75 秒。
+    if acted_this_update {
+        ai_state.delay = ENEMY_AI_ACTION_DELAY;
         return;
     }
 
@@ -2490,6 +2343,11 @@ pub fn enemy_turn_ai_system(
         enemy_team,
         &mut turn_ctx,
         &round_order,
+        pending_boosts,
+        action_points,
+        hand,
+        battle_rules,
+        &mut commands,
         &formula_rules,
         &mut logs,
         &mut writers,

@@ -1,0 +1,8 @@
+[gd_resource type="SpineSkeletonDataResource" load_steps=3 format=3 uid="uid://tjpvqmcen4vb"]
+
+[ext_resource type="SpineAtlasResource" uid="uid://u0e8t6d1wowb" path="res://animations/monsters/光精灵/光精灵武器.atlas" id="1_t438k"]
+[ext_resource type="SpineSkeletonFileResource" uid="uid://bitv6cp6gcvao" path="res://animations/monsters/光精灵/光精灵武器.skel" id="2_xhuth"]
+
+[resource]
+atlas_res = ExtResource("1_t438k")
+skeleton_file_res = ExtResource("2_xhuth")
