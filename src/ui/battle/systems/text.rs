@@ -710,6 +710,20 @@ pub(crate) fn update_active_panel_tokens_system(
         Side::Player => &player_team.0,
         Side::Enemy => &enemy_team.0,
     };
+    let is_dead = |entity: Entity| {
+        combat_query
+            .get(entity)
+            .is_ok_and(|(_, stats, _, _, _, _)| stats.hp <= 0)
+    };
+    // 待机位状态/附着图标要与待机卡片、头像使用同一展示顺序：存活靠前、阵亡沉底。
+    // 否则阵亡精灵沉底后，图标仍按队伍原始索引绘制，会看起来挂到其它精灵身上。
+    let player_bench_order = bench_display_order(&player_team.0, is_dead);
+    let enemy_bench_order = bench_display_order(&enemy_team.0, is_dead);
+    let bench_entity = |display_index: usize, order: &[usize], team: &Team| {
+        order
+            .get(display_index)
+            .and_then(|&team_index| team.combatants.get(team_index).copied())
+    };
     let info_font = super::super::helpers::make_text_font(13.0, ui_font.as_deref());
     let aura_icon_items =
         |target: Option<Entity>| -> Vec<super::super::helpers::DebugTokenContent> {
@@ -748,7 +762,11 @@ pub(crate) fn update_active_panel_tokens_system(
     }
 
     for (entity, children, line) in &line_queries.p2() {
-        let items = aura_icon_items(player_team.0.combatants.get(line.index).copied());
+        let items = aura_icon_items(bench_entity(
+            line.index,
+            &player_bench_order,
+            &player_team.0,
+        ));
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
@@ -762,7 +780,7 @@ pub(crate) fn update_active_panel_tokens_system(
     }
 
     for (entity, children, line) in &line_queries.p3() {
-        let items = aura_icon_items(enemy_team.0.combatants.get(line.index).copied());
+        let items = aura_icon_items(bench_entity(line.index, &enemy_bench_order, &enemy_team.0));
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
@@ -912,7 +930,11 @@ pub(crate) fn update_active_panel_tokens_system(
         };
 
     for (entity, children, line) in &line_queries.p5() {
-        let items = bench_status_items(player_team.0.combatants.get(line.index).copied());
+        let items = bench_status_items(bench_entity(
+            line.index,
+            &player_bench_order,
+            &player_team.0,
+        ));
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
@@ -926,7 +948,7 @@ pub(crate) fn update_active_panel_tokens_system(
     }
 
     for (entity, children, line) in &line_queries.p6() {
-        let items = bench_status_items(enemy_team.0.combatants.get(line.index).copied());
+        let items = bench_status_items(bench_entity(line.index, &enemy_bench_order, &enemy_team.0));
         super::super::helpers::replace_debug_tokens_with_images(
             &mut commands,
             entity,
