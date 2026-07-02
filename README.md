@@ -48,6 +48,7 @@ registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"
 - **数据驱动战斗内容**：技能、精灵、卡牌、元素克制、状态、反应、战斗规则等统一从 `assets/data/battle_data.ron` 加载。
 - **双状态机战斗流程**：顶层 `GameState` 管理大厅、地图、队伍选择、战斗、结果；嵌套 `BattlePhase` 管理战斗初始化、回合开始、玩家回合、敌方回合、弃牌、结算、死亡处理。
 - **本地与 PVP 共用战斗系统**：Vs AI、调试双方控制、PVP 模式都复用同一套战斗资源和 UI。
+- **在线社交与一键对战邀请**：新增账号注册 / 登录、好友搜索与申请、好友聊天、在线状态、未读消息提醒，以及基于好友关系的一键发起 PVP 中继房间邀请。
 - **可配置人机 AI**：Vs AI 支持 Easy / Normal / Hard / Expert 难度预设，预设由 `assets/data/battle_data.ron` 读取；AI 会按评分和轻量规划选择技能、卡牌、弃牌、换人，并评估状态、元素反应、玩家威胁和重复增益的边际收益。
 - **卡牌与队伍策略**：每场战斗使用共享抽牌堆 / 弃牌堆，卡牌可影响 AP、护盾、治疗、元素附着、反应、抽牌和战术整理。
 - **结构化调试能力**：控制台日志、`StructuredBattleLog`、`ReplayEventLog`、`ActionTrace` 共同用于战斗复盘和问题定位。
@@ -106,11 +107,20 @@ python relay_server.py
 # 或指定监听地址 / 端口
 python relay_server.py --host 0.0.0.0 --port 42043
 
+# 启动在线社交服务器（默认同时启动 PVP 中继服务）
+python social_server.py
+# 或指定社交服 / 中继服地址
+python social_server.py --host 0.0.0.0 --port 42044 --relay-host 你的公网或局域网IP --relay-port 42043
+# 只启动社交服，不自动启动中继服务
+python social_server.py --no-relay
+
 # 构建 release 版本
 cargo build --release
 ```
 
 > 注意：当前 `Cargo.toml` 默认启用了 Bevy 的 `dynamic_linking` 特性以加快开发迭代。该模式下 `cargo run` 正常可用，但生成的可执行文件不是独立发布包。需要发布独立 release 时，请先移除 `dynamic_linking`，再执行 `cargo build --release`。
+>
+> 在线社交服务器当前使用 Python 标准库实现，数据保存在进程内存中，适合课程展示、局域网测试和原型验证；服务器重启后账号、好友和聊天记录会清空，不应直接作为生产级账号系统使用。
 
 ---
 
@@ -123,6 +133,7 @@ cargo build --release
 - VS AI 队伍选择
 - 地图探索
 - PVP 大厅
+- 在线系统（注册 / 登录、好友、聊天、一键邀请对战）
 - 精灵图鉴 / 调试入口
 
 ## 2. 地图探索
@@ -151,7 +162,7 @@ cargo build --release
 4. 玩家 / 敌方依次行动：使用技能、使用卡牌、弃牌换 AP、换人或结束回合。
 5. 若手牌超过保留上限，进入强制弃牌阶段。
 6. 检查倒下、自动或手动换人、胜负结果。
-7. 进入结果页，按 R 返回上一入口并重置选择状态；从地图进入的战斗会返回地图，其余模式返回大厅。
+7. 进入结果页，可按 R 或点击结果页按钮返回；从地图进入的非 PVP 战斗会返回地图，从在线好友邀请进入的 PVP 战斗会返回在线主页，其余模式返回大厅。
 
 ## 5. PVP
 
@@ -165,7 +176,25 @@ PVP 支持：
 
 当协议版本或双方战斗数据不一致时，握手会失败并在 UI 与控制台日志中提示原因。修改 PVP 协议时，需要保持 `src/pvp/mod.rs` 与 `relay_server.py` 中的协议版本一致。
 
-## 6. 人机 AI
+## 6. 在线社交系统
+
+在线系统入口位于大厅，默认连接 `127.0.0.1:42044` 的社交服务器。启动方式：
+
+```bash
+python social_server.py
+```
+
+当前社交服务器功能包括：
+
+- 注册 / 登录账号，并限制同一账号重复在线登录。
+- 修改用户名、搜索用户、发送好友申请、接受好友申请。
+- 好友列表展示在线状态与未读消息数量。
+- 好友聊天，聊天页和主页都会定期同步消息。
+- 对在线好友发起一键对战邀请：发起方自动创建中继房间并发送邀请；接收方同意后自动加入对应中继房间，随后复用 PVP 队伍选择和战斗流程。
+
+`social_server.py` 默认会在同一进程中启动 `relay_server.py`，并把中继地址下发给客户端。若社交服监听 `0.0.0.0`，客户端会继承自己填写的社交服主机名并使用下发端口；公网或跨机器测试时，建议显式传入 `--relay-host`。
+
+## 7. 人机 AI
 
 Vs AI 模式下，敌方 AI 使用“评分启发式 + 轻量行动规划”的方式选择行动：
 
@@ -196,12 +225,23 @@ Vs AI 模式下，敌方 AI 使用“评分启发式 + 轻量行动规划”的�
 - `UiPlugin`：共享 UI 主题、字体、战斗 UI 生命周期。
 - `LobbyPlugin`：大厅入口。
 - `MapPlugin`：地图探索。
+- `OnlinePlugin`：在线账号、好友、聊天和好友对战邀请。
 - `PvpPlugin`：PVP 大厅、网络、同步。
 - `TeamSelectionPlugin`：队伍选择。
 - `BattlePlugin`：战斗状态机和战斗系统。
 - `SpineAnimPlugin`：Spine 动画和 VFX。
 
-## 2. 数据驱动
+## 2. 在线社交与邀请链路
+
+在线系统主要由 `src/online/mod.rs` 与 `social_server.py` 组成：
+
+- 客户端使用 `OnlineConnection` 在后台线程中维护 TCP 连接，Bevy `Update` 系统轮询网络事件并更新 UI 状态。
+- 在线状态包括 `GameState::OnlineLogin`、`GameState::OnlineHome` 和 `GameState::OnlineChat`，UI 由 `bevy_egui` 绘制。
+- 客户端与社交服务器之间使用 4 字节长度前缀 + JSON payload 的简单协议，消息上限为 64 KiB。
+- 社交服务器维护内存态账号、好友关系、私聊消息、在线会话和未读计数；重启即清空。
+- 好友对战邀请通过聊天消息传递 `BATTLE_INVITE:<房间码>` / `BATTLE_ACCEPT` / `BATTLE_REJECT:<房间码>` 标记，真正的战斗连接仍复用 `PvpPlugin` 的中继房间、握手、数据 hash 校验和 host 权威同步。
+
+## 3. 数据驱动
 
 战斗数据集中在：
 
@@ -226,7 +266,7 @@ assets/data/battle_data.ron
 
 如果读取、解析或校验失败，系统会插入 fallback 资源，并把失败原因写入 `BattleDataStatus.error`。下游系统应以该资源作为权威失败信号。
 
-## 3. AI 决策模块
+## 4. AI 决策模块
 
 人机 AI 的运行入口仍在 `src/battle/systems/enemy_turn.rs`，负责读取 ECS 战场状态、构造 AI 上下文并执行最终行动。纯评分与规划辅助集中在 `src/battle/ai/evaluation.rs`，便于单元测试和调参。
 
@@ -238,7 +278,7 @@ AI 相关配置位于数据层：
 
 真实战斗结算仍由现有技能、卡牌和事件系统负责；AI 只做轻量预测与行动选择，避免复制一套独立战斗规则。
 
-## 4. 战斗资源与消息
+## 5. 战斗资源与消息
 
 战斗参与者是 Bevy ECS 实体，通过组件组合描述：
 
@@ -374,6 +414,7 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 - AP、手牌上限、强制弃牌、战术整理等卡牌资源系统。
 - 元素附着、元素克制、元素反应、风扩散、状态 tick、属性等级修正。
 - PVP 协议握手、数据 hash 校验、host 权威 intent / snapshot 同步。
+- 在线社交服务器、账号注册登录、好友系统、好友私聊、在线状态、未读提醒和好友对战邀请。
 - Spine 战斗动画与 VFX 原型。
 - 控制台可读日志、结构化日志、ActionTrace 和导出能力。
 
@@ -382,6 +423,7 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 - 将当前 AI 评分 / 上下文 / 规划 / 日志进一步拆分成更清晰的子模块。
 - 更完整的 AI 状态树模拟和固定战斗快照回归测试。
 - PVP 双端日志链路的手动实测与可视化调试工具。
+- 在线社交数据持久化、更完整的账号安全策略和服务端部署说明。
 - 地图探索、养成、捕捉、图鉴等战斗外玩法。
 - 更完整的战斗 replay 回放与自动化复盘工具。
 
@@ -392,6 +434,8 @@ BEVY_MON_LOG_DEBUG=1 cargo run
 - `游戏玩法.md`：核心战斗规则、元素附着、元素反应和精灵设计说明。
 - `技能牌设计.md`：当前卡牌规则、AP / 手牌规则、17 张技能牌和共享牌库配比。
 - `bug提交文档.md`：已记录和已修复的问题列表，适合回归验证时参考。
+- `relay_server.py`：PVP 中继服务器，负责房间码和双方 TCP 帧转发。
+- `social_server.py`：在线社交服务器，负责账号、好友、聊天、在线状态和好友对战邀请。
 
 ---
 
@@ -412,3 +456,4 @@ cargo clippy --all-targets -- -D warnings
 - 进入 Vs AI 战斗手动验证一局。
 - 打开 `BEVY_MON_LOG_DEBUG=1` 观察公式、状态、ActionTrace 是否符合预期。
 - 如果改动涉及 PVP，至少验证 host/client 握手和数据 hash 一致性。
+- 如果改动涉及在线系统，建议启动 `python social_server.py`，用两个客户端验证注册 / 登录、添加好友、聊天未读、在线状态，以及“邀请对战 -> 接受 -> 进入配队 / 战斗 -> 返回在线主页”的完整链路。
